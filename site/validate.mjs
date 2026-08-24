@@ -81,6 +81,7 @@ assert(!wranglerText.match(/account_id|zone_id|api_token|route/i), 'Wrangler con
 const hrefs = Array.from(html.matchAll(/href=["']([^"']+)["']/g), match => match[1]);
 const ids = new Set(Array.from(html.matchAll(/\bid=["']([^"']+)["']/g), match => match[1]));
 const allowedExternalLinks = new Set([
+	'https://fikeya-site-worker.ajnasnb.workers.dev/',
 	'https://github.com/AjnasNB/fikeya',
 	'https://qarinah.io/docs/benchmarks/'
 ]);
