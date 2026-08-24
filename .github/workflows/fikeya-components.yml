@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/fikeya-components.yml'
       - 'extensions/fikeya-desktop/**'
+      - 'fikeya-agent-core/**'
       - 'fikeya-runtime/**'
       - 'integrations/qarinah-sidecar/**'
       - 'packages/fikeya-protocol/**'
@@ -16,6 +17,7 @@ on:
     paths:
       - '.github/workflows/fikeya-components.yml'
       - 'extensions/fikeya-desktop/**'
+      - 'fikeya-agent-core/**'
       - 'fikeya-runtime/**'
       - 'integrations/qarinah-sidecar/**'
       - 'packages/fikeya-protocol/**'
@@ -129,6 +131,31 @@ jobs:
       - run: python -m pip install --disable-pip-version-check --upgrade pip
       - run: python -m pip install -e ".[test,azure]"
       - run: python -m pytest
+
+  agent-core:
+    name: Agent core / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    defaults:
+      run:
+        working-directory: fikeya-agent-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: fikeya-agent-core/pyproject.toml
+      - run: python -m pip install --disable-pip-version-check --upgrade pip build
+      - run: python -m pip install -e ".[test]"
+      - run: python -m ruff check .
+      - run: python -m pytest
+      - run: python -m build --wheel
+      - run: python -m pip install --force-reinstall dist/*.whl
+      - run: python -c "import fikeya_agent_core; print(fikeya_agent_core.__file__)"
 
   desktop-extension:
     name: Desktop extension
