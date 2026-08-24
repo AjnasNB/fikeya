@@ -1,62 +1,51 @@
 # Fikeya Architecture
 
-## Objective
+## Status and reading guide
 
-Fikeya provides one coding-agent runtime through Desktop and CLI. Both interfaces must produce the same plan events, permission requests, tool results, usage receipts, context receipts, patches, and verification evidence.
+Fikeya is a developer alpha. This document separates three different kinds of behavior:
 
-The product is local-first. A future team control plane is optional and cannot silently broaden local permissions.
+- **Integrated now** is reachable through the current Desktop extension or `fikeya` CLI.
+- **Standalone component** has focused tests in this repository but is not yet connected to the Desktop/CLI product path.
+- **Target requirement** defines the intended architecture and is not a statement that the behavior ships today.
 
-## Components
+Only the first category should be treated as current end-user behavior.
+
+## Integrated developer-alpha behavior
 
 ### Desktop
 
-The desktop is a current Code OSS distribution with a built-in Fikeya extension. It contributes four modes and two layouts without replacing the editor, terminal, source control, debugging, or extension host.
+The current Desktop slice is a built-in extension for the Code OSS workbench. It contributes four mode selectors and two layouts without replacing the existing editor, terminal, source-control, debugging, or extension-host behavior.
 
-- **Editor:** completion, explanation, targeted transforms, and selected-context chat. Autonomous shell tools are disabled.
-- **Agent:** plans, tool proposals, approval checkpoints, patches, tests, and evidence.
-- **Terminal:** command-oriented work with explicit executable and argument visibility.
-- **Review:** read-only analysis by default. Fixes remain proposals until accepted.
-- **Studio layout:** explorer and editor lead; the agent and approvals stay compact.
-- **Agent Focus layout:** plan, conversation, evidence, and artifacts lead; the explorer can collapse.
+- **Editor** focuses the active editor group.
+- **Agent** exposes provider selection and runs one bounded provider turn through the Python runtime.
+- **Terminal** focuses the integrated terminal.
+- **Review** opens the existing source-control view.
+- **Studio** and **Agent Focus** change which Fikeya controls lead the workbench.
 
-### Local Gateway
+The Agent surface requires fresh network consent for every run. It receives output after the provider turn completes; token-delta streaming is not implemented. The approvals surface is an explicit empty-state preview because the Desktop does not yet subscribe to approval events.
 
-The desktop spawns one gateway per exact workspace root over stdio. The gateway is the only bridge between UI events and the Python runtime.
+The Studio layout can display a bounded, searchable Qarinah graph from the pinned local sidecar. Search, filters, node movement, pan, and zoom are local UI behavior. The graph reports unavailable data instead of substituting samples.
 
-Responsibilities:
+### Python runtime and CLI
 
-- Version and capability negotiation
-- Typed request, response, notification, cancellation, resume, and fork messages
-- Workspace-root binding
-- Secret-reference resolution
-- Backpressure and bounded payloads
-- Runtime lifecycle and restart recovery
+The current runtime provides:
 
-No unauthenticated local HTTP listener is part of the default architecture.
+- workspace initialization and diagnostics;
+- provider-profile metadata backed by the operating-system credential store;
+- explicit provider connectivity tests;
+- one bounded model turn after `--allow-network`;
+- cooperative cancellation and resumable/forkable SQLite session primitives;
+- provider-reported usage or an explicit `unavailable` measurement;
+- content-free provider and Qarinah receipts; and
+- a process-only `ToolBroker` that accepts an executable and argument vector, starts disabled, and requires an exact one-use approval before real execution.
 
-### Python Runtime
+Azure OpenAI and OpenAI use the Responses API by default. OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Anthropic profiles can currently be stored and probed, but native Anthropic model execution is not integrated.
 
-The runtime owns model routing, planning, sessions, context budgets, tool orchestration, usage accounting, and adapter lifecycles. Desktop and CLI both call this runtime.
+### Qarinah boundary
 
-The native planner can use Deep Agents and LangGraph behind Fikeya-owned interfaces. Complete external agents connect through ACP. Codex connects through its local App Server. Claude connects through the Agent SDK with user-provided API credentials. MCP connects agents to individual tools and resources.
+The runtime can invoke a separately installed `qarinah` executable with an argument vector and `shell=False` to prepare opt-in cited context. Durable runtime state retains content-free metadata rather than prompt or context bodies.
 
-### Execution Broker
-
-Privileged operations remain outside the model process. The broker accepts structured operations, never arbitrary model-generated shell strings.
-
-Every operation includes:
-
-- Exact workspace and optional disposable worktree identity
-- Canonical path and symlink resolution
-- Executable plus an argument array
-- Permission class and one-use approval identifier
-- Timeout, output, and file-count limits
-- Cancellation identifier
-- Exit status and evidence hashes
-
-### Qarinah Memory Sidecar
-
-Qarinah runs as a pinned Node.js sidecar behind a typed `MemoryPort`. It records evidence-linked lifecycle events and compiles bounded cited context. It does not execute tools or manage secrets.
+The pinned Node.js sidecar provides a root-bound `MemoryPort` for status, record, prepare, compact, inspect, receipts, worktrees, cancellation, and close operations. It executes no tools and manages no provider credentials.
 
 ```ts
 interface FikeyaMemoryPort {
@@ -73,56 +62,118 @@ interface FikeyaMemoryPort {
 }
 ```
 
-Fikeya records session, prompt, model, context, approval, tool, artifact, decision, summary, compaction, turn, and session-end events. Deterministic event identifiers make retries idempotent.
+### Browser and crawler presets
 
-### Browser and Crawler
+The runtime ships reviewed, disabled-by-default configuration presets for separately installed Cockroach Browser and Cockroach Crawler executables. Enabling a preset records an exact manifest digest for one workspace; it does not start the tool.
 
-Browser and crawler integrations are permissioned tools behind the broker. They are not loaded merely because a workspace opens.
+The current runtime does not provide the complete MCP framing/session loop or a Desktop approval flow for these tools. The caller remains responsible for protocol framing, cancellation, upstream network policy, and child termination.
 
-- Browser automation uses a dedicated process and an explicit host/domain policy.
-- The crawler receives explicit starting URLs, boundaries, budgets, and output schemas.
-- External page content is treated as untrusted data and cannot override system or workspace policy.
-- Captured outputs are hashed before their references are recorded in Qarinah.
+## Tested standalone components
 
-### Provider Layer
+These components have focused tests but are not yet one integrated Desktop/CLI execution path:
 
-Profiles support Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible endpoints. A provider profile contains non-secret routing information plus a keychain reference.
+- **Fikeya Agent Core** implements a checkpointed plan, act, observe, and review state machine with bounded steps, durable events, cancellation, request-bound approvals, broker-call leases, resume/fork primitives, and content-free execution receipts. It exposes an injected execution-broker interface and does not itself provide shell or file execution. LangGraph and Deep Agents are not required or bundled in the current core.
+- **Fikeya Interop** implements bounded local-stdio adapters for ACP agents, Codex app-server, and MCP tools. It includes capability and permission boundaries, cancellation, allowlists, result limits, and content-free receipts. It is neither a sandbox nor a credential broker and is not yet wired into Desktop or the runtime CLI.
+- **Fikeya Protocol** contains public TypeScript schemas intended to become a shared compatibility surface. The Desktop and Python runtime still maintain their own live boundary models, so conformance between all components is not yet a shipped guarantee.
 
-Azure uses Microsoft Entra ID by default where supported. API-key authentication remains an explicit alternative. The runtime records provider-returned input, cached-input, output, and reasoning token counts when available. Estimates are labeled as estimates and never displayed as provider billing.
+## Target architecture requirements
 
-## Run Flow
+The following sections preserve the intended complete product architecture. They are release requirements, not claims about the current alpha.
+
+### Target Desktop experience
+
+- **Editor** should support completion, explanation, targeted transforms, and selected-context chat while autonomous shell tools remain disabled.
+- **Agent** should present plans, tool proposals, approval checkpoints, patches, tests, and evidence from the integrated agent core.
+- **Terminal** should keep the exact executable, argument array, working directory, and approval visible for command-oriented work.
+- **Review** should be read-only by default, with fixes retained as proposals until accepted.
+- **Studio** should remain code-first; **Agent Focus** should make plan, conversation, evidence, and artifacts lead while allowing the explorer to collapse.
+
+### Target local gateway
+
+Desktop and CLI should use one root-bound local gateway over stdio. It should own:
+
+- version and capability negotiation;
+- typed request, response, notification, cancellation, resume, and fork messages;
+- workspace-root binding;
+- secret-reference resolution;
+- backpressure and bounded payloads; and
+- runtime lifecycle and restart recovery.
+
+No unauthenticated local HTTP listener should be part of the default architecture.
+
+### Target runtime orchestration
+
+The integrated runtime should own model routing, planning, sessions, context budgets, tool orchestration, usage accounting, and adapter lifecycles. Desktop and CLI should consume the same events and receipts.
+
+The standalone native core can become the default planner. Optional LangGraph or Deep Agents integrations must remain behind Fikeya-owned interfaces. Complete external agents should connect through ACP; Codex through its local app-server; Claude through an official SDK with user-provided API credentials; and individual tools and resources through MCP.
+
+### Target execution broker
+
+Privileged operations must remain outside the model process. The complete broker should accept structured operations rather than arbitrary model-generated shell strings. Every operation should bind:
+
+- the exact workspace and optional disposable-worktree identity;
+- canonical path and symlink resolution;
+- executable plus argument array, or a typed file operation;
+- permission class and exact one-use approval identifier;
+- timeout, output, file-count, and resource limits;
+- cancellation and idempotency identifiers; and
+- exit status, affected paths, and evidence hashes.
+
+A future file broker must stage patches transactionally, validate stale context, show the proposed diff, and leave the worktree unchanged when rejected. That file/patch broker is not part of the current runtime slice.
+
+### Target browser and crawler execution
+
+Browser and crawler integrations should run as permissioned tools behind the execution broker. They must not load merely because a workspace opens.
+
+- Browser automation should use a dedicated process and explicit host/domain policy.
+- The crawler should receive explicit starting URLs, boundaries, budgets, and output schemas.
+- External page content must remain untrusted data and cannot override system or workspace policy.
+- Captured outputs should be hashed before Qarinah records their references.
+
+### Target provider layer
+
+The provider layer should add capability negotiation, cancellation-aware streaming where supported, tool-call normalization, and consistent usage receipts. A provider profile must contain only non-secret routing information plus a keychain reference.
+
+Provider-reported token counts and locally calculated estimates must remain distinguishable. No estimate may be displayed as provider billing.
+
+### Target run flow
 
 1. Desktop or CLI binds a canonical workspace root.
-2. The gateway starts the runtime and Qarinah sidecar.
+2. The gateway starts or reconnects the runtime and Qarinah sidecar.
 3. Qarinah verifies workspace policy and ledger state.
 4. The runtime creates or resumes a session.
-5. Context preparation compiles a cited pack under the selected token budget.
-6. The provider streams model events.
+5. Context preparation compiles a cited pack under the selected budget.
+6. The provider produces bounded model events using its declared capabilities.
 7. Proposed tools become structured approval requests.
-8. Approved tools run in the broker or sandbox.
-9. Result hashes, exit status, patch, tests, and provider usage become receipts.
+8. Approved tools run through the broker or an external sandbox.
+9. Result hashes, exit status, affected paths, tests, and provider usage become receipts.
 10. The runtime evaluates completion and either continues, asks the user, or ends the turn.
-11. Qarinah compacts durable facts without discarding authoritative evidence.
+11. Qarinah compacts derived context while retaining authoritative evidence.
+
+Steps 6 through 10 are not yet connected end to end in the current Desktop/CLI path.
 
 ## Storage
+
+Current workspace initialization creates `.fikeya/workspace.json` and `.fikeya/state.sqlite3` plus SQLite journal files as needed. Qarinah owns its separately initialized local state.
+
+The target integrated layout is:
 
 ```text
 workspace/
   .fikeya/
     workspace.json       non-secret identity and policy
-    state.sqlite         sessions, events, approvals, usage, receipts
-    worktrees/           disposable execution worktrees
-    artifacts/           bounded outputs addressed by hash
-    qarinah/             Qarinah-owned local state
+    state.sqlite3        sessions, events, approvals, usage, receipts
+    worktrees/           target: disposable execution worktrees
+    artifacts/           target: bounded outputs addressed by hash
+    qarinah/             target: explicitly managed Qarinah state boundary
 ```
 
-Secrets never live in this directory. They remain in VS Code SecretStorage, the operating-system keychain, Azure managed identity, or a future enterprise KMS.
+Secrets must not live in this directory. They belong in the operating-system credential store, VS Code SecretStorage where a Desktop-only credential is required, Azure workload identity, or a future enterprise KMS.
 
-## Optional Team Control
+## Optional team control
 
-The optional private enterprise plane can distribute policy, identity, model allowlists, budgets, and revocations. Endpoints continue to enforce local offline-expiry rules. The public runtime does not embed tenant billing, SSO, SCIM, or administrative data.
+Tenant billing, SSO, SCIM, and enterprise administration are not part of the public runtime. A future optional control plane may distribute policy, identity, model allowlists, budgets, and revocations, while endpoints continue to enforce local offline-expiry rules.
 
-## Release Gate
+## Release gate
 
-A Fikeya release is not stable until the same fixture succeeds through Desktop and CLI, a rejected operation leaves the worktree unchanged, a cancelled operation terminates, the run survives a sidecar restart, secrets are absent from artifacts, and clean-install tests pass on Windows, macOS, and Linux.
-
+Fikeya must not be described as stable until the same fixture succeeds through Desktop and CLI, rejected operations leave the worktree unchanged, cancellation terminates active work, recovery survives sidecar/runtime restart, secrets are absent from artifacts, and clean-install tests pass on Windows, macOS, and Linux.

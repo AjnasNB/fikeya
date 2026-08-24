@@ -1,70 +1,135 @@
 # Fikeya Security Model
 
-## Trust Boundaries
+## Status and scope
 
-Fikeya separates six principals: the user interface, local gateway, model runtime, execution broker, memory sidecar, and external provider. Model output, repository content, web content, plugins, MCP servers, and imported histories are untrusted.
+Fikeya is a developer alpha. This document distinguishes:
 
-## Credentials
+- **Current enforcement:** behavior enforced in the integrated Desktop/runtime path today.
+- **Standalone enforcement:** behavior implemented and tested in a component that is not yet wired into the product path.
+- **Target requirement:** a security property required before the complete architecture can be called stable.
 
-- Desktop credentials use VS Code SecretStorage.
-- CLI credentials use the operating-system credential store.
-- Azure Microsoft Entra ID is preferred over static keys.
-- Config files store opaque secret references only.
-- Secrets are never written to prompts, ledgers, Qarinah content, logs, screenshots, fixtures, crash reports, or Git.
-- Provider tests redact authorization headers and response bodies before recording diagnostics.
+Model output, repository content, web content, plugins, MCP servers, ACP agents, and imported histories are always untrusted.
 
-## Workspace Boundary
+## Current integrated enforcement
 
-Every file operation resolves the workspace root and target to canonical absolute paths. It rejects traversal, absolute-path injection, UNC and device paths where unsupported, scheme changes, symlink escapes, and writes outside the selected worktree.
+### Credentials
 
-File replacement is transactional. The broker stages a patch, validates context, presents the diff, and writes only after approval. Rejecting a proposal leaves the worktree byte-for-byte unchanged.
+- Runtime credentials enter through a hidden prompt or standard input and are stored in the operating-system credential store.
+- The Desktop sends newly entered provider credentials to the runtime over child-process standard input; it does not place them in command arguments, webview HTML, ordinary extension state, or logs.
+- Azure Microsoft Entra ID is preferred where supported; no Azure access token is persisted by Fikeya.
+- Config files contain non-secret metadata and opaque secret references only.
+- Provider connectivity diagnostics omit authorization headers, response bodies, and credential bytes.
 
-## Command Boundary
+### Workspace and process boundary
 
-The runtime cannot send a raw shell command. It sends an executable and argument array with a working directory, timeout, and resource limits. The broker displays those exact fields before one-use approval. Command chaining, hidden shells, inherited unsafe environment variables, and background detachment require separate policy.
+- Workspace initialization binds runtime state to one canonical root.
+- The current `ToolBroker` is process-only. It accepts an executable and argument array, never a raw shell string.
+- Real process execution starts disabled and additionally requires an executable allowlist, an in-root working directory, and a short-lived one-use approval matching the exact canonical request.
+- Changing an argument, working directory, environment key, or request digest invalidates that approval.
+- Command interpreters, sensitive command arguments, sensitive environment names, unsafe inherited environment variables, and invalid timeouts are rejected by the broker boundary.
 
-## Network Boundary
+The integrated runtime does **not** yet provide general read/write/patch file operations, transactional patch staging, disposable-worktree creation, or stale-diff validation.
 
-Provider profiles declare their endpoint. Tools declare allowed hosts, methods, redirects, request sizes, response sizes, and timeouts. Browser and crawler content cannot issue tools. Remote MCP and ACP connections require authentication and explicit trust.
+### Provider network boundary
 
-## Plugin Boundary
+- Model execution requires explicit `--allow-network` consent.
+- Provider endpoints are validated; remote endpoints require HTTPS and loopback local providers may use HTTP.
+- Provider HTTP responses, redirects, timeouts, and response sizes are bounded.
+- Ordinary configuration and tests do not contact a provider unless the user explicitly invokes a network operation.
 
-Plugins are not loaded from an unreviewed directory. A plugin requires a manifest, version, hash, declared capabilities, license metadata, and signature or explicit local trust. High-risk plugins run in a sandboxed process with a minimal filesystem and network policy.
+### Browser and crawler preset boundary
 
-## Memory and Privacy
+Browser and crawler presets are configuration only. They start disabled, are bound to the exact reviewed manifest digest when enabled, and do not start a child merely by being listed or enabled.
 
-Qarinah capture is opt-in and scoped per workspace. Metadata mode records coarse lifecycle data. Content mode records bounded, redacted fields. The authoritative ledger is hash chained; derived views can be rebuilt. Provider usage receipts store counts and identifiers, not prompt text, unless the workspace explicitly enables content capture.
+The preset loader uses a fixed executable without a shell, a minimal environment, root-bound metadata, and bounded request/response/session limits. Complete MCP framing, upstream robots/redirect/network policy, provenance verification, and forced child termination on protocol failure remain caller responsibilities.
 
-## Approval Classes
+### Memory and privacy boundary
 
-| Class | Default | Examples |
+Qarinah retrieval is opt-in per workspace. The runtime invokes the Qarinah CLI with an argument vector and stores only content-free response metadata such as byte length, duration, status, evidence count, coverage, and SHA-256 digest. Prompt, context, and provider-output bodies are not written to runtime SQLite.
+
+The Qarinah sidecar is root-bound, imposes request-size and response-shape limits, and does not execute tools or manage secrets.
+
+### Current receipts
+
+The integrated provider path records request and response hashes, byte counts, latency, status, provider/model identifiers, and exact provider-reported input/output/cache tokens when present. Missing usage is recorded as `unavailable`; it is not estimated.
+
+This is not yet a complete record of patches, affected paths, tests, sandbox identity, or tool outcomes because the full agent-core/execution-broker path is not integrated.
+
+## Standalone component enforcement
+
+### Agent Core
+
+The standalone Agent Core binds each approval to request ID, session, tool, canonical argument digest, and checkpoint revision. Durable exact-call grants, per-session execution leases, broker call-ID deduplication, bounded retries, explicit uncertain/reconciliation states, durable event replay, cancellation, and pending-approval re-emission are tested at the component boundary.
+
+The core exposes only an injected execution-broker interface. It does not itself grant filesystem, shell, sandbox, or network isolation.
+
+### ACP, Codex, and MCP interop
+
+The standalone interop gateway enforces root-bound shell-free stdio process specifications, command/environment allowlists, capability negotiation, cancellation, permission callbacks, bounded payloads, MCP tool allowlists, result/resource limits, and content-free receipts.
+
+It is not a sandbox or credential broker. An allowlisted child retains the operating-system permissions of the current user unless an external execution broker or OS sandbox restricts it. Remote ACP, MCP, and Codex WebSocket transports are excluded from the current alpha.
+
+### Protocol schemas
+
+Public TypeScript protocol schemas are a compatibility target. The current Desktop and Python runtime still validate their own live boundary models; repository presence of a schema must not be treated as proof that every component already conforms to it.
+
+## Target security requirements
+
+### Complete file and worktree boundary
+
+Every file operation must resolve the workspace root and target to canonical absolute paths and reject traversal, absolute-path injection, unsupported UNC/device paths, scheme changes, symlink escapes, and writes outside the selected worktree.
+
+File replacement must be transactional: stage a patch, validate its expected context, present the diff, and write only after approval. Rejecting or invalidating a proposal must leave the worktree byte-for-byte unchanged.
+
+### Complete command and sandbox boundary
+
+Privileged commands must continue to use an executable and argument array with an exact working directory, timeout, and resource limits. High-risk operations require a separately reviewed sandbox policy. Command chaining, hidden shells, unsafe environment inheritance, background detachment, and privilege changes must remain denied unless a dedicated typed operation explicitly allows them.
+
+### Complete network boundary
+
+Tools must declare allowed hosts, methods, redirects, request sizes, response sizes, and timeouts. Browser and crawler content must not be able to invoke tools or alter policy. Remote MCP/ACP support, if added, requires authentication, trust establishment, revocation, and downgrade protection.
+
+### Plugin and marketplace boundary
+
+A future plugin or marketplace package must declare its identifier, version, content hash, capabilities, license metadata, and signature or explicit local-trust decision. Unreviewed directories must not be auto-loaded. High-risk plugins require a sandboxed process with minimal filesystem and network policy.
+
+No general signed-plugin marketplace or production sandbox is claimed by the current alpha.
+
+### Complete evidence
+
+After execution, the integrated product must record the operation identifier, exact approval, exit status, affected paths, patch/output hashes, verification results, sandbox identity, provider usage, and related Qarinah references. A pre-execution approval must never be presented as evidence that execution succeeded.
+
+## Approval defaults for the target integrated product
+
+| Class | Target default | Examples |
 | --- | --- | --- |
 | Read | Allow inside workspace | read file, list symbols, search |
 | Proposed write | Ask | patch, create file, format |
 | Process | Ask | test, build, package manager |
-| Destructive | Deny then explicit override | delete, force push, database reset |
+| Destructive | Deny, then explicit override | delete, force push, database reset |
 | Network | Ask per host or trusted scope | provider, MCP, browser, crawler |
 | Secret | Never disclose to model | key retrieval and credential injection |
 
-## Evidence
+These defaults describe the target policy model. They are not evidence that every operation class has an integrated broker today.
 
-After execution, Fikeya records the operation identifier, approval, exit status, affected paths, patch hash, output digest, test result, sandbox identity, provider usage, and related Qarinah event references. A pre-execution approval is not presented as proof that a command succeeded.
+## Security release gates
 
-## Required Security Tests
+Before a stable release, tests must cover:
 
-- Traversal, UNC, device-path, and symlink escape
-- Rejected writes and stale-diff rejection
-- Shell metacharacter and argument confusion
-- Environment and authorization-header redaction
-- Cancellation and timeout
-- Malformed protocol messages and oversized payloads
-- Provider failure and partial stream recovery
-- Sidecar restart and idempotent replay
-- MCP/ACP capability downgrade
-- Browser redirect and crawler boundary escape
-- Extension/plugin manifest and hash failure
+- traversal, UNC/device-path, and symlink escape;
+- rejected writes and stale-diff rejection;
+- shell metacharacter and argument confusion;
+- environment and authorization-header redaction;
+- cancellation, timeout, disconnect, and uncertain execution;
+- malformed protocol messages and oversized payloads;
+- provider failure and partial-stream recovery where streaming exists;
+- sidecar restart and idempotent replay;
+- MCP/ACP capability downgrade;
+- browser redirect and crawler boundary escape; and
+- extension/plugin manifest and hash failure.
 
-## Vulnerability Reporting
+Passing focused component tests does not satisfy this gate until the integrated Desktop/CLI path exercises the same boundaries on supported platforms.
 
-Do not open a public issue for a suspected vulnerability. A private reporting channel will be published before the first stable release. Until then, use the repository security-advisory workflow.
+## Vulnerability reporting
 
+Do not open a public issue for a suspected vulnerability. Until a dedicated private channel is published, use the repository security-advisory workflow.
