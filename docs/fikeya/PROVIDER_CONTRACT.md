@@ -1,6 +1,6 @@
 # Provider Contract
 
-A provider adapter exposes model discovery, capability negotiation, streaming responses, cancellation, tool-call normalization, token usage, and error classification.
+The public-alpha provider adapter contract covers profile discovery, bounded text responses, cancellation, token usage, and error classification. Streaming and tool-call normalization remain target adapter capabilities and are not represented as shipped runtime behavior.
 
 ## Profile
 
@@ -24,7 +24,7 @@ A provider adapter exposes model discovery, capability negotiation, streaming re
 
 ## Required Capabilities
 
-- Text input and streamed text output
+- Text input and bounded completed text output
 - Cancellation
 - Usage extraction
 - Stable provider and model identifiers
@@ -39,25 +39,32 @@ A provider adapter exposes model discovery, capability negotiation, streaming re
 - Prompt caching details
 - Reasoning token details
 - Provider-side response continuation
+- Streamed text and event output
 
 ## Receipt
 
 ```json
 {
-  "measurement": "provider",
+  "usageMeasurement": "provider-reported",
   "provider": "azure-openai",
   "model": "deployment-name",
+  "apiMode": "responses",
+  "callId": "call-id",
   "requestId": "provider-request-id",
   "inputTokens": 1200,
   "cachedInputTokens": 800,
   "outputTokens": 220,
-  "reasoningTokens": 90,
-  "cost": null,
-  "pricingRevision": null
+  "requestBytes": 1820,
+  "responseBytes": 760,
+  "requestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "responseSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "statusCode": 200,
+  "durationMs": 480,
+  "createdAt": "2026-08-24T00:00:00.000Z"
 }
 ```
 
-`measurement` is `provider`, `tokenizer`, or `estimate`. The UI never labels a tokenizer or character estimate as provider billing.
+`usageMeasurement` is `provider-reported` only when the provider response contains all three token fields. Otherwise it is `unavailable` and all three token fields are `null`. Local tokenizer and character estimates are kept outside this receipt so the UI cannot confuse them with provider billing. The public alpha does not calculate currency cost inside provider receipts.
 
 ## Default Endpoints
 
