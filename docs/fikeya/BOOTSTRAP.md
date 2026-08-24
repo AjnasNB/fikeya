@@ -13,10 +13,10 @@ The checked-in bootstrap installs and verifies Fikeya's independently testable r
 Run the network-free, read-only preflight first:
 
 ```powershell
-pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1 --check-only
+pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1 -CheckOnly
 ```
 
-Windows PowerShell 5.1 can use `-CheckOnly` instead of `--check-only`. On macOS or Linux:
+The same `-CheckOnly` switch works in Windows PowerShell 5.1 and PowerShell 7. On macOS or Linux:
 
 ```sh
 sh scripts/fikeya/bootstrap.sh --check-only

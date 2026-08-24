@@ -51,7 +51,7 @@ Fikeya is under active public-alpha development. The current milestone covers th
 Fikeya's developer-alpha bootstrap validates the checkout, creates a per-checkout Python environment in the current user's cache, installs the runtime with Azure identity support, and verifies the locked protocol and Qarinah sidecar components. It never requests provider credentials.
 
 ```powershell
-pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1 --check-only
+pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1 -CheckOnly
 pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1
 ```
 
