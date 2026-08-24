@@ -11,9 +11,14 @@ Codex, Cursor, Deep Agents, or any other agent product.
 
 - A typed plan, act, observe, and review state machine with terminal completed, cancelled, and failed states.
 - Resumable, optimistic JSON checkpoints using an in-memory store or durable SQLite. Pickle is never used.
-- Typed async streaming events with monotonic per-session sequences.
-- Explicit approval requests that expose bounded tool arguments to the approval surface before execution.
-- Cooperative cancellation, provider and broker timeouts, bounded retries, step limits, context limits, and output limits.
+- Typed async streaming events with a bounded, durable outbox and monotonic per-session sequences. Consumers resume with an
+  `after_sequence` cursor; an interrupted pending approval is re-emitted.
+- Explicit approval requests bound to the request ID, session, call ID, tool name, exact argument digest, and checkpoint
+  revision. A one-use grant is checkpointed before execution.
+- A per-session execution lease and stable broker idempotency key. The broker must deduplicate that key and return its cached
+  result for duplicates.
+- Cooperative cancellation, provider and broker timeouts, bounded provider retries, step limits, context limits, and output
+  limits. Broker calls are never automatically retried because their side effects may already have occurred.
 - An injected `ExecutionBroker` interface. This package contains no shell, subprocess, filesystem-tool, or network-tool
   implementation.
 - An injected provider interface plus `RuntimeProviderAdapter`, which matches the current `fikeya-runtime`
@@ -32,8 +37,8 @@ plan -> act -> approval pause -> observe -> review -> completed
 Any active stage -> cancelled or failed
 ```
 
-The approval pause is durable. A caller can close the process, create a new `AgentOrchestrator` with the same checkpoint store,
-and resume with `ApprovalDecision.ALLOW_ONCE`, `DENY_ONCE`, or `CANCEL`.
+The approval pause and its exact call binding are durable. A caller can close the process, create a new `AgentOrchestrator`
+with the same checkpoint store, reconstruct an `ApprovalResponse` from the latest `pending_approval`, and resume safely.
 
 ## Install and verify
 
@@ -61,23 +66,41 @@ async for event in core.stream(session.session_id):
     publish_to_ui(event)
 ```
 
-If the last event is `approval.requested`, show its arguments to the person, collect one explicit decision, and resume:
+If the last event is `approval.requested`, read the bounded arguments from `core.state(session_id).pending_call`, show them to
+the person, and construct a response from the current request. The event receipt contains sizes and hashes, not arguments:
 
 ```python
-from fikeya_agent_core import ApprovalDecision
+from fikeya_agent_core import ApprovalDecision, ApprovalResponse
+
+request = core.state(session.session_id).pending_approval
+assert request is not None
+response = ApprovalResponse(
+    request.request_id,
+    request.session_id,
+    request.call_id,
+    request.tool_name,
+    request.arguments_sha256,
+    request.expected_revision,
+    ApprovalDecision.ALLOW_ONCE,
+)
 
 async for event in core.stream(
     session.session_id,
-    approval=ApprovalDecision.ALLOW_ONCE,
+    approval=response,
 ):
     publish_to_ui(event)
 ```
 
+If a broker call disconnects or times out after dispatch, the session fails with `broker_outcome_uncertain` while retaining its
+grant and lease. Query the broker by the retained idempotency key, then pass the verified result to
+`reconcile_tool_result`. Never create a new tool call to guess the outcome.
+
 ## Provider compatibility
 
-`RuntimeProviderAdapter` accepts the current Fikeya runtime executor, provider profile, ephemeral credential, network opt-in, and
-cooperative cancellation token. It converts each stage into one bounded runtime inference request and requires the returned text
-to be exactly one supported JSON decision. It does not store, refresh, copy, or relay credentials.
+`RuntimeProviderAdapter` accepts the current Fikeya runtime executor, provider profile, a credential supplier, network opt-in,
+and cooperative cancellation token. It asks the supplier immediately before each call and does not retain the returned secret
+as adapter state. Each stage accepts exactly its documented JSON keys. A host-provided error classifier can map known transient
+runtime failures to bounded provider retries; unclassified failures pass through and fail closed.
 
 Providers may implement the smaller async `Provider.complete` protocol directly. That is the preferred boundary for future
 native streaming adapters.

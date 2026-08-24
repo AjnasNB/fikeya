@@ -13,12 +13,16 @@ model.
 ## Enforced here
 
 - Stage-specific provider decisions are typed and fail closed.
-- Unknown JSON response fields, unavailable tools, duplicate tool names, mismatched call identifiers, and malformed results are
-  rejected.
+- Every provider stage requires an exact JSON key set. Unknown fields, unavailable tools, duplicate tool names, mismatched call
+  identifiers, and malformed results are rejected.
 - Model context, provider output, tool arguments, tool results, tool metadata, steps, retries, and operation duration are bounded.
 - Every checkpoint is deterministic JSON. There is no pickle or executable deserialization fallback.
 - SQLite saves use optimistic revisions so two stale orchestrators cannot silently overwrite each other.
-- Approval events disclose the bounded argument object and its digest to the host approval surface.
+- Approval responses are bound to the request, session, call, tool, argument digest, and checkpoint revision. A response for an
+  older or altered call cannot create a grant.
+- Event receipts retain hashes, byte counts, identifiers, and decisions, but not tool arguments, tool output, or final answer
+  text. The checkpoint still retains bounded content required to resume the session.
+- An approved call receives a durable one-use grant, stable idempotency key, and execution lease before broker dispatch.
 - Active cancellation signals the provider or broker cooperatively; idle cancellation is immediately checkpointed.
 
 ## Sensitive retained content
@@ -38,6 +42,18 @@ possible at the model layer, so evidence can never grant authority. The broker a
 Cancellation is cooperative. The core cannot forcibly stop a provider thread, network socket, container, or broker process.
 `asyncio` timeouts bound how long the orchestrator waits, but a non-cooperative implementation may continue outside the core.
 Production adapters must implement their own transport cancellation and the execution broker must enforce hard process limits.
+
+## Broker idempotency and uncertain outcomes
+
+`ExecutionBroker.execute` is called at most once by a single orchestration attempt and is never automatically retried. The
+broker contract requires exact-once behavior per supplied idempotency key, including returning a cached result when the same key
+is reconciled after a crash. A timeout, cancellation, or exception after dispatch is recorded as
+`broker_outcome_uncertain`; the exact grant and lease remain durable. The host must reconcile that key with the broker and call
+`reconcile_tool_result` with the matching result. It must not replay the side effect under a new key.
+
+The in-memory per-instance stream guard is only a convenience. Cross-process safety comes from optimistic checkpoint revisions,
+the durable execution lease, and broker-side key deduplication. Production checkpoint implementations need the same atomic
+compare-and-swap semantics as the included SQLite store.
 
 ## Reporting
 
