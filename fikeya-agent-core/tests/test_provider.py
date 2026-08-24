@@ -73,7 +73,7 @@ async def test_runtime_adapter_matches_current_executor_shape_without_eager_impo
     adapter = RuntimeProviderAdapter(
         executor,
         FakeProfile(),
-        "ephemeral-secret",
+        lambda: "ephemeral-secret",
         allow_network=True,
         request_factory=lambda prompt, system, maximum: {
             "max": maximum,
@@ -96,7 +96,7 @@ async def test_runtime_adapter_matches_current_executor_shape_without_eager_impo
 def test_provider_decisions_are_stage_specific_and_unknown_fields_fail_closed() -> None:
     with pytest.raises(ProtocolError, match="plan stage"):
         decode_provider_decision('{"kind":"answer","content":"no"}', Stage.PLAN)
-    with pytest.raises(ProtocolError, match="unknown fields"):
+    with pytest.raises(ProtocolError, match="keys are not exact"):
         decode_provider_decision('{"kind":"plan","content":"ok","secret":"x"}', Stage.PLAN)
     with pytest.raises(ProtocolError, match="JSON object"):
         decode_provider_decision('{"kind":"plan","content":NaN}', Stage.PLAN)

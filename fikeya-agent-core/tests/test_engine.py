@@ -13,6 +13,7 @@ from fikeya_agent_core import (
     AgentLimits,
     AgentOrchestrator,
     ApprovalDecision,
+    ApprovalResponse,
     CancellationToken,
     DecisionKind,
     EventKind,
@@ -53,8 +54,15 @@ class FakeBroker:
         cancellation.raise_if_cancelled()
         return self.tools
 
-    async def execute(self, call: ToolCall, cancellation: CancellationToken) -> ToolResult:
+    async def execute(
+        self,
+        call: ToolCall,
+        cancellation: CancellationToken,
+        *,
+        idempotency_key: str,
+    ) -> ToolResult:
         cancellation.raise_if_cancelled()
+        assert len(idempotency_key) == 64
         self.calls.append(call)
         return ToolResult(call.call_id, "ok", "parser.py has 42 lines")
 
@@ -65,6 +73,24 @@ def result(decision: ProviderDecision) -> ProviderResult:
 
 async def collect(stream: AsyncIterator[AgentEvent]) -> list[AgentEvent]:
     return [event async for event in stream]
+
+
+def approval_response(
+    orchestrator: AgentOrchestrator,
+    session_id: str,
+    decision: ApprovalDecision,
+) -> ApprovalResponse:
+    request = orchestrator.state(session_id).pending_approval
+    assert request is not None
+    return ApprovalResponse(
+        request.request_id,
+        request.session_id,
+        request.call_id,
+        request.tool_name,
+        request.arguments_sha256,
+        request.expected_revision,
+        decision,
+    )
 
 
 @pytest.mark.asyncio
@@ -104,11 +130,15 @@ async def test_state_machine_pauses_for_approval_then_resumes_to_completion() ->
         EventKind.APPROVAL_REQUESTED,
     ]
     approval_event = first_events[-1]
-    assert approval_event.data["arguments"] == {"path": "parser.py"}
+    assert approval_event.data["argumentsBytes"] > 0
+    assert "arguments" not in approval_event.data
 
     resumed = AgentOrchestrator(provider, broker, checkpoints)
     second_events = await collect(
-        resumed.stream(session.session_id, approval=ApprovalDecision.ALLOW_ONCE)
+        resumed.stream(
+            session.session_id,
+            approval=approval_response(resumed, session.session_id, ApprovalDecision.ALLOW_ONCE),
+        )
     )
     completed = resumed.state(session.session_id)
 
@@ -147,7 +177,10 @@ async def test_denial_never_calls_broker_and_is_observed_by_review() -> None:
     await collect(orchestrator.stream(session.session_id))
 
     events = await collect(
-        orchestrator.stream(session.session_id, approval=ApprovalDecision.DENY_ONCE)
+        orchestrator.stream(
+            session.session_id,
+            approval=approval_response(orchestrator, session.session_id, ApprovalDecision.DENY_ONCE),
+        )
     )
     state = orchestrator.state(session.session_id)
 

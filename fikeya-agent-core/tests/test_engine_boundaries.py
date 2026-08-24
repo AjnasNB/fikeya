@@ -13,6 +13,7 @@ from fikeya_agent_core import (
     AgentLimits,
     AgentOrchestrator,
     ApprovalDecision,
+    ApprovalResponse,
     CancellationToken,
     DecisionKind,
     EventKind,
@@ -53,8 +54,15 @@ class Broker:
         cancellation.raise_if_cancelled()
         return (ToolDefinition("repo:read", "Read repository content", {"type": "object"}),)
 
-    async def execute(self, call: ToolCall, cancellation: CancellationToken) -> ToolResult:
+    async def execute(
+        self,
+        call: ToolCall,
+        cancellation: CancellationToken,
+        *,
+        idempotency_key: str,
+    ) -> ToolResult:
         cancellation.raise_if_cancelled()
+        assert len(idempotency_key) == 64
         self.calls += 1
         return ToolResult(call.call_id, "ok", self.output)
 
@@ -78,6 +86,24 @@ def provider_result(decision: ProviderDecision) -> ProviderResult:
 
 async def collect(orchestrator: AgentOrchestrator, session_id: str, **kwargs: object) -> list[AgentEvent]:
     return [event async for event in orchestrator.stream(session_id, **kwargs)]  # type: ignore[arg-type]
+
+
+def approval_response(
+    orchestrator: AgentOrchestrator,
+    session_id: str,
+    decision: ApprovalDecision,
+) -> ApprovalResponse:
+    request = orchestrator.state(session_id).pending_approval
+    assert request is not None
+    return ApprovalResponse(
+        request.request_id,
+        request.session_id,
+        request.call_id,
+        request.tool_name,
+        request.arguments_sha256,
+        request.expected_revision,
+        decision,
+    )
 
 
 @pytest.mark.asyncio
@@ -158,7 +184,7 @@ async def test_broker_output_limit_fails_after_approval() -> None:
         await collect(
             orchestrator,
             session.session_id,
-            approval=ApprovalDecision.ALLOW_ONCE,
+            approval=approval_response(orchestrator, session.session_id, ApprovalDecision.ALLOW_ONCE),
         )
 
     assert broker.calls == 1
