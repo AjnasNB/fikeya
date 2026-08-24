@@ -11,16 +11,16 @@ Its goal is simple: let developers use the model and agent they prefer without l
 - **Provider-neutral configuration:** Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints.
 - **One runtime for Desktop and CLI:** the same session, approval, tool, usage, and evidence contracts in both interfaces.
 - **Qarinah project memory:** compact, evidence-linked project context, decisions, tool outcomes, worktrees, and context receipts.
-- **Bounded execution:** workspace-root validation, explicit approvals, cancellation, disposable Git worktrees, and post-execution hashes.
+- **Bounded provider execution:** workspace-root validation, explicit network consent, cancellation, and content-free request and response hashes.
 - **Open protocols:** ACP for complete agents and MCP for tools and resources.
-- **Optional browser and crawler tools:** available only after the developer grants the relevant permission.
-- **Native agent loop:** typed plan, act, observe, and review stages with checkpoints, cancellation, bounded retries, exact-call approvals, and execution receipts.
+- **Reviewed browser and crawler presets:** validated, digest-bound connector configuration that stays disabled until the developer explicitly enables it; the connector process and MCP session are separate integrations.
+- **Standalone native-agent core:** typed plan, act, observe, and review stages with checkpoints, cancellation, bounded retries, exact-call approvals, and execution receipts. Wiring this package into the Desktop turn is a remaining alpha integration task.
 
 ## Product Shape
 
 ```text
 Fikeya Desktop                         Fikeya CLI
-Editor | Agent | Terminal | Review     init | run | review | doctor
+Editor | Agent | Terminal | Review     init | doctor | provider | agent | tool
                     │
                     ▼
              Fikeya Local Gateway
@@ -28,12 +28,12 @@ ACP | MCP | typed events | approvals | cancellation | resume
                     │
                     ▼
               Fikeya Runtime
-providers | planning | tools | worktrees | usage receipts
+provider calls | connector presets | usage receipts
                     │
           ┌─────────┼──────────┐
-          ▼         ▼          ▼
-       Qarinah    Browser    Crawler
-        memory      tools      tools
+          ▼                    ▼
+       Qarinah          ACP and MCP adapters
+        memory          plus reviewed presets
 ```
 
 ## Security Model
@@ -68,7 +68,7 @@ The Python runtime also has focused setup and test commands in [`fikeya-runtime/
 
 ## Licensing
 
-The Code OSS base and its bundled upstream components retain their original MIT and third-party licenses. Fikeya-owned runtime and product-layer code are licensed under AGPL-3.0-or-later unless a file states otherwise. Public protocol schemas and interoperability SDKs are intended to remain permissively licensed so other tools can implement them.
+The Code OSS base and its bundled upstream components retain their original MIT and third-party licenses. Fikeya-owned runtime, product-layer, and Python interoperability code are licensed under AGPL-3.0-or-later unless a file states otherwise. The `@fikeya/protocol` TypeScript package and its public schemas are Apache-2.0 so other tools can implement the wire contract.
 
 Open source permits inspection, modification, redistribution, and commercial use under the applicable licenses. Fikeya preserves required notices and does not claim that copyleft prevents copying.
 
