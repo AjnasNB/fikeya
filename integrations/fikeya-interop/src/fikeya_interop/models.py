@@ -98,6 +98,14 @@ class PermissionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class PermissionResolution:
+    """A host decision plus an optional requested-permission subset."""
+
+    decision: PermissionDecision
+    granted_permissions: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class ToolDescriptor:
     """A normalized MCP tool definition."""
 

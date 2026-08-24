@@ -23,6 +23,7 @@ _DEFAULT_INHERITED_ENVIRONMENT = frozenset(
         "LANG",
         "LC_ALL",
         "LOCALAPPDATA",
+        "COMSPEC",
         "PATH",
         "PATHEXT",
         "SystemRoot",
@@ -95,10 +96,11 @@ class ProcessPolicy:
 
     def build_environment(self, spec: ProcessSpec) -> dict[str, str]:
         validated = self.validate(spec)
+        inherited = {name.casefold() for name in self.inherited_environment}
         environment = {
             name: value
             for name, value in os.environ.items()
-            if name in self.inherited_environment and not _SENSITIVE_ENVIRONMENT.search(name)
+            if name.casefold() in inherited and not _SENSITIVE_ENVIRONMENT.search(name)
         }
         environment.update(validated.environment)
         return environment
