@@ -5,6 +5,11 @@
 	"version": "0.1.0",
 	"publisher": "fikeya",
 	"license": "AGPL-3.0-or-later",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AjnasNB/fikeya.git",
+		"directory": "extensions/fikeya-desktop"
+	},
 	"engines": {
 		"vscode": "^1.110.0"
 	},
@@ -109,6 +114,10 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.x",
-		"typescript": "^5.9.3"
+		"@vscode/vsce": "3.9.2",
+		"esbuild": "0.28.1",
+		"qarinah": "0.4.0",
+		"typescript": "^5.9.3",
+		"yauzl": "3.2.1"
 	}
 }

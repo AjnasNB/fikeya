@@ -4,11 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import readline from 'node:readline';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildMemoryDashboard } from 'qarinah';
 
 const maximumInputBytes = 1024 * 1024;
 const root = readRoot(process.argv.slice(2));
@@ -42,7 +41,6 @@ async function handleLine(line) {
 	}
 
 	try {
-		const { buildMemoryDashboard } = await loadPinnedQarinah();
 		const dashboard = await buildMemoryDashboard({ cwd: root });
 		const compactView = {
 			schemaVersion: 'qarinah.developer-memory-view.v1',
@@ -60,19 +58,6 @@ async function handleLine(line) {
 		// The provider error is deliberately hidden from the webview boundary.
 		writeError(request.id, -32000, 'Qarinah memory is unavailable for this workspace.');
 	}
-}
-
-async function loadPinnedQarinah() {
-	const sidecarDirectory = path.dirname(fileURLToPath(import.meta.url));
-	const candidates = [
-		path.resolve(sidecarDirectory, '..', 'node_modules', 'qarinah', 'src', 'index.js'),
-		path.resolve(sidecarDirectory, '..', '..', '..', 'integrations', 'qarinah-sidecar', 'node_modules', 'qarinah', 'src', 'index.js')
-	];
-	const modulePath = candidates.find(candidate => existsSync(candidate));
-	if (!modulePath) {
-		throw new Error('Pinned Qarinah package not found.');
-	}
-	return import(pathToFileURL(modulePath).href);
 }
 
 function readRoot(argv) {
