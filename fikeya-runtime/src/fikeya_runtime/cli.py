@@ -289,9 +289,23 @@ def _run_doctor(args: argparse.Namespace) -> int:
         checks.append({"detail": str(error), "name": "provider-metadata", "ok": False})
     try:
         OSKeyringSecretStore()._keyring()
-        checks.append({"detail": "available", "name": "os-keyring", "ok": True})
+        checks.append(
+            {
+                "detail": "available",
+                "name": "os-keyring",
+                "ok": True,
+                "optional": True,
+            }
+        )
     except SecretStoreUnavailable as error:
-        checks.append({"detail": str(error), "name": "os-keyring", "ok": False})
+        checks.append(
+            {
+                "detail": str(error),
+                "name": "os-keyring",
+                "ok": False,
+                "optional": True,
+            }
+        )
     qarinah_kind, qarinah_detail = qarinah_adapter_kind()
     checks.append(
         {
