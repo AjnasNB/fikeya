@@ -40,6 +40,7 @@ interface DashboardState {
 	readonly providerProfiles: readonly ProviderProfile[];
 	readonly runtime: 'not-checked' | 'checking' | 'ready' | 'attention';
 	readonly workspaceInitialized: boolean;
+	readonly runtimeProviderCount?: number;
 	readonly qarinah: string;
 }
 
@@ -79,6 +80,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			providerProfiles: readProviderProfiles(context.globalState.get<readonly ProviderProfile[]>(providerProfilesStorageKey)),
 			runtime: 'not-checked',
 			workspaceInitialized: false,
+			runtimeProviderCount: undefined,
 			qarinah: vscode.l10n.t('Not checked')
 		};
 	}
@@ -235,7 +237,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		};
 		const providerProfiles = [...this.state.providerProfiles, profile];
 		await this.context.globalState.update(providerProfilesStorageKey, providerProfiles);
-		this.state = { ...this.state, providerProfiles };
+		this.state = { ...this.state, providerProfiles, runtimeProviderCount: undefined };
 		this.refresh();
 		void vscode.window.showInformationMessage(vscode.l10n.t('{0} was configured in Fikeya Runtime.', profile.label));
 	}
@@ -279,6 +281,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			...this.state,
 			runtime: 'ready',
 			workspaceInitialized: result.report?.initialized ?? (command === 'init' || this.state.workspaceInitialized),
+			runtimeProviderCount: result.report?.providerCount ?? this.state.runtimeProviderCount,
 			qarinah: result.report?.qarinah ?? this.state.qarinah
 		};
 		this.refresh();
@@ -395,6 +398,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		</section>
 		<section class="card studio-only" aria-labelledby="providers-title">
 			<h2 id="providers-title">${escapeHtml(strings.providers)}</h2>
+			<span class="badge">${escapeHtml(runtimeProviderSummary(this.state.runtimeProviderCount, strings))}</span>
 			<p>${escapeHtml(strings.providersDescription)}</p>
 			<div class="providers">${providerCards}</div>
 			<div class="actions"><button data-command="fikeya.configureProvider" type="button">${escapeHtml(strings.configureProvider)}</button></div>
@@ -452,6 +456,7 @@ interface WebviewStrings {
 	readonly qarinahDescription: string;
 	readonly providers: string;
 	readonly providersDescription: string;
+	readonly runtimeProvidersNotChecked: string;
 	readonly notConfigured: string;
 	readonly configureProvider: string;
 	readonly approvalsQueue: string;
@@ -500,6 +505,7 @@ function getWebviewStrings(): WebviewStrings {
 		qarinahDescription: vscode.l10n.t('Qarinah supplies evidence-linked memory and context receipts for this workspace.'),
 		providers: vscode.l10n.t('Provider Profiles'),
 		providersDescription: vscode.l10n.t('Provider metadata stays in Fikeya state. API credentials remain in OS-backed secret stores.'),
+		runtimeProvidersNotChecked: vscode.l10n.t('Run doctor to reconcile runtime profiles'),
 		notConfigured: vscode.l10n.t('Not Configured'),
 		configureProvider: vscode.l10n.t('Configure Provider'),
 		approvalsQueue: vscode.l10n.t('Approvals Queue'),
@@ -665,6 +671,13 @@ function runtimeLabel(runtime: DashboardState['runtime'], strings: WebviewString
 		default:
 			return strings.notChecked;
 	}
+}
+
+function runtimeProviderSummary(count: number | undefined, strings: WebviewStrings): string {
+	if (count === undefined) {
+		return strings.runtimeProvidersNotChecked;
+	}
+	return count === 1 ? vscode.l10n.t('1 Runtime Profile') : vscode.l10n.t('{0} Runtime Profiles', count);
 }
 
 function modeLabel(mode: FikeyaMode, strings: WebviewStrings): string {
