@@ -364,7 +364,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				this.emit('data', file);
 			}));
 
-		const license = gulp.src([product.licenseFileName, 'ThirdPartyNotices.txt', 'licenses/**'], { base: '.', allowEmpty: true });
+		const license = gulp.src([product.licenseFileName, 'LICENSE.txt', 'LICENSES/**', 'ThirdPartyNotices.txt', 'licenses/**'], { base: '.', allowEmpty: true });
 
 		// TODO the API should be copied to `out` during compile, not here
 		const api = gulp.src('src/vscode-dts/vscode.d.ts').pipe(rename('out/vscode-dts/vscode.d.ts'));

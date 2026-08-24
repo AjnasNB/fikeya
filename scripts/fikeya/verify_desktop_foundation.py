@@ -34,6 +34,7 @@ def expect_equal(actual: object, expected: object, label: str) -> None:
 
 product = read_json("product.json")
 root_package = read_json("package.json")
+distribution = read_json("fikeya-distribution.json")
 readme = read_text("README.md")
 root_license = read_text("LICENSE.txt")
 
@@ -61,12 +62,16 @@ expect_equal(
     "https://github.com/AjnasNB/fikeya/issues/new",
     "product.json reportIssueUrl",
 )
-expect_equal(product.get("licenseName"), "MIT", "Code OSS foundation license name")
-expect_equal(product.get("licenseFileName"), "LICENSE.txt", "Code OSS foundation license file")
+expect_equal(
+    product.get("licenseName"),
+    "MIT AND AGPL-3.0-or-later AND Apache-2.0",
+    "Fikeya distribution SPDX license expression",
+)
+expect_equal(product.get("licenseFileName"), "LICENSES/README.md", "Fikeya distribution license map file")
 expect_equal(
     product.get("licenseUrl"),
-    "https://github.com/AjnasNB/fikeya/blob/main/LICENSE.txt",
-    "Code OSS foundation license URL",
+    "https://github.com/AjnasNB/fikeya/blob/main/LICENSES/README.md",
+    "Fikeya distribution license URL",
 )
 expect_equal(product.get("serverLicenseUrl"), product.get("licenseUrl"), "server license URL")
 expect("extensionsGallery" not in product, "product.json must not silently enable a proprietary extension gallery.")
@@ -99,6 +104,14 @@ expect_equal(root_package.get("name"), "code-oss-dev", "upstream source-package 
 expect(root_package.get("private") is True, "The upstream source package must remain private and must never be published to npm.")
 expect_equal(root_package.get("main"), "./out/main.js", "desktop entry point")
 expect(root_license.startswith("MIT License"), "The Code OSS foundation license must retain its MIT notice.")
+expect_equal(distribution.get("name"), "Fikeya", "distribution identity")
+expect_equal(distribution.get("status"), "developer-alpha", "distribution release status")
+expect_equal(distribution.get("licenseMap"), "LICENSES/README.md", "distribution license map")
+expect_equal(
+    distribution.get("licenseExpression"),
+    "MIT AND AGPL-3.0-or-later AND Apache-2.0",
+    "distribution license expression",
+)
 expect("built on [Code OSS]" in readme, "README must disclose the Code OSS foundation.")
 expect(
     "proprietary services, and Marketplace access are not part of Fikeya" in readme,
@@ -116,6 +129,22 @@ component_licenses = (
 )
 for relative_path, marker in component_licenses:
     expect(marker in read_text(relative_path), f"{relative_path} must retain the declared license marker {marker}.")
+
+license_map = read_text("LICENSES/README.md")
+for relative_path, marker in (
+    ("LICENSES/Apache-2.0.txt", "Apache License"),
+    ("LICENSES/AGPL-3.0-or-later.txt", "GNU AFFERO GENERAL PUBLIC LICENSE"),
+    ("packages/fikeya-protocol/LICENSE", "Apache License"),
+    ("integrations/qarinah-sidecar/LICENSE", "Apache License"),
+    ("fikeya-runtime/LICENSE", "GNU AFFERO GENERAL PUBLIC LICENSE"),
+    ("fikeya-agent-core/LICENSE", "GNU AFFERO GENERAL PUBLIC LICENSE"),
+):
+    expect(marker in read_text(relative_path), f"{relative_path} must contain the declared full license text.")
+expect("Code OSS foundation" in license_map, "The distribution license map must identify the Code OSS foundation scope.")
+expect("Fikeya-owned runtime" in license_map, "The distribution license map must identify the Fikeya-owned scope.")
+packaging_source = read_text("build/gulpfile.vscode.ts")
+expect("'LICENSE.txt'" in packaging_source, "Desktop packaging must preserve the Code OSS MIT license text.")
+expect("'LICENSES/**'" in packaging_source, "Desktop packaging must include the Fikeya distribution license bundle.")
 
 for relative_path, label in (
     ("resources/win32/code.ico", "Windows application icon source"),

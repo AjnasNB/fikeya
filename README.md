@@ -84,7 +84,7 @@ The Code OSS base and its bundled upstream components retain their original MIT 
 
 Open source permits inspection, modification, redistribution, and commercial use under the applicable licenses. Fikeya preserves required notices and does not claim that copyleft prevents copying.
 
-See [LICENSE.txt](LICENSE.txt), `LICENSES/`, and `THIRD_PARTY_NOTICES.md`.
+See [LICENSE.txt](LICENSE.txt), the [distribution license map](LICENSES/README.md), and [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Upstream
 

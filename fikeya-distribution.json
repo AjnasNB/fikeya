@@ -1,0 +1,27 @@
+{
+	"schemaVersion": 1,
+	"name": "Fikeya",
+	"version": "0.1.0-alpha.1",
+	"status": "developer-alpha",
+	"description": "Open, provider-neutral AI code editor and coding-agent runtime for verified work with less context.",
+	"homepage": "https://fikeya.com",
+	"repository": "https://github.com/AjnasNB/fikeya",
+	"upstream": {
+		"name": "Code OSS",
+		"repository": "https://github.com/microsoft/vscode",
+		"sourceWorkspacePackage": "code-oss-dev",
+		"license": "MIT"
+	},
+	"licenseExpression": "MIT AND AGPL-3.0-or-later AND Apache-2.0",
+	"licenseMap": "LICENSES/README.md",
+	"notices": [
+		"THIRD_PARTY_NOTICES.md",
+		"ThirdPartyNotices.txt"
+	],
+	"artifacts": {
+		"editorExtension": "extensions/fikeya-desktop",
+		"runtime": "fikeya-runtime",
+		"agentCore": "fikeya-agent-core",
+		"protocol": "packages/fikeya-protocol"
+	}
+}
