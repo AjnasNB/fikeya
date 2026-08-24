@@ -549,7 +549,7 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 			detail: vscode.l10n.t('Connect with a user-owned API credential.'),
 			runtimeKind: 'anthropic',
 			credentialType: 'api-key',
-			defaultBaseUrl: 'https://api.anthropic.com',
+			defaultBaseUrl: 'https://api.anthropic.com/v1',
 			secretPrompt: vscode.l10n.t('Enter the Anthropic API Key')
 		},
 		{
@@ -576,7 +576,7 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 			detail: vscode.l10n.t('Use a model running on this device.'),
 			runtimeKind: 'ollama',
 			credentialType: 'none',
-			defaultBaseUrl: 'http://127.0.0.1:11434'
+			defaultBaseUrl: 'http://127.0.0.1:11434/v1'
 		},
 		{
 			id: 'openai-compatible',
