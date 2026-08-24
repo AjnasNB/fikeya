@@ -9,7 +9,9 @@ import fs from 'fs';
 import * as task from './lib/gulp/task.ts';
 import { checkCopilotEnginesVersion, checkNoNewJavaScriptFiles, hygiene } from './hygiene.ts';
 
-const dirName = path.dirname(new URL(import.meta.url).pathname);
+// `URL.pathname` is percent-encoded and is not a native Windows path. Node 24's
+// `import.meta.dirname` keeps drive letters and spaces intact on every host.
+const dirName = import.meta.dirname;
 
 function checkPackageJSON(this: NodeJS.ReadWriteStream, actualPath: string) {
 	const actual = JSON.parse(fs.readFileSync(path.join(dirName, '..', actualPath), 'utf8'));
