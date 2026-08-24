@@ -56,8 +56,8 @@ const receipt = {
 	outputTokens: 5,
 	requestBytes: 240,
 	responseBytes: 190,
-	requestSha256: 'a'.repeat(64),
-	responseSha256: 'b'.repeat(64),
+	requestSha256: `sha256:${'a'.repeat(64)}`,
+	responseSha256: `sha256:${'b'.repeat(64)}`,
 	statusCode: 200,
 	durationMs: 430,
 	createdAt: '2026-08-24T00:00:00.000Z'
@@ -65,6 +65,11 @@ const receipt = {
 
 test('accepts the receipt shape emitted by the runtime', () => {
 	assert.equal(isUsageReceipt(receipt), true);
+});
+
+test('rejects unprefixed or non-canonical receipt digests', () => {
+	assert.equal(isUsageReceipt({ ...receipt, requestSha256: 'a'.repeat(64) }), false);
+	assert.equal(isUsageReceipt({ ...receipt, responseSha256: `sha256:${'B'.repeat(64)}` }), false);
 });
 
 test('requires null token fields when provider usage is unavailable', () => {
