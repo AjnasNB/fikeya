@@ -97,6 +97,7 @@ assert(wranglerText.includes('"compatibility_date": "2026-08-24"'), 'Cloudflare 
 assert(!wranglerText.match(/account_id|zone_id|api_token|route/i), 'Wrangler config must not contain account, zone, token, or route values');
 assert(workerWranglerText.includes('"main": "./worker.ts"'), 'Worker entry point is missing');
 assert(workerWranglerText.includes('"binding": "ASSETS"'), 'Static asset binding is missing');
+assert(workerWranglerText.includes('"run_worker_first": true'), 'Worker must run before static assets so hostname redirects execute');
 assert(!workerWranglerText.match(/account_id|zone_id|api_token/i), 'Worker config must not contain account, zone, or token values');
 
 const redirectResponse = await worker.fetch(new Request('https://www.fikeya.com/docs/?q=1'), {
