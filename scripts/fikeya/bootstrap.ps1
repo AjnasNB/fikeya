@@ -28,13 +28,26 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
 }
 
 function Find-PythonCommand {
+	$candidates = @()
 	$python = Get-Command python -ErrorAction SilentlyContinue
 	if ($null -ne $python) {
-		return @($python.Source)
+		$candidates += ,@($python.Source)
 	}
 	$launcher = Get-Command py -ErrorAction SilentlyContinue
 	if ($null -ne $launcher) {
-		return @($launcher.Source, '-3')
+		$candidates += ,@($launcher.Source, '-3')
+	}
+	foreach ($candidate in $candidates) {
+		$executable = $candidate[0]
+		$prefix = @($candidate | Select-Object -Skip 1)
+		$version = (& $executable @prefix --version 2>&1 | Out-String).Trim()
+		if ($LASTEXITCODE -eq 0) {
+			return [PSCustomObject]@{
+				Executable = $executable
+				Prefix = $prefix
+				Version = $version
+			}
+		}
 	}
 	throw 'Python 3.10 or newer was not found on PATH.'
 }
@@ -48,10 +61,10 @@ if ($null -eq $npm) {
 	throw 'npm was not found on PATH.'
 }
 
-$pythonCommand = @(Find-PythonCommand)
-$pythonExecutable = $pythonCommand[0]
-$pythonPrefix = @($pythonCommand | Select-Object -Skip 1)
-$pythonVersion = (& $pythonExecutable @pythonPrefix --version 2>&1 | Out-String).Trim()
+$pythonCommand = Find-PythonCommand
+$pythonExecutable = $pythonCommand.Executable
+$pythonPrefix = @($pythonCommand.Prefix)
+$pythonVersion = $pythonCommand.Version
 $nodeVersion = (& $node.Source --version 2>&1 | Out-String).Trim()
 $npmVersion = (& $npm.Source --version 2>&1 | Out-String).Trim()
 $support = Join-Path $scriptDirectory 'bootstrap_support.py'

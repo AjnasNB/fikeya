@@ -45,18 +45,24 @@ if [ -z "$PROJECT_ROOT" ]; then
 fi
 SUPPORT=$SCRIPT_DIRECTORY/bootstrap_support.py
 
-if command -v python3 >/dev/null 2>&1; then
-	PYTHON=python3
-elif command -v python >/dev/null 2>&1; then
-	PYTHON=python
-else
+PYTHON=''
+PYTHON_VERSION=''
+for candidate in python3 python; do
+	if command -v "$candidate" >/dev/null 2>&1; then
+		if candidate_version=$("$candidate" --version 2>&1); then
+			PYTHON=$candidate
+			PYTHON_VERSION=$candidate_version
+			break
+		fi
+	fi
+done
+if [ -z "$PYTHON" ]; then
 	printf '%s\n' '[error] Python 3.10 or newer was not found on PATH.' >&2
 	exit 2
 fi
 command -v node >/dev/null 2>&1 || { printf '%s\n' '[error] Node.js was not found on PATH.' >&2; exit 2; }
 command -v npm >/dev/null 2>&1 || { printf '%s\n' '[error] npm was not found on PATH.' >&2; exit 2; }
 
-PYTHON_VERSION=$($PYTHON --version 2>&1)
 NODE_VERSION=$(node --version 2>&1)
 NPM_VERSION=$(npm --version 2>&1)
 
