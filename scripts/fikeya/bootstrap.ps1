@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 if ($Help) {
-	Write-Output 'Usage: pwsh -File scripts/fikeya/bootstrap.ps1 [--check-only] [--root PATH] [--cache-root PATH]'
+	Write-Output 'Usage: pwsh -File scripts/fikeya/bootstrap.ps1 [-CheckOnly] [-ProjectRoot PATH] [-CacheRoot PATH]'
 	exit 0
 }
 
