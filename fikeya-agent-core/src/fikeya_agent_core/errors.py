@@ -36,9 +36,5 @@ class RetryableProviderError(AgentCoreError):
     """A transient model-provider failure eligible for a bounded retry."""
 
 
-class RetryableBrokerError(AgentCoreError):
-    """Deprecated marker retained for source compatibility; broker calls are never auto-retried."""
-
-
 class BrokerOutcomeUncertainError(AgentCoreError):
     """Raised after an execution attempt whose exact outcome requires reconciliation."""

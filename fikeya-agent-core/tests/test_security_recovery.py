@@ -24,7 +24,6 @@ from fikeya_agent_core import (
     ProtocolError,
     ProviderDecision,
     ProviderResult,
-    RetryableBrokerError,
     RetryableProviderError,
     ReviewAction,
     Stage,
@@ -280,7 +279,7 @@ async def test_broker_task_cancellation_is_an_uncertain_outcome_not_a_replay() -
 @pytest.mark.asyncio
 async def test_broker_failure_is_never_retried_and_requires_bound_reconciliation() -> None:
     provider = scripted_provider()
-    broker = ExactOnceBroker(failure=RetryableBrokerError("transport disconnected"))
+    broker = ExactOnceBroker(failure=RuntimeError("transport disconnected"))
     orchestrator = AgentOrchestrator(provider, broker, InMemoryCheckpointStore())
     session = orchestrator.start("inspect safely", session_id="session:uncertain")
     await pause(orchestrator, session.session_id)
