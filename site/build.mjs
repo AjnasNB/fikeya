@@ -1,4 +1,4 @@
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +20,7 @@ const publicFiles = [
 	'styles.css'
 ];
 
+await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await Promise.all(publicFiles.map(file => copyFile(path.join(root, file), path.join(output, file))));
 process.stdout.write(`Built ${publicFiles.length} public files in ${output}.\n`);
