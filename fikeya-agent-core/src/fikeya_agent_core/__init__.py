@@ -4,6 +4,7 @@
 """Native, bounded coding-agent orchestration contracts for Fikeya."""
 
 from .cancellation import CancellationToken
+from .checkpoints import CheckpointStore, InMemoryCheckpointStore, SqliteCheckpointStore
 from .errors import (
     AgentCoreError,
     CancellationError,
@@ -45,6 +46,7 @@ __all__ = [
     "ApprovalRequest",
     "CancellationError",
     "CancellationToken",
+    "CheckpointStore",
     "ConfigurationError",
     "DecisionKind",
     "EvidenceCitation",
@@ -52,6 +54,7 @@ __all__ = [
     "EventKind",
     "ExecutionBroker",
     "LimitExceededError",
+    "InMemoryCheckpointStore",
     "ProtocolError",
     "Provider",
     "ProviderDecision",
@@ -65,6 +68,7 @@ __all__ = [
     "SessionState",
     "Stage",
     "StateConflictError",
+    "SqliteCheckpointStore",
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
