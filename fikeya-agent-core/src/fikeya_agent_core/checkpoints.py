@@ -16,7 +16,10 @@ from typing import Protocol
 
 from .errors import ConfigurationError, LimitExceededError, ProtocolError, SessionNotFoundError, StateConflictError
 from .models import (
+    AgentEvent,
+    ApprovalGrant,
     ApprovalRequest,
+    EventKind,
     EvidenceCitation,
     EvidenceContext,
     SessionState,
@@ -184,9 +187,14 @@ def decode_state(payload: bytes) -> SessionState:
         pending = _tool_call_from_value(pending_value) if pending_value is not None else None
         approval_value = value.get("pendingApproval")
         approval = _approval_from_value(approval_value) if approval_value is not None else None
+        grant_value = value.get("approvalGrant")
+        grant = _grant_from_value(grant_value) if grant_value is not None else None
         observations_value = value["observations"]
         if not isinstance(observations_value, list):
             raise TypeError("observations must be a list")
+        events_value = value.get("events", [])
+        if not isinstance(events_value, list):
+            raise TypeError("events must be a list")
         return SessionState(
             session_id=_string(value, "sessionId"),
             prompt=_string(value, "prompt"),
@@ -198,7 +206,11 @@ def decode_state(payload: bytes) -> SessionState:
             final_output=_optional_string(value, "finalOutput"),
             pending_call=pending,
             pending_approval=approval,
+            approval_grant=grant,
             evidence=evidence,
+            events=[_event_from_value(item) for item in events_value],
+            execution_lease_id=_optional_string(value, "executionLeaseId"),
+            execution_lease_expires_at_ms=_optional_integer(value, "executionLeaseExpiresAtMs"),
             step_count=_integer(value, "stepCount"),
             event_sequence=_integer(value, "eventSequence"),
             revision=_integer(value, "revision"),
@@ -229,7 +241,11 @@ def _state_to_value(state: SessionState) -> dict[str, object]:
         "finalOutput": state.final_output,
         "pendingCall": _tool_call_to_value(state.pending_call) if state.pending_call else None,
         "pendingApproval": _approval_to_value(state.pending_approval) if state.pending_approval else None,
+        "approvalGrant": _grant_to_value(state.approval_grant) if state.approval_grant else None,
         "evidence": _evidence_to_value(state.evidence) if state.evidence else None,
+        "events": [_event_to_value(item) for item in state.events],
+        "executionLeaseId": state.execution_lease_id,
+        "executionLeaseExpiresAtMs": state.execution_lease_expires_at_ms,
         "stepCount": state.step_count,
         "eventSequence": state.event_sequence,
         "revision": state.revision,
@@ -269,12 +285,14 @@ def _tool_result_from_value(value: object) -> ToolResult:
     )
 
 
-def _approval_to_value(request: ApprovalRequest) -> dict[str, str]:
+def _approval_to_value(request: ApprovalRequest) -> dict[str, object]:
     return {
         "requestId": request.request_id,
         "sessionId": request.session_id,
+        "callId": request.call_id,
         "toolName": request.tool_name,
         "argumentsSha256": request.arguments_sha256,
+        "expectedRevision": request.expected_revision,
         "summary": request.summary,
     }
 
@@ -285,9 +303,59 @@ def _approval_from_value(value: object) -> ApprovalRequest:
     return ApprovalRequest(
         _string(value, "requestId"),
         _string(value, "sessionId"),
+        _string(value, "callId"),
         _string(value, "toolName"),
         _string(value, "argumentsSha256"),
+        _integer(value, "expectedRevision"),
         _string(value, "summary"),
+    )
+
+
+def _grant_to_value(grant: ApprovalGrant) -> dict[str, str]:
+    return {
+        "requestId": grant.request_id,
+        "sessionId": grant.session_id,
+        "callId": grant.call_id,
+        "toolName": grant.tool_name,
+        "argumentsSha256": grant.arguments_sha256,
+        "idempotencyKey": grant.idempotency_key,
+    }
+
+
+def _grant_from_value(value: object) -> ApprovalGrant:
+    if not isinstance(value, dict):
+        raise ProtocolError("checkpoint approval grant is invalid")
+    return ApprovalGrant(
+        _string(value, "requestId"),
+        _string(value, "sessionId"),
+        _string(value, "callId"),
+        _string(value, "toolName"),
+        _string(value, "argumentsSha256"),
+        _string(value, "idempotencyKey"),
+    )
+
+
+def _event_to_value(event: AgentEvent) -> dict[str, object]:
+    return {
+        "sessionId": event.session_id,
+        "sequence": event.sequence,
+        "kind": event.kind.value,
+        "stage": event.stage.value,
+        "data": event.data,
+        "createdAtMs": event.created_at_ms,
+    }
+
+
+def _event_from_value(value: object) -> AgentEvent:
+    if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
+        raise ProtocolError("checkpoint event is invalid")
+    return AgentEvent(
+        session_id=_string(value, "sessionId"),
+        sequence=_integer(value, "sequence"),
+        kind=EventKind(_string(value, "kind")),
+        stage=Stage(_string(value, "stage")),
+        data=value["data"],
+        created_at_ms=_integer(value, "createdAtMs"),
     )
 
 
@@ -341,6 +409,15 @@ def _integer(value: dict[str, object], name: str) -> int:
     item = value[name]
     if isinstance(item, bool) or not isinstance(item, int) or item < 0:
         raise ProtocolError(f"checkpoint field must be a non-negative integer: {name}")
+    return item
+
+
+def _optional_integer(value: dict[str, object], name: str) -> int | None:
+    item = value.get(name)
+    if item is None:
+        return None
+    if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+        raise ProtocolError(f"checkpoint field must be null or a non-negative integer: {name}")
     return item
 
 

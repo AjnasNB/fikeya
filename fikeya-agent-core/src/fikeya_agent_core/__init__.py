@@ -8,6 +8,7 @@ from .checkpoints import CheckpointStore, InMemoryCheckpointStore, SqliteCheckpo
 from .engine import AgentOrchestrator
 from .errors import (
     AgentCoreError,
+    BrokerOutcomeUncertainError,
     CancellationError,
     ConfigurationError,
     LimitExceededError,
@@ -21,7 +22,9 @@ from .models import (
     AgentEvent,
     AgentLimits,
     ApprovalDecision,
+    ApprovalGrant,
     ApprovalRequest,
+    ApprovalResponse,
     DecisionKind,
     EventKind,
     EvidenceCitation,
@@ -51,7 +54,10 @@ __all__ = [
     "AgentLimits",
     "AgentOrchestrator",
     "ApprovalDecision",
+    "ApprovalGrant",
     "ApprovalRequest",
+    "ApprovalResponse",
+    "BrokerOutcomeUncertainError",
     "CancellationError",
     "CancellationToken",
     "CheckpointStore",

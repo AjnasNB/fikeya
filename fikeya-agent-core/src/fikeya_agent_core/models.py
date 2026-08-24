@@ -91,6 +91,7 @@ class EventKind(str, enum.Enum):
     TOOL_PROPOSED = "tool.proposed"
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_RESOLVED = "approval.resolved"
+    TOOL_EXECUTION_CLAIMED = "tool.execution_claimed"
     TOOL_COMPLETED = "tool.completed"
     ANSWER_PROPOSED = "answer.proposed"
     REVIEW_COMPLETED = "review.completed"
@@ -111,6 +112,7 @@ class AgentLimits:
     max_tool_arguments_bytes: int = 65_536
     max_tool_result_bytes: int = 262_144
     max_tools: int = 128
+    max_events: int = 2_048
     provider_timeout_seconds: float = 120.0
     broker_timeout_seconds: float = 120.0
 
@@ -129,6 +131,7 @@ class AgentLimits:
                 "max_tool_result_bytes is outside the safe range",
             ),
             (1 <= self.max_tools <= 1_024, "max_tools must be between 1 and 1024"),
+            (16 <= self.max_events <= 16_384, "max_events must be between 16 and 16384"),
             (0.1 <= self.provider_timeout_seconds <= 600, "provider_timeout_seconds is outside the safe range"),
             (0.1 <= self.broker_timeout_seconds <= 600, "broker_timeout_seconds is outside the safe range"),
         )
@@ -236,17 +239,65 @@ class ApprovalRequest:
 
     request_id: str
     session_id: str
+    call_id: str
     tool_name: str
     arguments_sha256: str
+    expected_revision: int
     summary: str
 
     def __post_init__(self) -> None:
-        if not _IDENTIFIER.fullmatch(self.request_id) or not _IDENTIFIER.fullmatch(self.session_id):
-            raise ConfigurationError("approval request or session identifier is invalid")
+        identifiers = (self.request_id, self.session_id, self.call_id)
+        if any(not _IDENTIFIER.fullmatch(item) for item in identifiers):
+            raise ConfigurationError("approval request, session, or call identifier is invalid")
         if not _IDENTIFIER.fullmatch(self.tool_name) or not _SHA256.fullmatch(self.arguments_sha256):
             raise ConfigurationError("approval tool name or argument digest is invalid")
         if not self.summary or len(self.summary.encode("utf-8")) > 4_096:
             raise ConfigurationError("approval summary must be 1-4096 UTF-8 bytes")
+        if self.expected_revision < 0:
+            raise ConfigurationError("approval expected_revision cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalResponse:
+    """A UI decision bound to one exact checkpointed approval request."""
+
+    request_id: str
+    session_id: str
+    call_id: str
+    tool_name: str
+    arguments_sha256: str
+    expected_revision: int
+    decision: ApprovalDecision
+
+    def __post_init__(self) -> None:
+        identifiers = (self.request_id, self.session_id, self.call_id)
+        if any(not _IDENTIFIER.fullmatch(item) for item in identifiers):
+            raise ConfigurationError("approval response identifiers are invalid")
+        if not _IDENTIFIER.fullmatch(self.tool_name):
+            raise ConfigurationError("approval response tool name is invalid")
+        if not _SHA256.fullmatch(self.arguments_sha256) or self.expected_revision < 0:
+            raise ConfigurationError("approval response digest or revision is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalGrant:
+    """Durable one-call grant required by the observe stage."""
+
+    request_id: str
+    session_id: str
+    call_id: str
+    tool_name: str
+    arguments_sha256: str
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        identifiers = (self.request_id, self.session_id, self.call_id)
+        if any(not _IDENTIFIER.fullmatch(item) for item in identifiers):
+            raise ConfigurationError("approval grant identifiers are invalid")
+        if not _IDENTIFIER.fullmatch(self.tool_name):
+            raise ConfigurationError("approval grant tool name is invalid")
+        if not _SHA256.fullmatch(self.arguments_sha256) or not _SHA256.fullmatch(self.idempotency_key):
+            raise ConfigurationError("approval grant digests are invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,7 +378,11 @@ class SessionState:
     final_output: str | None = None
     pending_call: ToolCall | None = None
     pending_approval: ApprovalRequest | None = None
+    approval_grant: ApprovalGrant | None = None
     evidence: EvidenceContext | None = None
+    events: list[AgentEvent] = field(default_factory=list)
+    execution_lease_id: str | None = None
+    execution_lease_expires_at_ms: int | None = None
     step_count: int = 0
     event_sequence: int = 0
     revision: int = 0

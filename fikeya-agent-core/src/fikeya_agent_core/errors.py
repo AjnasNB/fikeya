@@ -37,4 +37,8 @@ class RetryableProviderError(AgentCoreError):
 
 
 class RetryableBrokerError(AgentCoreError):
-    """A transient execution-broker failure eligible for a bounded retry."""
+    """Deprecated marker retained for source compatibility; broker calls are never auto-retried."""
+
+
+class BrokerOutcomeUncertainError(AgentCoreError):
+    """Raised after an execution attempt whose exact outcome requires reconciliation."""

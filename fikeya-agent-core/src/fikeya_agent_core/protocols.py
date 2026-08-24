@@ -22,4 +22,11 @@ class ExecutionBroker(Protocol):
 
     async def list_tools(self, cancellation: CancellationToken) -> tuple[ToolDefinition, ...]: ...
 
-    async def execute(self, call: ToolCall, cancellation: CancellationToken) -> ToolResult: ...
+    async def execute(
+        self,
+        call: ToolCall,
+        cancellation: CancellationToken,
+        *,
+        idempotency_key: str,
+    ) -> ToolResult:
+        """Execute exactly once per stable idempotency key, returning a cached result on duplicates."""
