@@ -1,0 +1,10 @@
+{
+  "name": "@fikeya/efficiency-benchmark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compare:fixtures": "node compare.ts --baseline fixtures/synthetic-baseline.jsonl --fikeya fixtures/synthetic-fikeya.jsonl",
+    "test": "node --test test/*.test.ts"
+  }
+}

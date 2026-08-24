@@ -4,12 +4,15 @@ on:
   pull_request:
     paths:
       - '.github/workflows/fikeya-components.yml'
+      - 'bench/fikeya-efficiency/**'
       - 'build/filters.ts'
       - 'build/gulpfile.hygiene.ts'
       - 'extensions/fikeya-desktop/**'
       - 'fikeya-agent-core/**'
       - 'fikeya-runtime/**'
+      - 'integrations/fikeya-interop/**'
       - 'integrations/qarinah-sidecar/**'
+      - 'integrations/tool-presets/**'
       - 'packages/fikeya-protocol/**'
       - 'product.json'
       - 'LICENSE.txt'
@@ -20,12 +23,15 @@ on:
       - main
     paths:
       - '.github/workflows/fikeya-components.yml'
+      - 'bench/fikeya-efficiency/**'
       - 'build/filters.ts'
       - 'build/gulpfile.hygiene.ts'
       - 'extensions/fikeya-desktop/**'
       - 'fikeya-agent-core/**'
       - 'fikeya-runtime/**'
+      - 'integrations/fikeya-interop/**'
       - 'integrations/qarinah-sidecar/**'
+      - 'integrations/tool-presets/**'
       - 'packages/fikeya-protocol/**'
       - 'product.json'
       - 'LICENSE.txt'
@@ -104,6 +110,24 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm test
 
+  efficiency-benchmark:
+    name: Efficiency benchmark contract / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: bench/fikeya-efficiency
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - run: npm run compare:fixtures
+
   memory-sidecar:
     name: Qarinah sidecar / Node ${{ matrix.node }}
     runs-on: ubuntu-latest
@@ -122,6 +146,38 @@ jobs:
           cache: npm
           cache-dependency-path: integrations/qarinah-sidecar/package-lock.json
       - run: npm ci --ignore-scripts
+      - run: npm test
+
+  interop:
+    name: ACP, Codex, and MCP interoperability
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/fikeya-interop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the lockfile-compatible uv client
+        run: python -m pip install --disable-pip-version-check uv==0.7.8
+      - name: Install the locked test environment
+        run: uv sync --locked --extra test
+      - run: uv run ruff check src tests
+      - run: uv run pytest
+
+  tool-presets:
+    name: Opt-in tool preset contracts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/tool-presets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm run check
       - run: npm test
 
   runtime:
@@ -189,8 +245,19 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: extensions/fikeya-desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: npm ci --ignore-scripts
-      - run: npm test
+      - name: Install pinned standalone-runtime build dependencies
+        run: python -m pip install --disable-pip-version-check -r runtime-build-requirements.txt
+      - name: Test and package an isolated VSIX
+        run: npm run package:vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fikeya-desktop-linux-x64-vsix
+          path: extensions/fikeya-desktop/artifacts/*.vsix
+          if-no-files-found: error
 
   public-site:
     name: Public site
