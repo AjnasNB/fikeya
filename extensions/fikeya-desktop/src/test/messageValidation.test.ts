@@ -27,4 +27,63 @@ describe('Fikeya webview message validation', () => {
 	test('escapes all HTML-significant characters', () => {
 		assert.strictEqual(escapeHtml(`<script data-value="x">'&</script>`), '&lt;script data-value=&quot;x&quot;&gt;&#39;&amp;&lt;/script&gt;');
 	});
+
+	test('accepts bounded agent turns only with per-run network consent', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'runAgent',
+			providerName: 'azure-primary',
+			prompt: 'Explain the failing test.',
+			maxOutputTokens: 2048,
+			allowNetwork: true
+		}), {
+			type: 'runAgent',
+			providerName: 'azure-primary',
+			prompt: 'Explain the failing test.',
+			maxOutputTokens: 2048,
+			allowNetwork: true
+		});
+
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runAgent',
+			providerName: 'azure-primary',
+			prompt: 'No consent.',
+			maxOutputTokens: 2048,
+			allowNetwork: false
+		}), undefined);
+	});
+
+	test('rejects oversized prompts and unsafe provider identifiers', () => {
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runAgent',
+			providerName: '../provider',
+			prompt: 'hello',
+			maxOutputTokens: 1024,
+			allowNetwork: true
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runAgent',
+			providerName: 'local',
+			prompt: '🧠'.repeat(70_000),
+			maxOutputTokens: 1024,
+			allowNetwork: true
+		}), undefined);
+	});
+
+	test('accepts only bounded provider and refresh actions', () => {
+		assert.deepStrictEqual([
+			parseWebviewMessage({ type: 'refreshProviders' }),
+			parseWebviewMessage({ type: 'testProvider', providerName: 'openrouter-primary' }),
+			parseWebviewMessage({ type: 'removeProvider', providerName: 'bad name' }),
+			parseWebviewMessage({ type: 'cancelAgent' }),
+			parseWebviewMessage({ type: 'refreshReceipts' }),
+			parseWebviewMessage({ type: 'refreshMemory' })
+		], [
+			{ type: 'refreshProviders' },
+			{ type: 'testProvider', providerName: 'openrouter-primary' },
+			undefined,
+			{ type: 'cancelAgent' },
+			{ type: 'refreshReceipts' },
+			{ type: 'refreshMemory' }
+		]);
+	});
 });
