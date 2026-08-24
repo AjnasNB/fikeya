@@ -78,7 +78,7 @@ jobs:
       - name: Run Windows preflight
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/fikeya/bootstrap.ps1 --check-only
+        run: ./scripts/fikeya/bootstrap.ps1 -CheckOnly
       - name: Run macOS and Linux preflight
         if: runner.os != 'Windows'
         shell: sh
