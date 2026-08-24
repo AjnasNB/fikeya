@@ -8,6 +8,7 @@ on:
       - 'fikeya-runtime/**'
       - 'integrations/qarinah-sidecar/**'
       - 'packages/fikeya-protocol/**'
+      - 'scripts/fikeya/**'
       - 'site/**'
   push:
     branches:
@@ -18,6 +19,7 @@ on:
       - 'fikeya-runtime/**'
       - 'integrations/qarinah-sidecar/**'
       - 'packages/fikeya-protocol/**'
+      - 'scripts/fikeya/**'
       - 'site/**'
   workflow_dispatch:
 
@@ -29,6 +31,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  bootstrap-preflight:
+    name: Bootstrap preflight / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: '3.10'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: macos-latest
+            python: '3.13'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify bootstrap parsing and path safety
+        run: python -m unittest discover -s scripts/fikeya/tests -v
+      - name: Run Windows preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/fikeya/bootstrap.ps1 --check-only
+      - name: Run macOS and Linux preflight
+        if: runner.os != 'Windows'
+        shell: sh
+        run: sh scripts/fikeya/bootstrap.sh --check-only
+
   protocol:
     name: Protocol / Node ${{ matrix.node }}
     runs-on: ubuntu-latest
