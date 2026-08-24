@@ -22,6 +22,19 @@ function extractTextContent(result: vscode.LanguageModelToolResult): string {
 (vscode.env.uiKind === vscode.UIKind.Web ? suite.skip : suite)('chat - browser tools', () => {
 
 	let clearNotificationsInterval: ReturnType<typeof setInterval> | undefined;
+	let testParticipant: vscode.ChatParticipant | undefined;
+
+	suiteSetup(() => {
+		// Fikeya has no provider-specific default chat implementation. Register the
+		// default participant contributed by this test extension so the test owns
+		// the same semantic prerequisite an installed agent would provide.
+		testParticipant = vscode.chat.createChatParticipant('api-test.participant', () => undefined);
+	});
+
+	suiteTeardown(() => {
+		testParticipant?.dispose();
+		testParticipant = undefined;
+	});
 
 	setup(async () => {
 		// Periodically clear notifications to prevent them from interrupting the browser.
@@ -37,6 +50,14 @@ function extractTextContent(result: vscode.LanguageModelToolResult): string {
 		const chatToolsConfig = vscode.workspace.getConfiguration('chat.tools.global');
 		await chatToolsConfig.update('autoApprove', true, vscode.ConfigurationTarget.Global);
 		await vscode.commands.executeCommand('setContext', 'vscode.chat.tools.global.autoApprove.testMode', true);
+
+		// Participant registration crosses the extension-host RPC boundary before
+		// the workbench replaces the safe, non-agentic open tool with the agentic
+		// browser tool set. Wait for that observable public-API capability.
+		for (let i = 0; i < 50 && !vscode.lm.tools.some(tool => tool.name === 'list_browser_pages'); i++) {
+			await new Promise(resolve => setTimeout(resolve, 200));
+		}
+		assert.ok(vscode.lm.tools.some(tool => tool.name === 'list_browser_pages'), 'agentic browser tools should be registered');
 	});
 
 	teardown(async function () {
