@@ -5,6 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -37,12 +38,13 @@ const isolatedEnvironment = {
 	PATH: '',
 	FIKEYA_HOME: profileRoot
 };
-const initialized = await runtime.runFikeyaRuntime('init', workspaceRoot, undefined, isolatedEnvironment);
+const packagedEnvironment = runtime.buildFikeyaRuntimeEnvironment(extractedRoot, process.execPath, isolatedEnvironment);
+const initialized = await runtime.runFikeyaRuntime('init', workspaceRoot, invocation, packagedEnvironment);
 assert.equal(initialized.ok, true, `Bundled Fikeya init failed: ${initialized.failure}`);
 assert.equal(initialized.report?.initialized, true);
 assert.match(initialized.report?.workspaceId ?? '', /^ws_[0-9a-f]{32}$/);
 
-const doctor = await runtime.runFikeyaRuntime('doctor', workspaceRoot, undefined, isolatedEnvironment);
+const doctor = await runtime.runFikeyaRuntime('doctor', workspaceRoot, invocation, packagedEnvironment);
 assert.equal(doctor.ok, true, `Bundled Fikeya doctor failed: ${doctor.failure}`);
 assert.equal(doctor.report?.status, 'ready');
 assert.equal(doctor.report?.initialized, true);
@@ -52,13 +54,86 @@ assert.equal(memoryInitialization.ok, true, `Bundled Qarinah initialization fail
 assert.match(memoryInitialization.initialization?.workspaceId ?? '', /^ws_[0-9a-f]{32}$/);
 assert.equal(memoryInitialization.initialization?.capture, 'metadata');
 
+const recorded = await memory.recordQarinahMemory(
+	extractedRoot,
+	workspaceRoot,
+	'decision',
+	'Packaged integration evidence'
+);
+assert.equal(recorded.ok, true, `Bundled Qarinah record failed: ${recorded.failure}`);
+assert.match(recorded.record?.eventId ?? '', /^evt_[0-9a-f-]{36}$/);
+assert.match(recorded.record?.eventHash ?? '', /^sha256:[0-9a-f]{64}$/);
+
 const graph = await memory.loadQarinahMemory(extractedRoot, workspaceRoot);
 assert.equal(graph.ok, true, `Bundled Qarinah graph load failed: ${graph.failure}`);
-assert.equal(graph.snapshot?.eventCount, 0);
-assert.equal(graph.snapshot?.nodes.length, 0);
-assert.equal(graph.snapshot?.edges.length, 0);
+assert.equal(graph.snapshot?.eventCount, 1);
+assert.ok((graph.snapshot?.nodes.length ?? 0) >= 1);
 assert.match(graph.snapshot?.graphManifestHash ?? '', /^sha256:[0-9a-f]{64}$/);
 assert.match(graph.snapshot?.viewManifestHash ?? '', /^sha256:[0-9a-f]{64}$/);
+
+// Prove the complete packaged path, not just each component in isolation:
+// Desktop bridge -> bundled Python runtime -> bundled Qarinah sidecar -> bounded provider call.
+const providerRequests = [];
+const providerServer = createServer((request, response) => {
+	const chunks = [];
+	request.on('data', chunk => chunks.push(chunk));
+	request.on('end', () => {
+		providerRequests.push({
+			method: request.method,
+			url: request.url,
+			body: JSON.parse(Buffer.concat(chunks).toString('utf8'))
+		});
+		const body = JSON.stringify({
+			choices: [{ message: { content: 'Packaged runtime and Qarinah context are connected.' } }],
+			usage: { prompt_tokens: 64, completion_tokens: 9, prompt_tokens_details: { cached_tokens: 0 } }
+		});
+		response.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+		response.end(body);
+	});
+});
+await new Promise((resolve, reject) => {
+	providerServer.once('error', reject);
+	providerServer.listen(0, '127.0.0.1', resolve);
+});
+let packagedTurn;
+try {
+	const address = providerServer.address();
+	assert.ok(address && typeof address === 'object');
+	process.env.FIKEYA_HOME = profileRoot;
+	const configured = await runtime.configureFikeyaProvider({
+		name: 'isolated-local',
+		kind: 'openai-compatible',
+		model: 'isolated-fixture',
+		baseUrl: `http://127.0.0.1:${address.port}/v1`,
+		credentialType: 'none'
+	}, workspaceRoot, undefined, invocation, packagedEnvironment);
+	assert.equal(configured.ok, true, `Bundled provider configuration failed: ${configured.failure}`);
+
+	packagedTurn = await runtime.startFikeyaAgentRun(
+		'isolated-local',
+		'Explain the captured decision metadata from bounded project evidence.',
+		128,
+		4_096,
+		'required',
+		workspaceRoot,
+		invocation,
+		packagedEnvironment
+	).result;
+} finally {
+	await new Promise(resolve => providerServer.close(resolve));
+}
+assert.equal(packagedTurn.ok, true, `Bundled context-backed agent turn failed: ${packagedTurn.failure}`);
+assert.equal(packagedTurn.value?.output, 'Packaged runtime and Qarinah context are connected.');
+assert.equal(packagedTurn.value?.memory.status, 'used');
+assert.notEqual(packagedTurn.value?.memory.coverage, 'none');
+assert.ok((packagedTurn.value?.memory.evidenceCount ?? 0) >= 1);
+assert.match(packagedTurn.value?.memory.receiptId ?? '', /^ctx_[0-9a-f]{32}$/);
+assert.match(packagedTurn.value?.memory.responseSha256 ?? '', /^sha256:[0-9a-f]{64}$/);
+assert.equal(providerRequests.length, 1);
+assert.equal(providerRequests[0].method, 'POST');
+assert.equal(providerRequests[0].url, '/v1/chat/completions');
+assert.match(providerRequests[0].body.messages[0].content, /fikeya\.project-context-envelope\.v1/);
+assert.match(providerRequests[0].body.messages[0].content, /qarinah\\?\.context-pack\\?\.v2/);
 
 const report = {
 	schemaVersion: 'fikeya.desktop-isolated-vsix-test.v1',
@@ -72,7 +147,10 @@ const report = {
 	graphEventCount: graph.snapshot.eventCount,
 	graphNodeCount: graph.snapshot.nodes.length,
 	graphEdgeCount: graph.snapshot.edges.length,
-	graphManifestHash: graph.snapshot.graphManifestHash
+	graphManifestHash: graph.snapshot.graphManifestHash,
+	contextBackedAgentTurn: packagedTurn.value.memory.status,
+	contextReceiptId: packagedTurn.value.memory.receiptId,
+	providerRequestCount: providerRequests.length
 };
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 
@@ -92,7 +170,10 @@ function extractExtension(vsixPath, destination) {
 				}
 				const relative = entry.fileName.slice('extension/'.length);
 				const targetPath = path.resolve(destination, ...relative.split('/'));
-				if (!targetPath.startsWith(`${path.resolve(destination)}${path.sep}`) || entry.uncompressedSize > 16 * 1024 * 1024) {
+				const entryLimit = relative === 'runtime/fikeya-runtime' || relative === 'runtime/fikeya-runtime.exe'
+					? 64 * 1024 * 1024
+					: 16 * 1024 * 1024;
+				if (!targetPath.startsWith(`${path.resolve(destination)}${path.sep}`) || entry.uncompressedSize > entryLimit) {
 					reject(new Error(`Unsafe VSIX entry: ${entry.fileName}`));
 					archive.close();
 					return;

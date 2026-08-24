@@ -85,7 +85,8 @@ const pythonRuntimeReceipt = parseJsonEntry(entries, 'extension/runtime/fikeya-r
 const expectedRuntimeEntry = `extension/${pythonRuntimeReceipt.executable}`;
 if (pythonRuntimeReceipt.schemaVersion !== 'fikeya.desktop-bundled-python-runtime.v1'
 	|| pythonRuntimeReceipt.target !== vsixTarget || !entries.has(expectedRuntimeEntry)
-	|| pythonRuntimeReceipt.packages?.find?.(item => item.name === 'keyring')?.version !== '25.7.0') {
+	|| pythonRuntimeReceipt.packages?.find?.(item => item.name === 'keyring')?.version !== '25.7.0'
+	|| pythonRuntimeReceipt.packages?.find?.(item => item.name === 'azure-identity')?.version !== '1.25.3') {
 	throw new Error('Bundled standalone Fikeya Runtime receipt is incomplete or targets a different platform.');
 }
 const runtimeHash = `sha256:${createHash('sha256').update(entries.get(expectedRuntimeEntry)).digest('hex')}`;
@@ -139,10 +140,10 @@ function readZipEntries(filePath) {
 					return;
 				}
 				const entryLimit = /extension\/runtime\/fikeya-runtime(?:\.exe)?$/.test(entry.fileName)
-					? 16 * 1024 * 1024
+					? 64 * 1024 * 1024
 					: 4 * 1024 * 1024;
 				if (entry.uncompressedSize > entryLimit) {
-					reject(new Error(`VSIX entry exceeds the four-megabyte inspection limit: ${entry.fileName}`));
+					reject(new Error(`VSIX entry exceeds its inspection limit: ${entry.fileName}`));
 					archive.close();
 					return;
 				}

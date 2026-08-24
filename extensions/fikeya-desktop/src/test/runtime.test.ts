@@ -10,6 +10,7 @@ import path from 'node:path';
 import { describe, test } from 'node:test';
 import {
 	buildAgentRunArguments,
+	buildFikeyaRuntimeEnvironment,
 	buildProviderConfigureArguments,
 	parseAgentReceipts,
 	parseAgentTurn,
@@ -131,10 +132,34 @@ describe('Fikeya runtime protocol', () => {
 
 	test('keeps prompt content out of agent process arguments', () => {
 		const prompt = 'private prompt content';
-		const args = buildAgentRunArguments('openrouter-primary', 2048);
+		const args = buildAgentRunArguments('openrouter-primary', 2048, 12_000, 'auto');
 		assert.deepStrictEqual(args.slice(0, 7), ['agent', 'run', '.', '--provider', 'openrouter-primary', '--prompt-stdin', '--allow-network']);
 		assert.ok(!args.includes(prompt));
+		assert.deepStrictEqual(args.slice(-5), ['--context-max-characters', '12000', '--memory', 'auto', '--json']);
+		assert.ok(args.includes('--context-max-characters'));
 		assert.ok(args.includes('--json'));
+	});
+
+	test('connects the runtime to the extension-owned Qarinah sidecar without mutating the parent environment', async () => {
+		const extensionPath = path.join(tmpdir(), `fikeya-desktop-sidecar-${process.pid}-${Date.now()}`);
+		const sidecarDirectory = path.join(extensionPath, 'sidecar');
+		await mkdir(sidecarDirectory, { recursive: true });
+		await writeFile(path.join(sidecarDirectory, 'qarinah-memory-view.mjs'), 'fixture', 'utf8');
+		const parentEnvironment: NodeJS.ProcessEnv = { PATH: 'fixed-path' };
+
+		assert.deepStrictEqual(buildFikeyaRuntimeEnvironment(extensionPath, 'C:\\fake\\Code.exe', parentEnvironment), {
+			PATH: 'fixed-path',
+			FIKEYA_NODE_EXECUTABLE: 'C:\\fake\\Code.exe',
+			FIKEYA_QARINAH_SIDECAR: path.join(sidecarDirectory, 'qarinah-memory-view.mjs')
+		});
+		assert.deepStrictEqual(parentEnvironment, { PATH: 'fixed-path' });
+	});
+
+	test('does not invent Qarinah sidecar configuration for source-only installs', () => {
+		const parentEnvironment: NodeJS.ProcessEnv = { PATH: 'fixed-path' };
+		const result = buildFikeyaRuntimeEnvironment(path.join(tmpdir(), 'missing-fikeya-extension'), 'node', parentEnvironment);
+		assert.deepStrictEqual(result, { PATH: 'fixed-path' });
+		assert.notStrictEqual(result, parentEnvironment);
 	});
 
 	test('parses completed turns and exact provider-reported usage', () => {
@@ -148,6 +173,13 @@ describe('Fikeya runtime protocol', () => {
 				inputTokens: 128,
 				measurement: 'provider-reported',
 				outputTokens: 64
+			},
+			memory: {
+				coverage: 'direct',
+				evidenceCount: 7,
+				receiptId: 'ctx_0123456789abcdef0123456789abcdef',
+				responseSha256: `sha256:${'c'.repeat(64)}`,
+				status: 'used'
 			}
 		}), {
 			callId: 'call_0123456789abcdef',
@@ -158,7 +190,42 @@ describe('Fikeya runtime protocol', () => {
 				inputTokens: 128,
 				measurement: 'provider-reported',
 				outputTokens: 64
+			},
+			memory: {
+				coverage: 'direct',
+				evidenceCount: 7,
+				receiptId: 'ctx_0123456789abcdef0123456789abcdef',
+				responseSha256: `sha256:${'c'.repeat(64)}`,
+				status: 'used'
 			}
+		});
+	});
+
+	test('parses deliberate memory-free turns without inventing context evidence', () => {
+		assert.deepStrictEqual(parseAgentTurn({
+			callId: 'call_0123456789abcdef',
+			memory: {
+				coverage: null,
+				evidenceCount: null,
+				receiptId: null,
+				responseSha256: null,
+				status: 'off'
+			},
+			ok: true,
+			output: 'No project context was attached.',
+			sessionId: 'ses_0123456789abcdef',
+			usage: {
+				cachedInputTokens: null,
+				inputTokens: null,
+				measurement: 'unavailable',
+				outputTokens: null
+			}
+		})?.memory, {
+			coverage: null,
+			evidenceCount: null,
+			receiptId: null,
+			responseSha256: null,
+			status: 'off'
 		});
 	});
 

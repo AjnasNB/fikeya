@@ -12,6 +12,7 @@ const maximumAgentOutputBytes = 5 * 1024 * 1024;
 const runtimeTimeoutMilliseconds = 30_000;
 const agentTimeoutMilliseconds = 65_000;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
 export type FikeyaRuntimeFailure = 'none' | 'not-found' | 'timeout' | 'output-limit' | 'runtime-error' | 'invalid-json' | 'cancelled';
 
@@ -64,11 +65,22 @@ export interface FikeyaAgentUsage {
 	readonly cachedInputTokens: number | null;
 }
 
+export type FikeyaMemoryMode = 'auto' | 'off' | 'required';
+
+export interface FikeyaAgentMemory {
+	readonly status: 'off' | 'unavailable' | 'used';
+	readonly coverage: string | null;
+	readonly evidenceCount: number | null;
+	readonly receiptId: string | null;
+	readonly responseSha256: string | null;
+}
+
 export interface FikeyaAgentTurn {
 	readonly sessionId: string;
 	readonly callId: string;
 	readonly output: string;
 	readonly usage: FikeyaAgentUsage;
+	readonly memory: FikeyaAgentMemory;
 }
 
 export interface FikeyaProviderReceipt {
@@ -118,12 +130,30 @@ export function resolveFikeyaCli(extensionPath = path.resolve(__dirname, '..'), 
 	return { executable: 'fikeya', source: 'path' };
 }
 
+/**
+ * Connects the packaged Python runtime to the exact Qarinah sidecar shipped with this extension.
+ * The values remain process-local and contain no credential or workspace content.
+ */
+export function buildFikeyaRuntimeEnvironment(
+	extensionPath = path.resolve(__dirname, '..'),
+	nodeExecutable = process.execPath,
+	environment: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+	const result = { ...environment };
+	const sidecar = path.resolve(extensionPath, 'sidecar', 'qarinah-memory-view.mjs');
+	if (existsSync(sidecar)) {
+		result.FIKEYA_NODE_EXECUTABLE = nodeExecutable;
+		result.FIKEYA_QARINAH_SIDECAR = sidecar;
+	}
+	return result;
+}
+
 /** Runs a bounded Fikeya workspace command with no shell interpolation. */
 export async function runFikeyaRuntime(
 	command: FikeyaRuntimeCommand,
 	workspacePath: string,
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = process.env
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): Promise<FikeyaRuntimeResult> {
 	return runFikeyaCli([command, '--json'], workspacePath, value => parseRuntimeReport(value, command), undefined, invocation, environment);
 }
@@ -132,13 +162,21 @@ export async function runFikeyaRuntime(
  * Configures a provider through the runtime. Credential bytes cross the process boundary only
  * through stdin: they never appear in process arguments, output, persisted metadata, or logs.
  */
-export async function configureFikeyaProvider(configuration: FikeyaProviderConfiguration, workspacePath: string, secret?: string): Promise<FikeyaRuntimeResult> {
+export async function configureFikeyaProvider(
+	configuration: FikeyaProviderConfiguration,
+	workspacePath: string,
+	secret?: string,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+): Promise<FikeyaRuntimeResult> {
 	const hasSecret = typeof secret === 'string' && secret.length > 0;
 	return runFikeyaCli(
 		buildProviderConfigureArguments(configuration, hasSecret),
 		workspacePath,
 		value => parseProviderReport(value),
-		hasSecret ? secret : undefined
+		hasSecret ? secret : undefined,
+		invocation,
+		environment
 	);
 }
 
@@ -168,14 +206,22 @@ export function startFikeyaAgentRun(
 	providerName: string,
 	prompt: string,
 	maxOutputTokens: number,
-	workspacePath: string
+	contextMaxCharacters: number,
+	memoryMode: FikeyaMemoryMode,
+	workspacePath: string,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaAgentRunHandle {
 	if (!identifierPattern.test(providerName)
 		|| !prompt.trim()
 		|| Buffer.byteLength(prompt, 'utf8') > 262_144
 		|| !Number.isSafeInteger(maxOutputTokens)
 		|| maxOutputTokens < 1
-		|| maxOutputTokens > 32_768) {
+		|| maxOutputTokens > 32_768
+		|| !Number.isSafeInteger(contextMaxCharacters)
+		|| contextMaxCharacters < 512
+		|| contextMaxCharacters > 64_000
+		|| !['auto', 'off', 'required'].includes(memoryMode)) {
 		return {
 			result: Promise.resolve(invalidLocalRequest()),
 			cancel: () => undefined
@@ -183,12 +229,14 @@ export function startFikeyaAgentRun(
 	}
 
 	const operation = startBoundedJsonCli(
-		buildAgentRunArguments(providerName, maxOutputTokens),
+		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
 		workspacePath,
 		parseAgentTurn,
 		prompt,
 		agentTimeoutMilliseconds,
-		maximumAgentOutputBytes
+		maximumAgentOutputBytes,
+		invocation,
+		environment
 	);
 	return { result: operation.result, cancel: operation.cancel };
 }
@@ -202,7 +250,12 @@ export async function loadFikeyaAgentReceipts(sessionId: string, workspacePath: 
 }
 
 /** Builds the public argument vector. Prompt content is deliberately absent. */
-export function buildAgentRunArguments(providerName: string, maxOutputTokens: number): readonly string[] {
+export function buildAgentRunArguments(
+	providerName: string,
+	maxOutputTokens: number,
+	contextMaxCharacters: number,
+	memoryMode: FikeyaMemoryMode
+): readonly string[] {
 	return [
 		'agent',
 		'run',
@@ -213,6 +266,10 @@ export function buildAgentRunArguments(providerName: string, maxOutputTokens: nu
 		'--allow-network',
 		'--max-output-tokens',
 		String(maxOutputTokens),
+		'--context-max-characters',
+		String(contextMaxCharacters),
+		'--memory',
+		memoryMode,
 		'--json'
 	];
 }
@@ -283,13 +340,16 @@ export function parseProviderRemoval(value: unknown): { readonly name: string; r
 export function parseAgentTurn(value: unknown): FikeyaAgentTurn | undefined {
 	const record = asRecord(value);
 	const usage = asRecord(record?.usage);
+	const memory = asRecord(record?.memory);
 	const sessionId = boundedString(record?.sessionId, 128);
 	const callId = boundedString(record?.callId, 128);
 	const output = strictBoundedString(record?.output, 4_194_304);
 	const measurement = usage?.measurement;
+	const memoryStatus = memory?.status;
 	if (!record || record.ok !== true || !sessionId || !identifierPattern.test(sessionId)
 		|| !callId || !identifierPattern.test(callId) || output === undefined
-		|| (measurement !== 'provider-reported' && measurement !== 'unavailable')) {
+		|| (measurement !== 'provider-reported' && measurement !== 'unavailable')
+		|| (memoryStatus !== 'off' && memoryStatus !== 'unavailable' && memoryStatus !== 'used')) {
 		return undefined;
 	}
 	const inputTokens = nullableBoundedInteger(usage?.inputTokens);
@@ -304,11 +364,27 @@ export function parseAgentTurn(value: unknown): FikeyaAgentTurn | undefined {
 	if (measurement === 'unavailable' && (inputTokens !== null || outputTokens !== null || cachedInputTokens !== null)) {
 		return undefined;
 	}
+	const coverage = nullableBoundedString(memory?.coverage, 40);
+	const evidenceCount = nullableBoundedInteger(memory?.evidenceCount);
+	const receiptId = nullableBoundedString(memory?.receiptId, 128);
+	const responseSha256 = nullableBoundedString(memory?.responseSha256, 71);
+	if (coverage === undefined || evidenceCount === undefined || receiptId === undefined || responseSha256 === undefined) {
+		return undefined;
+	}
+	if (memoryStatus === 'used') {
+		if (!coverage || evidenceCount === null || !receiptId || !contextReceiptPattern.test(receiptId)
+			|| !responseSha256 || !/^sha256:[0-9a-f]{64}$/.test(responseSha256)) {
+			return undefined;
+		}
+	} else if (coverage !== null || evidenceCount !== null || receiptId !== null || responseSha256 !== null) {
+		return undefined;
+	}
 	return {
 		sessionId,
 		callId,
 		output,
-		usage: { measurement, inputTokens, outputTokens, cachedInputTokens }
+		usage: { measurement, inputTokens, outputTokens, cachedInputTokens },
+		memory: { status: memoryStatus, coverage, evidenceCount, receiptId, responseSha256 }
 	};
 }
 
@@ -434,7 +510,7 @@ function runFikeyaCli(
 	parseReport: (value: unknown) => FikeyaRuntimeReport,
 	stdinSecret?: string,
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = process.env
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): Promise<FikeyaRuntimeResult> {
 	return new Promise(resolve => {
 		const child = spawn(invocation.executable, args, {
@@ -527,13 +603,15 @@ function startBoundedJsonCli<T>(
 	parser: (value: unknown) => T | undefined,
 	stdinPayload?: string,
 	timeoutMilliseconds = runtimeTimeoutMilliseconds,
-	outputLimitBytes = maximumOutputBytes
+	outputLimitBytes = maximumOutputBytes,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): { readonly result: Promise<FikeyaCliResult<T>>; cancel(): void } {
 	let cancelOperation = (): void => undefined;
 	const result = new Promise<FikeyaCliResult<T>>(resolve => {
-		const invocation = resolveFikeyaCli();
 		const child = spawn(invocation.executable, args, {
 			cwd: workspacePath,
+			env: environment,
 			shell: false,
 			stdio: [stdinPayload === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
 			windowsHide: true
@@ -641,6 +719,13 @@ function nullableBoundedInteger(value: unknown): number | null | undefined {
 		return null;
 	}
 	return isBoundedInteger(value, 0, 1_000_000_000) ? value : undefined;
+}
+
+function nullableBoundedString(value: unknown, maximumLength: number): string | null | undefined {
+	if (value === null) {
+		return null;
+	}
+	return typeof value === 'string' && value.length <= maximumLength ? value : undefined;
 }
 
 function findCheck(checks: readonly Record<string, unknown>[], name: string): Record<string, unknown> | undefined {

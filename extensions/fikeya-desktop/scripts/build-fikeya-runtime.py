@@ -16,6 +16,7 @@ import sys
 
 
 PINNED_DISTRIBUTIONS = {
+    "azure-identity": "1.25.3",
     "backports.tarfile": "1.2.0",
     "jaraco.classes": "3.4.0",
     "jaraco.context": "6.1.2",
@@ -114,6 +115,8 @@ def main() -> int:
         str(spec_root),
         "--paths",
         str(runtime_source),
+        "--collect-all",
+        "azure.identity",
         "--collect-all",
         "keyring",
         "--add-data",

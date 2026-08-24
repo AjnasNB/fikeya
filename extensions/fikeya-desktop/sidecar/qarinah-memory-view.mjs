@@ -8,6 +8,8 @@ import path from 'node:path';
 import process from 'node:process';
 import readline from 'node:readline';
 import { buildMemoryDashboard } from 'fikeya-qarinah-dashboard';
+import { compileContext } from 'fikeya-qarinah-compiler';
+import { appendEvent } from 'fikeya-qarinah-store';
 import { initializeWorkspace } from 'fikeya-qarinah-workspace';
 
 const maximumInputBytes = 1024 * 1024;
@@ -36,7 +38,7 @@ async function handleLine(line) {
 		return;
 	}
 	if (!isRecord(request) || request.jsonrpc !== '2.0' || typeof request.id !== 'string'
-		|| !['memory.initialize', 'memory.inspect'].includes(request.method) || !isRecord(request.params)) {
+		|| !['memory.initialize', 'memory.inspect', 'memory.prepare', 'memory.record'].includes(request.method) || !isRecord(request.params)) {
 		writeError(isRecord(request) && typeof request.id === 'string' ? request.id : null, -32600, 'Invalid request.');
 		return;
 	}
@@ -51,6 +53,51 @@ async function handleLine(line) {
 					schemaVersion: 'qarinah.workspace-initialization.v1',
 					workspaceId: workspace.config.workspaceId,
 					capture: workspace.config.capture
+				}
+			});
+			return;
+		}
+		if (request.method === 'memory.prepare') {
+			const query = boundedString(request.params.query, 'query', 4_096);
+			const maximumCharacters = boundedInteger(request.params.maxChars, 'maxChars', 512, 64_000);
+			const limit = boundedInteger(request.params.limit, 'limit', 1, 100);
+			const minimumCoverage = boundedEnum(request.params.minimumCoverage, 'minimumCoverage', ['any', 'partial', 'direct']);
+			const compiled = await compileContext(query, {
+				cwd: root,
+				maxChars: maximumCharacters,
+				limit,
+				minimumCoverage,
+				minimumEvidence: 'any',
+				includeEvidenceSufficiency: true,
+				rebuild: true,
+				updateCheckpoint: true
+			});
+			write({ jsonrpc: '2.0', id: request.id, result: compiled });
+			return;
+		}
+		if (request.method === 'memory.record') {
+			const kind = boundedEnum(request.params.kind, 'kind', ['artifact', 'decision', 'summary', 'tool.completed', 'turn.completed']);
+			const title = boundedString(request.params.title, 'title', 512);
+			await initializeWorkspace(root, { ifNeeded: true });
+			const event = await appendEvent({
+				kind,
+				actor: { type: 'system', id: 'fikeya.desktop' },
+				title,
+				body: '',
+				data: { source: 'fikeya.desktop' },
+				confidence: 'verified',
+				relations: [],
+				provenance: { adapter: 'fikeya.desktop' },
+				retention: { class: 'project', expiresAt: null }
+			}, { cwd: root });
+			write({
+				jsonrpc: '2.0',
+				id: request.id,
+				result: {
+					schemaVersion: 'qarinah.memory-record.v1',
+					eventId: event.eventId,
+					eventHash: event.hash,
+					kind: event.kind
 				}
 			});
 			return;
@@ -93,4 +140,25 @@ function write(message) {
 
 function isRecord(value) {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function boundedString(value, name, maximumLength) {
+	if (typeof value !== 'string' || value.length === 0 || value.length > maximumLength || value.includes('\0')) {
+		throw new TypeError(`${name} must be a non-empty string of at most ${maximumLength} characters.`);
+	}
+	return value;
+}
+
+function boundedInteger(value, name, minimum, maximum) {
+	if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+		throw new TypeError(`${name} must be an integer from ${minimum} to ${maximum}.`);
+	}
+	return value;
+}
+
+function boundedEnum(value, name, values) {
+	if (!values.includes(value)) {
+		throw new TypeError(`${name} must be one of: ${values.join(', ')}.`);
+	}
+	return value;
 }

@@ -121,6 +121,8 @@ const buildResult = await build({
 	target: 'node22',
 	alias: {
 		'fikeya-qarinah-dashboard': path.join(qarinahPackagePath, 'src', 'dashboard.js'),
+		'fikeya-qarinah-compiler': path.join(qarinahPackagePath, 'src', 'compiler.js'),
+		'fikeya-qarinah-store': path.join(qarinahPackagePath, 'src', 'store.js'),
 		'fikeya-qarinah-workspace': path.join(qarinahPackagePath, 'src', 'workspace.js')
 	},
 	metafile: true,
@@ -138,6 +140,12 @@ if (unexpectedDependency) {
 }
 if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/dashboard.js'))) {
 	throw new Error('The bundled sidecar does not contain the pinned Qarinah dashboard runtime.');
+}
+if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/compiler.js'))) {
+	throw new Error('The bundled sidecar does not contain the pinned Qarinah context compiler.');
+}
+if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/store.js'))) {
+	throw new Error('The bundled sidecar does not contain the pinned Qarinah event store.');
 }
 if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/workspace.js'))) {
 	throw new Error('The bundled sidecar does not contain the pinned Qarinah workspace runtime.');

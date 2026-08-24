@@ -66,6 +66,18 @@ export interface FikeyaMemoryInitializationResult {
 	readonly failure: FikeyaMemoryFailure;
 }
 
+export interface FikeyaMemoryRecord {
+	readonly eventId: string;
+	readonly eventHash: string;
+	readonly kind: 'artifact' | 'decision' | 'summary' | 'tool.completed' | 'turn.completed';
+}
+
+export interface FikeyaMemoryRecordResult {
+	readonly ok: boolean;
+	readonly record?: FikeyaMemoryRecord;
+	readonly failure: FikeyaMemoryFailure;
+}
+
 /** Initializes the pinned local Qarinah workspace without widening its capture policy. */
 export function initializeQarinahMemory(extensionPath: string, workspacePath: string): Promise<FikeyaMemoryInitializationResult> {
 	return invokeQarinahSidecar<FikeyaMemoryInitialization, FikeyaMemoryInitializationResult>(
@@ -79,6 +91,28 @@ export function initializeQarinahMemory(extensionPath: string, workspacePath: st
 		},
 		parseMemoryInitializationSidecarResponse,
 		initialization => ({ ok: true, initialization, failure: 'none' }),
+		failure => ({ ok: false, failure })
+	);
+}
+
+/** Records one bounded event through Qarinah's configured capture policy. */
+export function recordQarinahMemory(
+	extensionPath: string,
+	workspacePath: string,
+	kind: FikeyaMemoryRecord['kind'],
+	title: string
+): Promise<FikeyaMemoryRecordResult> {
+	return invokeQarinahSidecar<FikeyaMemoryRecord, FikeyaMemoryRecordResult>(
+		extensionPath,
+		workspacePath,
+		{
+			jsonrpc: '2.0',
+			id: 'fikeya-memory-record',
+			method: 'memory.record',
+			params: { kind, title }
+		},
+		parseMemoryRecordSidecarResponse,
+		record => ({ ok: true, record, failure: 'none' }),
 		failure => ({ ok: false, failure })
 	);
 }
@@ -216,6 +250,29 @@ export function parseMemoryInitializationSidecarResponse(line: string): FikeyaMe
 			return undefined;
 		}
 		return { workspaceId, capture };
+	} catch {
+		return undefined;
+	}
+}
+
+export function parseMemoryRecordSidecarResponse(line: string): FikeyaMemoryRecord | undefined {
+	if (Buffer.byteLength(line, 'utf8') > maximumSidecarOutputBytes) {
+		return undefined;
+	}
+	try {
+		const message = asRecord(JSON.parse(line));
+		const result = asRecord(message?.result);
+		const eventId = strictString(result?.eventId, 128);
+		const eventHash = strictString(result?.eventHash, 71);
+		const kind = strictString(result?.kind, 80);
+		if (!message || message.jsonrpc !== '2.0' || message.id !== 'fikeya-memory-record' || message.error !== undefined
+			|| !result || result.schemaVersion !== 'qarinah.memory-record.v1'
+			|| !eventId || !/^evt_[0-9a-f-]{36}$/.test(eventId)
+			|| !eventHash || !sha256Pattern.test(eventHash)
+			|| !kind || !['artifact', 'decision', 'summary', 'tool.completed', 'turn.completed'].includes(kind)) {
+			return undefined;
+		}
+		return { eventId, eventHash, kind: kind as FikeyaMemoryRecord['kind'] };
 	} catch {
 		return undefined;
 	}

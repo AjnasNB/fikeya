@@ -104,6 +104,7 @@ export const indentationFilter = Object.freeze<string[]>([
 	'!build/npm/gyp/patches/gyp_spectre_mitigation_support.patch',
 	// Fikeya-owned Python uses PEP 8 indentation and its own SPDX license headers.
 	'!scripts/fikeya/**/*.py',
+	'!extensions/fikeya-desktop/**/*.py',
 	'!product.overrides.json',
 	'!src/vs/platform/endpoint/common/licenseAgreement.ts',
 
