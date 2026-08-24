@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
-
+from fikeya_runtime.credentials import (
+    AZURE_COGNITIVE_SERVICES_SCOPE,
+    CredentialResolver,
+)
 from fikeya_runtime.errors import ConfigurationError, ProviderError
 from fikeya_runtime.providers import (
     PROVIDER_REGISTRY,
@@ -45,6 +49,9 @@ def test_registry_contains_all_first_party_provider_shapes() -> None:
         "openai-compatible",
         "openrouter",
     }
+    azure = PROVIDER_REGISTRY[ProviderKind.AZURE_OPENAI]
+    assert azure.default_credential_type == "entra-id"
+    assert azure.default_api_mode == "responses"
 
 
 def test_provider_secret_never_enters_metadata_and_rotation_deletes_old_ref(
@@ -86,7 +93,7 @@ def test_remote_plain_http_is_rejected_but_loopback_ollama_is_allowed() -> None:
         )
 
     local = build_profile(name="local", kind=ProviderKind.OLLAMA, model="qwen")
-    assert local.base_url == "http://127.0.0.1:11434"
+    assert local.base_url == "http://127.0.0.1:11434/v1"
 
     with pytest.raises(ConfigurationError, match="authenticated"):
         build_profile(
@@ -126,3 +133,61 @@ def test_provider_probe_requires_opt_in_and_uses_injected_transport_only() -> No
         "authorization": "Bearer private",
         "status": 200,
     }
+
+
+def test_entra_id_uses_an_ephemeral_injected_token_without_keyring_access(
+    tmp_path: Path,
+) -> None:
+    class AzureTokens:
+        def __init__(self) -> None:
+            self.scopes: list[str] = []
+
+        def get_token(self, scope: str) -> str:
+            self.scopes.append(scope)
+            return "ephemeral-access-token"
+
+    secrets = MemorySecrets()
+    store = ProviderStore(tmp_path, secrets)
+    profile = build_profile(
+        name="azure-work",
+        kind=ProviderKind.AZURE_OPENAI,
+        base_url="https://example.openai.azure.com/openai/v1",
+        model="deployment",
+    )
+    stored = store.configure(profile, None)
+    tokens = AzureTokens()
+
+    resolved = CredentialResolver(store, tokens).resolve(stored)
+
+    assert resolved == "ephemeral-access-token"
+    assert tokens.scopes == [AZURE_COGNITIVE_SERVICES_SCOPE]
+    assert stored.secret_ref is None
+    assert secrets.values == {}
+
+
+def test_version_one_provider_metadata_migrates_on_next_write(tmp_path: Path) -> None:
+    metadata = {
+        "providers": [
+            {
+                "apiVersion": None,
+                "baseUrl": "http://127.0.0.1:11434/v1",
+                "credentialType": "none",
+                "kind": "ollama",
+                "model": "qwen",
+                "name": "local",
+                "organization": None,
+                "secretRef": None,
+            }
+        ],
+        "schemaVersion": 1,
+    }
+    (tmp_path / "providers.json").write_text(json.dumps(metadata), encoding="utf-8")
+    store = ProviderStore(tmp_path, MemorySecrets())
+
+    profile = store.get("local")
+    store.configure(profile, None)
+
+    rewritten = json.loads((tmp_path / "providers.json").read_text(encoding="utf-8"))
+    assert profile.api_mode == "chat-completions"
+    assert rewritten["schemaVersion"] == 2
+    assert rewritten["providers"][0]["apiMode"] == "chat-completions"

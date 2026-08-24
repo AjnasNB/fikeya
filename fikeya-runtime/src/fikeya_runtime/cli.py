@@ -13,6 +13,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from .credentials import CredentialResolver
 from .errors import FikeyaError, ProviderError, SecretStoreUnavailable
 from .providers import (
     PROVIDER_REGISTRY,
@@ -67,7 +68,11 @@ def _parser() -> argparse.ArgumentParser:
     configure.add_argument("--model", required=True)
     configure.add_argument(
         "--credential-type",
-        choices=("api-key", "bearer", "none"),
+        choices=("api-key", "bearer", "entra-id", "none"),
+    )
+    configure.add_argument(
+        "--api-mode",
+        choices=("responses", "chat-completions", "native"),
     )
     configure.add_argument("--api-version")
     configure.add_argument("--organization")
@@ -78,7 +83,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     configure.add_argument("--json", action="store_true")
 
-    remove = provider_commands.add_parser("remove", help="Remove a profile and credential.")
+    remove = provider_commands.add_parser(
+        "remove", help="Remove a profile and credential."
+    )
     remove.add_argument("name")
     remove.add_argument("--json", action="store_true")
 
@@ -157,7 +164,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
         try:
             StateStore(workspace.state_path).initialize()
             with sqlite3.connect(workspace.state_path) as connection:
-                integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
+                integrity = str(
+                    connection.execute("PRAGMA integrity_check").fetchone()[0]
+                )
             checks.append(
                 {
                     "detail": integrity,
@@ -193,7 +202,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
             "optional": True,
         }
     )
-    required_ok = all(check["ok"] for check in checks if not check.get("optional", False))
+    required_ok = all(
+        check["ok"] for check in checks if not check.get("optional", False)
+    )
     _emit({"checks": checks, "ok": required_ok}, as_json=args.json)
     return 0 if required_ok else 1
 
@@ -233,6 +244,7 @@ def _run_provider(args: argparse.Namespace) -> int:
             base_url=args.base_url,
             model=args.model,
             credential_type=args.credential_type,
+            api_mode=args.api_mode,
             api_version=args.api_version,
             organization=args.organization,
         )
@@ -258,7 +270,7 @@ def _run_provider(args: argparse.Namespace) -> int:
         return 0
     if args.provider_command == "test":
         profile = store.get(args.name)
-        secret = store.resolve_secret(profile)
+        secret = CredentialResolver(store).resolve(profile)
         result = ProviderTester().test(
             profile,
             secret,
@@ -283,9 +295,11 @@ def _read_provider_secret(
     profile: ProviderProfile,
     store: ProviderStore,
 ) -> str | None:
-    if profile.credential_type == "none":
+    if profile.credential_type in {"none", "entra-id"}:
         if args.secret_stdin:
-            raise ProviderError("--secret-stdin cannot be used with credential type none.")
+            raise ProviderError(
+                "--secret-stdin cannot be used with credential type none or entra-id."
+            )
         return None
     if args.secret_stdin:
         value = sys.stdin.read(16_385)
@@ -312,7 +326,9 @@ def _read_provider_secret(
 
 def _emit(value: dict[str, object], *, as_json: bool) -> None:
     if as_json:
-        print(json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+        print(
+            json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        )
         return
     if value.get("ok") is False and "error" in value:
         print(f"Error: {value['error']}", file=sys.stderr)

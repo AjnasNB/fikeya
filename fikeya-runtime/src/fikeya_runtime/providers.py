@@ -20,7 +20,9 @@ from .errors import ConfigurationError, ProviderError, SecretStoreUnavailable
 from .util import atomic_write_text, read_json_object, stable_json, validate_identifier
 
 KEYRING_SERVICE = "dev.fikeya.runtime"
-PROVIDER_CONFIG_VERSION = 1
+PROVIDER_CONFIG_VERSION = 2
+_CREDENTIAL_TYPES = {"api-key", "bearer", "entra-id", "none"}
+_API_MODES = {"responses", "chat-completions", "native"}
 
 
 class ProviderKind(str, enum.Enum):
@@ -43,50 +45,66 @@ class ProviderDefinition:
     default_base_url: str | None
     default_credential_type: str
     secret_required: bool
+    default_api_mode: str
+    supported_api_modes: tuple[str, ...]
 
 
 PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
     ProviderKind.AZURE_OPENAI: ProviderDefinition(
         kind=ProviderKind.AZURE_OPENAI,
         default_base_url=None,
-        default_credential_type="api-key",
-        secret_required=True,
+        default_credential_type="entra-id",
+        secret_required=False,
+        default_api_mode="responses",
+        supported_api_modes=("responses", "chat-completions"),
     ),
     ProviderKind.OPENAI: ProviderDefinition(
         kind=ProviderKind.OPENAI,
         default_base_url="https://api.openai.com/v1",
         default_credential_type="bearer",
         secret_required=True,
+        default_api_mode="responses",
+        supported_api_modes=("responses", "chat-completions"),
     ),
     ProviderKind.ANTHROPIC: ProviderDefinition(
         kind=ProviderKind.ANTHROPIC,
         default_base_url="https://api.anthropic.com/v1",
         default_credential_type="api-key",
         secret_required=True,
+        default_api_mode="native",
+        supported_api_modes=("native",),
     ),
     ProviderKind.OPENROUTER: ProviderDefinition(
         kind=ProviderKind.OPENROUTER,
         default_base_url="https://openrouter.ai/api/v1",
         default_credential_type="bearer",
         secret_required=True,
+        default_api_mode="chat-completions",
+        supported_api_modes=("responses", "chat-completions"),
     ),
     ProviderKind.NVIDIA_NIM: ProviderDefinition(
         kind=ProviderKind.NVIDIA_NIM,
         default_base_url="https://integrate.api.nvidia.com/v1",
         default_credential_type="bearer",
         secret_required=True,
+        default_api_mode="chat-completions",
+        supported_api_modes=("responses", "chat-completions"),
     ),
     ProviderKind.OLLAMA: ProviderDefinition(
         kind=ProviderKind.OLLAMA,
-        default_base_url="http://127.0.0.1:11434",
+        default_base_url="http://127.0.0.1:11434/v1",
         default_credential_type="none",
         secret_required=False,
+        default_api_mode="chat-completions",
+        supported_api_modes=("chat-completions",),
     ),
     ProviderKind.OPENAI_COMPATIBLE: ProviderDefinition(
         kind=ProviderKind.OPENAI_COMPATIBLE,
         default_base_url=None,
         default_credential_type="bearer",
         secret_required=False,
+        default_api_mode="chat-completions",
+        supported_api_modes=("responses", "chat-completions"),
     ),
 }
 
@@ -136,12 +154,16 @@ class OSKeyringSecretStore:
 
         validate_identifier(account, "credential account")
         if not secret or secret.strip() != secret:
-            raise ProviderError("Provider secret must be non-empty and have no outer whitespace.")
+            raise ProviderError(
+                "Provider secret must be non-empty and have no outer whitespace."
+            )
         keyring_module = self._keyring()
         try:
             keyring_module.set_password(KEYRING_SERVICE, account, secret)
         except Exception as error:
-            raise SecretStoreUnavailable("The OS keyring rejected the credential write.") from error
+            raise SecretStoreUnavailable(
+                "The OS keyring rejected the credential write."
+            ) from error
         return f"keyring://{KEYRING_SERVICE}/{account}"
 
     def get(self, reference: str) -> str:
@@ -149,11 +171,17 @@ class OSKeyringSecretStore:
 
         keyring_module = self._keyring()
         try:
-            secret = keyring_module.get_password(KEYRING_SERVICE, self._account(reference))
+            secret = keyring_module.get_password(
+                KEYRING_SERVICE, self._account(reference)
+            )
         except Exception as error:
-            raise SecretStoreUnavailable("The OS keyring rejected the credential read.") from error
+            raise SecretStoreUnavailable(
+                "The OS keyring rejected the credential read."
+            ) from error
         if not secret:
-            raise SecretStoreUnavailable("The provider credential is missing from the OS keyring.")
+            raise SecretStoreUnavailable(
+                "The provider credential is missing from the OS keyring."
+            )
         return secret
 
     def delete(self, reference: str) -> None:
@@ -175,6 +203,7 @@ class ProviderProfile:
     base_url: str
     model: str
     credential_type: str
+    api_mode: str
     secret_ref: str | None = None
     api_version: str | None = None
     organization: str | None = None
@@ -184,10 +213,29 @@ class ProviderProfile:
         _validate_base_url(self.base_url)
         if not self.model or len(self.model) > 256:
             raise ConfigurationError("Provider model must be 1-256 characters.")
-        if self.credential_type not in {"api-key", "bearer", "none"}:
-            raise ConfigurationError("credential_type must be api-key, bearer, or none.")
-        if self.credential_type == "none" and self.secret_ref is not None:
-            raise ConfigurationError("A credential-free profile cannot contain a secret reference.")
+        if self.credential_type not in _CREDENTIAL_TYPES:
+            raise ConfigurationError(
+                "credential_type must be api-key, bearer, entra-id, or none."
+            )
+        if self.credential_type in {"none", "entra-id"} and self.secret_ref is not None:
+            raise ConfigurationError(
+                "Credential-free and Entra ID profiles cannot contain a secret reference."
+            )
+        if (
+            self.credential_type == "entra-id"
+            and self.kind != ProviderKind.AZURE_OPENAI
+        ):
+            raise ConfigurationError(
+                "Entra ID credentials are supported only for Azure OpenAI."
+            )
+        definition = PROVIDER_REGISTRY[self.kind]
+        if (
+            self.api_mode not in _API_MODES
+            or self.api_mode not in definition.supported_api_modes
+        ):
+            raise ConfigurationError(
+                f"{self.kind.value} does not support API mode {self.api_mode}."
+            )
         if self.secret_ref is not None and not self.secret_ref.startswith(
             f"keyring://{KEYRING_SERVICE}/"
         ):
@@ -206,6 +254,7 @@ class ProviderProfile:
 
         return {
             "apiVersion": self.api_version,
+            "apiMode": self.api_mode,
             "baseUrl": self.base_url,
             "credentialType": self.credential_type,
             "kind": self.kind.value,
@@ -220,6 +269,7 @@ class ProviderProfile:
         """Validate a provider profile from disk."""
 
         expected = {
+            "apiMode",
             "apiVersion",
             "baseUrl",
             "credentialType",
@@ -236,7 +286,9 @@ class ProviderProfile:
             )
         required_strings = ("baseUrl", "credentialType", "kind", "model", "name")
         if any(not isinstance(value.get(key), str) for key in required_strings):
-            raise ConfigurationError("Provider profile is missing required string fields.")
+            raise ConfigurationError(
+                "Provider profile is missing required string fields."
+            )
         for optional_key in ("apiVersion", "organization", "secretRef"):
             if value.get(optional_key) is not None and not isinstance(
                 value.get(optional_key), str
@@ -245,13 +297,20 @@ class ProviderProfile:
         try:
             kind = ProviderKind(str(value["kind"]))
         except ValueError as error:
-            raise ConfigurationError(f"Unknown provider kind: {value['kind']}") from error
+            raise ConfigurationError(
+                f"Unknown provider kind: {value['kind']}"
+            ) from error
         return cls(
             name=str(value["name"]),
             kind=kind,
             base_url=str(value["baseUrl"]),
             model=str(value["model"]),
             credential_type=str(value["credentialType"]),
+            api_mode=(
+                str(value["apiMode"])
+                if isinstance(value.get("apiMode"), str)
+                else PROVIDER_REGISTRY[kind].default_api_mode
+            ),
             secret_ref=(str(value["secretRef"]) if value.get("secretRef") else None),
             api_version=(str(value["apiVersion"]) if value.get("apiVersion") else None),
             organization=(
@@ -267,6 +326,7 @@ def build_profile(
     model: str,
     base_url: str | None = None,
     credential_type: str | None = None,
+    api_mode: str | None = None,
     api_version: str | None = None,
     organization: str | None = None,
 ) -> ProviderProfile:
@@ -277,14 +337,17 @@ def build_profile(
     if selected_url is None:
         raise ConfigurationError(f"{kind.value} requires --base-url.")
     selected_credential = credential_type or definition.default_credential_type
-    if definition.secret_required and selected_credential == "none":
-        raise ConfigurationError(f"{kind.value} requires an authenticated credential type.")
+    if definition.secret_required and selected_credential in {"none", "entra-id"}:
+        raise ConfigurationError(
+            f"{kind.value} requires an authenticated credential type."
+        )
     return ProviderProfile(
         name=name,
         kind=kind,
         base_url=selected_url.rstrip("/"),
         model=model,
         credential_type=selected_credential,
+        api_mode=api_mode or definition.default_api_mode,
         api_version=api_version,
         organization=organization,
     )
@@ -312,28 +375,35 @@ class ProviderStore:
         except KeyError as error:
             raise ProviderError(f"Unknown provider profile: {name}") from error
 
-    def configure(self, profile: ProviderProfile, secret: str | None) -> ProviderProfile:
+    def configure(
+        self, profile: ProviderProfile, secret: str | None
+    ) -> ProviderProfile:
         """Atomically save metadata while keeping credential bytes in the keyring."""
 
         profiles = self._load()
         previous = profiles.get(profile.name)
         secret_ref: str | None = None
-        if profile.credential_type == "none":
+        if profile.credential_type in {"none", "entra-id"}:
             if secret is not None:
-                raise ProviderError("This credential-free profile does not accept a secret.")
+                raise ProviderError(
+                    "This credential-free profile does not accept a secret."
+                )
         elif secret is not None:
             account = f"provider-{profile.name}-{uuid.uuid4().hex}"
             secret_ref = self.secrets.set(account, secret)
         elif previous is not None and previous.secret_ref is not None:
             secret_ref = previous.secret_ref
         else:
-            raise ProviderError("A provider secret is required. Use the hidden prompt or stdin.")
+            raise ProviderError(
+                "A provider secret is required. Use the hidden prompt or stdin."
+            )
         stored = ProviderProfile(
             name=profile.name,
             kind=profile.kind,
             base_url=profile.base_url,
             model=profile.model,
             credential_type=profile.credential_type,
+            api_mode=profile.api_mode,
             secret_ref=secret_ref,
             api_version=profile.api_version,
             organization=profile.organization,
@@ -379,11 +449,13 @@ class ProviderStore:
         if not self.path.exists():
             return {}
         value = read_json_object(self.path)
-        if value.get("schemaVersion") != PROVIDER_CONFIG_VERSION:
+        if value.get("schemaVersion") not in {1, PROVIDER_CONFIG_VERSION}:
             raise ConfigurationError("Unsupported provider configuration version.")
         raw_profiles = value.get("providers")
         if not isinstance(raw_profiles, list):
-            raise ConfigurationError("Provider configuration must contain a providers array.")
+            raise ConfigurationError(
+                "Provider configuration must contain a providers array."
+            )
         profiles: dict[str, ProviderProfile] = {}
         for raw_profile in raw_profiles:
             if not isinstance(raw_profile, dict):
@@ -404,7 +476,9 @@ class ProviderStore:
         lowered = serialized.lower()
         for forbidden in ('"apikey"', '"password"', '"secret"'):
             if forbidden in lowered:
-                raise ConfigurationError("Provider metadata unexpectedly contains a secret field.")
+                raise ConfigurationError(
+                    "Provider metadata unexpectedly contains a secret field."
+                )
         atomic_write_text(self.path, f"{serialized}\n")
 
 
@@ -462,15 +536,21 @@ class ProviderTester:
         """Probe a models endpoint without retaining or returning its response body."""
 
         if not allow_network:
-            raise ProviderError("Network probe denied. Pass --allow-network explicitly.")
+            raise ProviderError(
+                "Network probe denied. Pass --allow-network explicitly."
+            )
         if timeout <= 0 or timeout > 30:
-            raise ProviderError("Provider probe timeout must be between 0 and 30 seconds.")
+            raise ProviderError(
+                "Provider probe timeout must be between 0 and 30 seconds."
+            )
         url, headers = _probe_request(profile, secret)
         start = time.monotonic()
         status = self._probe(url, headers, timeout)
         latency = max(0, round((time.monotonic() - start) * 1_000))
         if status < 200 or status >= 300:
-            raise ProviderError(f"Provider returned HTTP {status}; no response body was retained.")
+            raise ProviderError(
+                f"Provider returned HTTP {status}; no response body was retained."
+            )
         return ProviderTestResult(
             provider_name=profile.name,
             status_code=status,
@@ -483,9 +563,9 @@ def _probe_request(
     secret: str | None,
 ) -> tuple[str, dict[str, str]]:
     headers = {"Accept": "application/json", "User-Agent": "fikeya-runtime/0.1"}
-    if profile.credential_type != "none" and not secret:
+    if profile.credential_type not in {"none", "entra-id"} and not secret:
         raise ProviderError("The provider credential is missing from the OS keyring.")
-    if profile.credential_type == "bearer" and secret is not None:
+    if profile.credential_type in {"bearer", "entra-id"} and secret is not None:
         headers["Authorization"] = f"Bearer {secret}"
     elif profile.credential_type == "api-key" and secret is not None:
         if profile.kind == ProviderKind.ANTHROPIC:
@@ -495,14 +575,19 @@ def _probe_request(
             headers["api-key"] = secret
     if profile.organization is not None:
         headers["OpenAI-Organization"] = profile.organization
+    base_url = profile.base_url
     if profile.kind == ProviderKind.OLLAMA:
+        base_url = profile.base_url.removesuffix("/v1")
         path = "/api/tags"
     elif profile.kind == ProviderKind.AZURE_OPENAI:
-        version = urllib.parse.quote(profile.api_version or "2024-10-21", safe="")
-        path = f"/openai/models?api-version={version}"
+        if profile.base_url.rstrip("/").endswith("/openai/v1"):
+            path = "/models"
+        else:
+            version = urllib.parse.quote(profile.api_version or "2024-10-21", safe="")
+            path = f"/openai/models?api-version={version}"
     else:
         path = "/models"
-    return f"{profile.base_url.rstrip('/')}{path}", headers
+    return f"{base_url.rstrip('/')}{path}", headers
 
 
 def _validate_base_url(value: str) -> None:
@@ -517,4 +602,6 @@ def _validate_base_url(value: str) -> None:
         )
     loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
     if parsed.scheme != "https" and not loopback:
-        raise ConfigurationError("Plain HTTP is permitted only for a loopback provider.")
+        raise ConfigurationError(
+            "Plain HTTP is permitted only for a loopback provider."
+        )

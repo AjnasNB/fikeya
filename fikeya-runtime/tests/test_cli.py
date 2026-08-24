@@ -47,10 +47,7 @@ def test_cli_init_and_provider_listing_make_no_network_calls(
         "secretConfigured": False,
     }
 
-    assert (
-        main(["--home", str(home), "provider", "list", "--json"])
-        == 0
-    )
+    assert main(["--home", str(home), "provider", "list", "--json"]) == 0
     listed = json.loads(capsys.readouterr().out)
     assert listed["providers"][0]["name"] == "local"
 
