@@ -102,6 +102,8 @@ export const indentationFilter = Object.freeze<string[]>([
 	'!build/ext.js',
 	'!build/darwin/patch-dmg.py',
 	'!build/npm/gyp/patches/gyp_spectre_mitigation_support.patch',
+	// Fikeya-owned Python uses PEP 8 indentation and its own SPDX license headers.
+	'!scripts/fikeya/**/*.py',
 	'!product.overrides.json',
 	'!src/vs/platform/endpoint/common/licenseAgreement.ts',
 
@@ -202,6 +204,8 @@ export const copyrightFilter = Object.freeze<string[]>([
 	'!**/*.provisionprofile',
 	'!build/**/*.init',
 	'!build/darwin/patch-dmg.py',
+	// Fikeya-owned Python files retain AGPL SPDX headers instead of the Code OSS MIT header.
+	'!scripts/fikeya/**/*.py',
 	'!build/linux/libcxx-fetcher.*',
 	'!build/npm/gyp/custom-headers/**',
 	'!resources/linux/snap/snapcraft.yaml',
