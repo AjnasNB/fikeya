@@ -108,6 +108,8 @@ class AgentOrchestrator:
             self._validate_state(state)
             if approval is not None and state.stage != Stage.AWAITING_APPROVAL:
                 raise ProtocolError("approval supplied when no tool call is awaiting approval")
+            if approval is not None:
+                self._validate_approval_response(state, approval)
             if (
                 state.stage == Stage.OBSERVE
                 and state.execution_lease_id is not None
@@ -411,25 +413,8 @@ class AgentOrchestrator:
         state: SessionState,
         response: ApprovalResponse,
     ) -> tuple[SessionState, tuple[AgentEvent, ...]]:
-        request, call = self._validated_pending_approval(state)
-        expected = (
-            request.request_id,
-            request.session_id,
-            request.call_id,
-            request.tool_name,
-            request.arguments_sha256,
-            request.expected_revision,
-        )
-        actual = (
-            response.request_id,
-            response.session_id,
-            response.call_id,
-            response.tool_name,
-            response.arguments_sha256,
-            response.expected_revision,
-        )
-        if actual != expected or response.expected_revision != state.revision:
-            raise ProtocolError("approval response does not match the current checkpointed request")
+        request, call = self._validate_approval_response(state, response)
+
         events: list[AgentEvent] = []
         if response.decision == ApprovalDecision.CANCEL:
             state.stage = Stage.CANCELLED
@@ -476,6 +461,34 @@ class AgentOrchestrator:
             )
             events.append(event)
         return state, tuple(events)
+
+    def _validate_approval_response(
+        self,
+        state: SessionState,
+        response: ApprovalResponse,
+    ) -> tuple[ApprovalRequest, ToolCall]:
+        if not isinstance(response, ApprovalResponse):
+            raise ProtocolError("approval must be a response bound to the current request")
+        request, call = self._validated_pending_approval(state)
+        expected = (
+            request.request_id,
+            request.session_id,
+            request.call_id,
+            request.tool_name,
+            request.arguments_sha256,
+            request.expected_revision,
+        )
+        actual = (
+            response.request_id,
+            response.session_id,
+            response.call_id,
+            response.tool_name,
+            response.arguments_sha256,
+            response.expected_revision,
+        )
+        if actual != expected or response.expected_revision != state.revision:
+            raise ProtocolError("approval response does not match the current checkpointed request")
+        return request, call
 
     def _reissue_approval(self, state: SessionState) -> tuple[SessionState, AgentEvent]:
         request, call = self._validated_pending_approval(state, require_revision=False)
