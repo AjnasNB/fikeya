@@ -16,6 +16,7 @@ const publicFiles = [
 	'fikeya-live-editor-graph.png',
 	'index.html',
 	'robots.txt',
+	'sitemap.xml',
 	'site.webmanifest',
 	'styles.css'
 ];

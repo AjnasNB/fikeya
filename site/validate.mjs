@@ -10,8 +10,10 @@ const requiredFiles = [
 	'favicon.svg',
 	'index.html',
 	'robots.txt',
+	'sitemap.xml',
 	'site.webmanifest',
 	'styles.css',
+	'worker.ts',
 	'wrangler.jsonc'
 ];
 
@@ -33,7 +35,11 @@ const js = await readFile(new URL('app.js', root), 'utf8');
 const assetsIgnore = await readFile(new URL('.assetsignore', root), 'utf8');
 const headers = await readFile(new URL('_headers', root), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('site.webmanifest', root), 'utf8'));
+const robots = await readFile(new URL('robots.txt', root), 'utf8');
+const sitemap = await readFile(new URL('sitemap.xml', root), 'utf8');
 const wranglerText = await readFile(new URL('wrangler.jsonc', root), 'utf8');
+const workerWranglerText = await readFile(new URL('wrangler.worker.jsonc', root), 'utf8');
+const worker = (await import(new URL('worker.ts', root))).default;
 
 const sourceFiles = files.filter(file => ['.html', '.css', '.js', '.mjs', '.json', '.jsonc', '.txt'].includes(extname(file)));
 for (const file of sourceFiles) {
@@ -55,9 +61,10 @@ assert(!html.match(/\bany model\b/i), 'Unsupported any-model claim found');
 assert(html.includes('The public alpha runs one bounded model turn at a time'), 'One-turn public-alpha boundary is missing');
 assert(html.includes('returns an inspectable provider receipt, including provider-reported usage when available'), 'Provider receipt wording is missing');
 assert(html.includes('When Qarinah supplies cited project context, Fikeya adds a separate context receipt.'), 'Conditional Qarinah receipt wording is missing');
-assert(html.includes('Cross-platform reproducibility, signed native installers'), 'Packaging release gates are missing');
+assert(html.includes('Signed native Windows, macOS, and Linux installers remain release gates.'), 'Packaging release gates are missing');
 assert(!html.includes('reproducible VSIX packaging'), 'Unproven cross-platform reproducibility claim is present');
-assert(html.includes('Open public alpha for Windows desktop and CLI'), 'Public alpha status is missing');
+assert(html.includes('Open-source editor extension and CLI alpha'), 'Public alpha status is missing');
+assert(!html.includes('real Windows alpha'), 'The extension must not be presented as a native desktop executable');
 assert(html.includes('src="/fikeya-live-editor-graph.png"'), 'Real desktop capture is missing');
 assert(html.includes('src="/fikeya-live-editor.png"'), 'Real agent surface capture is missing');
 assert(!html.includes('Keep the work between coding-agent sessions'), 'Stale session-handoff positioning found');
@@ -82,10 +89,25 @@ assert(headers.includes("frame-ancestors 'none'"), 'Header CSP is missing clickj
 assert(headers.includes('X-Content-Type-Options: nosniff'), 'nosniff header is missing');
 assert(headers.includes('Permissions-Policy:'), 'Permissions Policy header is missing');
 assert(manifest.name === 'Fikeya', 'Web manifest name is incorrect');
+assert(robots.includes('Sitemap: https://fikeya.com/sitemap.xml'), 'Robots sitemap declaration is missing');
+assert(sitemap.includes('<loc>https://fikeya.com/</loc>'), 'Canonical sitemap location is missing');
 assert(assetsIgnore.includes('.wrangler'), 'Wrangler local state is not excluded from static assets');
 assert(assetsIgnore.includes('node_modules'), 'Dependencies are not excluded from static assets');
 assert(wranglerText.includes('"compatibility_date": "2026-08-24"'), 'Cloudflare compatibility date is incorrect');
 assert(!wranglerText.match(/account_id|zone_id|api_token|route/i), 'Wrangler config must not contain account, zone, token, or route values');
+assert(workerWranglerText.includes('"main": "./worker.ts"'), 'Worker entry point is missing');
+assert(workerWranglerText.includes('"binding": "ASSETS"'), 'Static asset binding is missing');
+assert(!workerWranglerText.match(/account_id|zone_id|api_token/i), 'Worker config must not contain account, zone, or token values');
+
+const redirectResponse = await worker.fetch(new Request('https://www.fikeya.com/docs/?q=1'), {
+	ASSETS: { fetch: async () => new Response('asset') }
+});
+assert(redirectResponse.status === 301, 'www canonical redirect status is incorrect');
+assert(redirectResponse.headers.get('location') === 'https://fikeya.com/docs/?q=1', 'www canonical redirect target is incorrect');
+const assetResponse = await worker.fetch(new Request('https://fikeya.com/'), {
+	ASSETS: { fetch: async () => new Response('asset') }
+});
+assert(assetResponse.status === 200 && await assetResponse.text() === 'asset', 'Apex requests must reach the static asset binding');
 
 const hrefs = Array.from(html.matchAll(/href=["']([^"']+)["']/g), match => match[1]);
 const ids = new Set(Array.from(html.matchAll(/\bid=["']([^"']+)["']/g), match => match[1]));
