@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import readline from 'node:readline';
-import { buildMemoryDashboard } from 'qarinah';
+import { buildMemoryDashboard } from 'fikeya-qarinah-dashboard';
+import { initializeWorkspace } from 'fikeya-qarinah-workspace';
 
 const maximumInputBytes = 1024 * 1024;
 const root = readRoot(process.argv.slice(2));
@@ -35,12 +36,25 @@ async function handleLine(line) {
 		return;
 	}
 	if (!isRecord(request) || request.jsonrpc !== '2.0' || typeof request.id !== 'string'
-		|| request.method !== 'memory.inspect' || !isRecord(request.params)) {
+		|| !['memory.initialize', 'memory.inspect'].includes(request.method) || !isRecord(request.params)) {
 		writeError(isRecord(request) && typeof request.id === 'string' ? request.id : null, -32600, 'Invalid request.');
 		return;
 	}
 
 	try {
+		if (request.method === 'memory.initialize') {
+			const workspace = await initializeWorkspace(root, { ifNeeded: true });
+			write({
+				jsonrpc: '2.0',
+				id: request.id,
+				result: {
+					schemaVersion: 'qarinah.workspace-initialization.v1',
+					workspaceId: workspace.config.workspaceId,
+					capture: workspace.config.capture
+				}
+			});
+			return;
+		}
 		const dashboard = await buildMemoryDashboard({ cwd: root });
 		const compactView = {
 			schemaVersion: 'qarinah.developer-memory-view.v1',

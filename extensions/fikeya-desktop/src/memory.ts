@@ -55,11 +55,62 @@ export interface FikeyaMemoryResult {
 	readonly failure: FikeyaMemoryFailure;
 }
 
+export interface FikeyaMemoryInitialization {
+	readonly workspaceId: string;
+	readonly capture: 'metadata' | 'content';
+}
+
+export interface FikeyaMemoryInitializationResult {
+	readonly ok: boolean;
+	readonly initialization?: FikeyaMemoryInitialization;
+	readonly failure: FikeyaMemoryFailure;
+}
+
+/** Initializes the pinned local Qarinah workspace without widening its capture policy. */
+export function initializeQarinahMemory(extensionPath: string, workspacePath: string): Promise<FikeyaMemoryInitializationResult> {
+	return invokeQarinahSidecar<FikeyaMemoryInitialization, FikeyaMemoryInitializationResult>(
+		extensionPath,
+		workspacePath,
+		{
+			jsonrpc: '2.0',
+			id: 'fikeya-memory-init',
+			method: 'memory.initialize',
+			params: {}
+		},
+		parseMemoryInitializationSidecarResponse,
+		initialization => ({ ok: true, initialization, failure: 'none' }),
+		failure => ({ ok: false, failure })
+	);
+}
+
 /** Reads one bounded, verified derived view from the pinned Qarinah sidecar. */
 export function loadQarinahMemory(extensionPath: string, workspacePath: string): Promise<FikeyaMemoryResult> {
+	return invokeQarinahSidecar<FikeyaMemorySnapshot, FikeyaMemoryResult>(
+		extensionPath,
+		workspacePath,
+		{
+			jsonrpc: '2.0',
+			id: 'fikeya-memory-view',
+			method: 'memory.inspect',
+			params: { includeWorktrees: true, limit: 50, query: 'project decisions tools outcomes conflicts changes' }
+		},
+		parseMemorySidecarResponse,
+		snapshot => ({ ok: true, snapshot, failure: 'none' }),
+		failure => ({ ok: false, failure })
+	);
+}
+
+function invokeQarinahSidecar<T, TResult>(
+	extensionPath: string,
+	workspacePath: string,
+	request: Readonly<Record<string, unknown>>,
+	parseLine: (line: string) => T | undefined,
+	success: (value: T) => TResult,
+	failure: (failure: Exclude<FikeyaMemoryFailure, 'none'>) => TResult
+): Promise<TResult> {
 	const sidecarPath = resolveQarinahSidecarPath(extensionPath);
 	if (!sidecarPath) {
-		return Promise.resolve({ ok: false, failure: 'sidecar-not-found' });
+		return Promise.resolve(failure('sidecar-not-found'));
 	}
 
 	return new Promise(resolve => {
@@ -77,7 +128,7 @@ export function loadQarinahMemory(extensionPath: string, workspacePath: string):
 		let settled = false;
 		let timeout: NodeJS.Timeout | undefined;
 
-		const finish = (result: FikeyaMemoryResult): void => {
+		const finish = (result: TResult): void => {
 			if (settled) {
 				return;
 			}
@@ -92,7 +143,7 @@ export function loadQarinahMemory(extensionPath: string, workspacePath: string):
 		const capture = (chunk: Buffer, retain: boolean): void => {
 			outputBytes += chunk.byteLength;
 			if (outputBytes > maximumSidecarOutputBytes) {
-				finish({ ok: false, failure: 'output-limit' });
+				finish(failure('output-limit'));
 				return;
 			}
 			if (!retain) {
@@ -103,31 +154,25 @@ export function loadQarinahMemory(extensionPath: string, workspacePath: string):
 			if (lineEnd === -1) {
 				return;
 			}
-			const snapshot = parseMemorySidecarResponse(output.slice(0, lineEnd));
-			finish(snapshot ? { ok: true, snapshot, failure: 'none' } : { ok: false, failure: 'invalid-response' });
+			const value = parseLine(output.slice(0, lineEnd));
+			finish(value ? success(value) : failure('invalid-response'));
 		};
 
 		if (!child.stdin || !child.stdout || !child.stderr) {
-			finish({ ok: false, failure: 'process-error' });
+			finish(failure('process-error'));
 			return;
 		}
 		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
 		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
-		child.on('error', () => finish({ ok: false, failure: 'process-error' }));
+		child.on('error', () => finish(failure('process-error')));
 		child.on('close', () => {
 			if (!settled) {
-				finish({ ok: false, failure: 'process-error' });
+				finish(failure('process-error'));
 			}
 		});
 
-		const request = JSON.stringify({
-			jsonrpc: '2.0',
-			id: 'fikeya-memory-view',
-			method: 'memory.inspect',
-			params: { includeWorktrees: true, limit: 50, query: 'project decisions tools outcomes conflicts changes' }
-		});
-		child.stdin.write(`${request}\n`, 'utf8');
-		timeout = setTimeout(() => finish({ ok: false, failure: 'timeout' }), sidecarTimeoutMilliseconds);
+		child.stdin.write(`${JSON.stringify(request)}\n`, 'utf8');
+		timeout = setTimeout(() => finish(failure('timeout')), sidecarTimeoutMilliseconds);
 	});
 }
 
@@ -150,6 +195,27 @@ export function parseMemorySidecarResponse(line: string): FikeyaMemorySnapshot |
 			return undefined;
 		}
 		return parseMemorySnapshot(message.result);
+	} catch {
+		return undefined;
+	}
+}
+
+export function parseMemoryInitializationSidecarResponse(line: string): FikeyaMemoryInitialization | undefined {
+	if (Buffer.byteLength(line, 'utf8') > maximumSidecarOutputBytes) {
+		return undefined;
+	}
+	try {
+		const message = asRecord(JSON.parse(line));
+		const result = asRecord(message?.result);
+		const workspaceId = strictString(result?.workspaceId, 200);
+		const capture = result?.capture;
+		if (!message || message.jsonrpc !== '2.0' || message.id !== 'fikeya-memory-init' || message.error !== undefined
+			|| !result || result.schemaVersion !== 'qarinah.workspace-initialization.v1'
+			|| !workspaceId || !/^ws_[0-9a-f]{32}$/.test(workspaceId)
+			|| (capture !== 'metadata' && capture !== 'content')) {
+			return undefined;
+		}
+		return { workspaceId, capture };
 	} catch {
 		return undefined;
 	}

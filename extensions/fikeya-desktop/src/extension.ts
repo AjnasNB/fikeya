@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
 import { escapeHtml, FikeyaLayout, FikeyaMode, fikeyaLayouts, fikeyaModes, parseWebviewMessage } from './messageValidation';
-import { FikeyaMemorySnapshot, loadQarinahMemory } from './memory';
+import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import {
 	configureFikeyaProvider,
 	FikeyaAgentRunHandle,
@@ -292,9 +292,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		this.refresh();
 		const title = command === 'doctor' ? vscode.l10n.t('Running Fikeya Doctor') : vscode.l10n.t('Initializing Fikeya Workspace');
 		const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () => runFikeyaRuntime(command, workspacePath));
+		const memoryInitialization = result.ok && command === 'init'
+			? await initializeQarinahMemory(this.context.extensionPath, workspacePath)
+			: undefined;
 		this.applyRuntimeResult(result, command);
 		if (result.ok) {
-			void this.refreshMemory(false);
+			if (memoryInitialization && !memoryInitialization.ok) {
+				void vscode.window.showErrorMessage(vscode.l10n.t('Fikeya initialized, but its pinned Qarinah memory could not be initialized.'));
+			}
+			await this.refreshMemory(false);
 		}
 	}
 

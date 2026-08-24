@@ -6,7 +6,7 @@
 import * as assert from 'node:assert/strict';
 import path from 'node:path';
 import { describe, test } from 'node:test';
-import { parseMemorySidecarResponse, parseMemorySnapshot, resolveQarinahSidecarPath } from '../memory';
+import { parseMemoryInitializationSidecarResponse, parseMemorySidecarResponse, parseMemorySnapshot, resolveQarinahSidecarPath } from '../memory';
 
 const hashA = `sha256:${'a'.repeat(64)}`;
 const hashB = `sha256:${'b'.repeat(64)}`;
@@ -81,6 +81,23 @@ describe('Fikeya Qarinah memory bridge', () => {
 		const line = JSON.stringify({ jsonrpc: '2.0', id: 'fikeya-memory-view', result: memoryView() });
 		assert.strictEqual(parseMemorySidecarResponse(line)?.eventCount, 42);
 		assert.strictEqual(parseMemorySidecarResponse(JSON.stringify({ jsonrpc: '2.0', id: 'other', result: memoryView() })), undefined);
+	});
+
+	test('accepts a bounded Qarinah initialization receipt', () => {
+		const line = JSON.stringify({
+			jsonrpc: '2.0',
+			id: 'fikeya-memory-init',
+			result: {
+				schemaVersion: 'qarinah.workspace-initialization.v1',
+				workspaceId: `ws_${'a'.repeat(32)}`,
+				capture: 'metadata'
+			}
+		});
+		assert.deepStrictEqual(parseMemoryInitializationSidecarResponse(line), {
+			workspaceId: `ws_${'a'.repeat(32)}`,
+			capture: 'metadata'
+		});
+		assert.strictEqual(parseMemoryInitializationSidecarResponse(line.replace('metadata', 'all')), undefined);
 	});
 
 	test('rejects edges that reference nodes outside the bounded projection', () => {

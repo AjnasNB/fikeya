@@ -69,7 +69,10 @@ const buildResult = await build({
 	platform: 'node',
 	format: 'esm',
 	target: 'node22',
-	alias: { qarinah: path.join(qarinahPackagePath, 'src', 'dashboard.js') },
+	alias: {
+		'fikeya-qarinah-dashboard': path.join(qarinahPackagePath, 'src', 'dashboard.js'),
+		'fikeya-qarinah-workspace': path.join(qarinahPackagePath, 'src', 'workspace.js')
+	},
 	metafile: true,
 	legalComments: 'none',
 	sourcemap: false,
@@ -85,6 +88,9 @@ if (unexpectedDependency) {
 }
 if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/dashboard.js'))) {
 	throw new Error('The bundled sidecar does not contain the pinned Qarinah dashboard runtime.');
+}
+if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/workspace.js'))) {
+	throw new Error('The bundled sidecar does not contain the pinned Qarinah workspace runtime.');
 }
 
 const runtimeReceipt = {
