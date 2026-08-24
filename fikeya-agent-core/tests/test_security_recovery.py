@@ -96,6 +96,19 @@ class BlockingBroker(ExactOnceBroker):
         return await super().execute(call, cancellation, idempotency_key=idempotency_key)
 
 
+class CancelledBroker(ExactOnceBroker):
+    async def execute(
+        self,
+        call: ToolCall,
+        cancellation: CancellationToken,
+        *,
+        idempotency_key: str,
+    ) -> ToolResult:
+        del call, cancellation, idempotency_key
+        self.calls += 1
+        raise asyncio.CancelledError
+
+
 class TimeoutProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -198,6 +211,29 @@ def test_checkpoint_invariants_reject_call_digest_tampering_and_forged_observe()
 
 
 @pytest.mark.asyncio
+async def test_checkpoint_invariants_rederive_the_grant_idempotency_key() -> None:
+    store = InMemoryCheckpointStore()
+    orchestrator = AgentOrchestrator(scripted_provider(), ExactOnceBroker(), store)
+    session = orchestrator.start("inspect", session_id="session:grant-key-tamper")
+    await pause(orchestrator, session.session_id)
+    generator = orchestrator.stream(
+        session.session_id,
+        approval=bound_response(orchestrator, session.session_id),
+    )
+    async for event in generator:
+        if event.kind == EventKind.APPROVAL_RESOLVED:
+            break
+    await generator.aclose()
+    state = store.load(session.session_id)
+    assert state.stage == Stage.OBSERVE and state.approval_grant is not None
+    state.approval_grant = replace(state.approval_grant, idempotency_key="f" * 64)
+    store.save(state, expected_revision=state.revision)
+
+    with pytest.raises(ProtocolError, match="grant does not match"):
+        orchestrator.state(session.session_id)
+
+
+@pytest.mark.asyncio
 async def test_execution_lease_blocks_a_second_orchestrator_before_broker_dispatch() -> None:
     store = InMemoryCheckpointStore()
     provider = scripted_provider()
@@ -210,6 +246,8 @@ async def test_execution_lease_blocks_a_second_orchestrator_before_broker_dispat
     await broker.started.wait()
 
     second = AgentOrchestrator(provider, broker, store)
+    with pytest.raises(StateConflictError, match="cannot cancel a leased tool call"):
+        second.cancel(session.session_id)
     with pytest.raises(StateConflictError, match="execution lease"):
         await collect(second.stream(session.session_id))
 
@@ -217,6 +255,26 @@ async def test_execution_lease_blocks_a_second_orchestrator_before_broker_dispat
     await first_task
     assert broker.calls == 1
     assert first.state(session.session_id).stage == Stage.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_broker_task_cancellation_is_an_uncertain_outcome_not_a_replay() -> None:
+    provider = scripted_provider()
+    broker = CancelledBroker()
+    orchestrator = AgentOrchestrator(provider, broker, InMemoryCheckpointStore())
+    session = orchestrator.start("inspect", session_id="session:broker-task-cancelled")
+    await pause(orchestrator, session.session_id)
+
+    with pytest.raises(BrokerOutcomeUncertainError, match="cancelled after dispatch"):
+        await collect(
+            orchestrator.stream(
+                session.session_id,
+                approval=bound_response(orchestrator, session.session_id),
+            )
+        )
+    state = orchestrator.state(session.session_id)
+    assert broker.calls == 1
+    assert state.failure_code == "broker_outcome_uncertain"
 
 
 @pytest.mark.asyncio

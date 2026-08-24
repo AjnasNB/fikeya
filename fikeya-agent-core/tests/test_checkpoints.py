@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -11,12 +13,14 @@ from fikeya_agent_core import (
     EvidenceCitation,
     EvidenceContext,
     InMemoryCheckpointStore,
+    ProtocolError,
     SessionState,
     SqliteCheckpointStore,
     Stage,
     StateConflictError,
     ToolResult,
 )
+from fikeya_agent_core.checkpoints import decode_state, encode_state
 
 
 def populated_state() -> SessionState:
@@ -68,3 +72,21 @@ def test_sqlite_store_resumes_across_instances_without_pickle(tmp_path: Path) ->
         resumed.revision,
     ) == (Stage.REVIEW, "continue after a fresh process", resumed.evidence.content_sha256, 1)
     assert b"pickle" not in path.read_bytes()
+
+
+def test_checkpoint_json_and_sqlite_row_revision_fail_closed_on_tampering(tmp_path: Path) -> None:
+    encoded = json.loads(encode_state(populated_state()))
+    encoded["unknownField"] = "ignored-by-lenient-decoders"
+    with pytest.raises(ProtocolError, match="fields are not exact"):
+        decode_state(json.dumps(encoded).encode())
+
+    path = tmp_path / "revision-tamper.sqlite3"
+    store = SqliteCheckpointStore(path)
+    state = store.create(populated_state())
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE agent_checkpoints SET revision = ? WHERE session_id = ?",
+            (state.revision + 7, state.session_id),
+        )
+    with pytest.raises(ProtocolError, match="revisions do not match"):
+        store.load(state.session_id)
