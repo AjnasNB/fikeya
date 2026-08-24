@@ -6,12 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "fikeya-agent-core"
 version = "0.1.0a1"
 description = "Bounded, checkpointed coding-agent orchestration for Fikeya."
+readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 authors = [
   { name = "Fikeya contributors" },
 ]
 dependencies = []
+keywords = ["ai", "coding-agent", "orchestration", "checkpointing", "developer-tools"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Operating System :: MacOS",
@@ -41,6 +44,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 fikeya_agent_core = ["py.typed"]
+
+[tool.setuptools.data-files]
+"share/fikeya-agent-core" = ["SECURITY.md"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
