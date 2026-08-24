@@ -12,6 +12,7 @@ const publicFiles = [
 	'_headers',
 	'app.js',
 	'favicon.svg',
+	'fikeya-live-graph.png',
 	'fikeya-live-site.png',
 	'index.html',
 	'robots.txt',

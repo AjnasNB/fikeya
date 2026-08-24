@@ -807,6 +807,13 @@ a {
 	color: var(--accent);
 }
 
+.live-graph-image {
+	display: block;
+	width: 100%;
+	height: auto;
+	background: #0b0f12;
+}
+
 .graph-canvas {
 	position: relative;
 	min-height: 470px;
