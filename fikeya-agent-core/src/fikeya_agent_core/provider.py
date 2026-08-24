@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from .cancellation import CancellationToken
-from .errors import LimitExceededError, ProtocolError
+from .errors import ConfigurationError, LimitExceededError, ProtocolError, RetryableProviderError
 from .models import (
     DecisionKind,
     EvidenceContext,
@@ -26,6 +26,8 @@ from .models import (
 )
 
 RuntimeRequestFactory = Callable[[str, str | None, int], object]
+CredentialSupplier = Callable[[], str | None]
+ProviderErrorClassifier = Callable[[Exception], bool]
 
 
 class RuntimeProviderExecutor(Protocol):
@@ -50,18 +52,22 @@ class RuntimeProviderAdapter:
         self,
         executor: RuntimeProviderExecutor,
         profile: object,
-        credential: str | None,
+        credential_supplier: CredentialSupplier,
         *,
         allow_network: bool,
         timeout_seconds: float = 120.0,
         request_factory: RuntimeRequestFactory | None = None,
+        is_retryable_error: ProviderErrorClassifier | None = None,
     ) -> None:
+        if isinstance(timeout_seconds, bool) or not 0.1 <= timeout_seconds <= 300.0:
+            raise ConfigurationError("runtime timeout_seconds must be between 0.1 and 300")
         self._executor = executor
         self._profile = profile
-        self._credential = credential
+        self._credential_supplier = credential_supplier
         self._allow_network = allow_network
         self._timeout_seconds = timeout_seconds
         self._request_factory = request_factory or _default_runtime_request
+        self._is_retryable_error = is_retryable_error
 
     async def complete(self, request: ProviderRequest, cancellation: CancellationToken) -> ProviderResult:
         """Execute one runtime call and require a stage-valid JSON decision."""
@@ -70,15 +76,25 @@ class RuntimeProviderAdapter:
         prompt = render_provider_prompt(request)
         maximum_tokens = max(1, min(32_768, request.max_output_bytes // 4))
         runtime_request = self._request_factory(prompt, request.system or None, maximum_tokens)
-        result = await asyncio.to_thread(
-            self._executor.execute,
-            self._profile,
-            self._credential,
-            runtime_request,
-            allow_network=self._allow_network,
-            timeout=self._timeout_seconds,
-            cancellation=cancellation,
-        )
+        credential = self._credential_supplier()
+        if credential is not None and (not isinstance(credential, str) or not credential):
+            raise ConfigurationError("credential supplier must return a non-empty string or None")
+        try:
+            result = await asyncio.to_thread(
+                self._executor.execute,
+                self._profile,
+                credential,
+                runtime_request,
+                allow_network=self._allow_network,
+                timeout=self._timeout_seconds,
+                cancellation=cancellation,
+            )
+        except Exception as error:
+            if self._is_retryable_error is not None and self._is_retryable_error(error):
+                raise RetryableProviderError("runtime provider reported a classified transient failure") from error
+            raise
+        finally:
+            credential = None
         cancellation.raise_if_cancelled()
         text = getattr(result, "text", None)
         if not isinstance(text, str):
@@ -177,28 +193,27 @@ def decode_provider_decision(text: str, stage: Stage) -> ProviderDecision:
         raise ProtocolError("provider output must be one JSON object") from error
     if not isinstance(value, dict):
         raise ProtocolError("provider output must be one JSON object")
-    allowed_fields = {"kind", "content", "toolCall", "reviewAction"}
-    unexpected = set(value) - allowed_fields
-    if unexpected:
-        raise ProtocolError(f"provider output has unknown fields: {', '.join(sorted(unexpected))}")
     try:
         kind = DecisionKind(value.get("kind"))
-    except ValueError as error:
+    except (TypeError, ValueError) as error:
         raise ProtocolError("provider decision kind is invalid") from error
     content = value.get("content", "")
     if not isinstance(content, str):
         raise ProtocolError("provider decision content must be a string")
     if stage == Stage.PLAN:
+        _require_exact_keys(value, {"kind", "content"}, "plan")
         if kind != DecisionKind.PLAN or not content:
             raise ProtocolError("plan stage requires one non-empty plan decision")
         return ProviderDecision(kind, content=content)
     if stage == Stage.ACT:
         if kind == DecisionKind.ANSWER:
+            _require_exact_keys(value, {"kind", "content"}, "answer")
             if not content:
                 raise ProtocolError("answer decisions require non-empty content")
             return ProviderDecision(kind, content=content)
         if kind != DecisionKind.TOOL_CALL:
             raise ProtocolError("act stage requires a tool_call or answer decision")
+        _require_exact_keys(value, {"kind", "toolCall"}, "tool_call")
         call_value = value.get("toolCall")
         if not isinstance(call_value, dict) or set(call_value) != {"callId", "name", "arguments"}:
             raise ProtocolError("toolCall must contain callId, name, and arguments only")
@@ -214,6 +229,7 @@ def decode_provider_decision(text: str, stage: Stage) -> ProviderDecision:
             ),
         )
     if stage == Stage.REVIEW:
+        _require_exact_keys(value, {"kind", "content", "reviewAction"}, "review")
         if kind != DecisionKind.REVIEW:
             raise ProtocolError("review stage requires a review decision")
         try:
@@ -241,6 +257,16 @@ def _required_string(value: dict[str, object], name: str) -> str:
     if not isinstance(item, str) or not item:
         raise ProtocolError(f"provider field must be a non-empty string: {name}")
     return item
+
+
+def _require_exact_keys(value: dict[str, object], expected: set[str], label: str) -> None:
+    actual = set(value)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        raise ProtocolError(
+            f"{label} decision keys are not exact; missing={missing!r}, unexpected={unexpected!r}"
+        )
 
 
 def _optional_non_negative_int(value: object) -> int | None:
