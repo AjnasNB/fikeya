@@ -1,6 +1,6 @@
 {
 	"displayName": "Fikeya Desktop",
-	"description": "A local-first coding agent workbench with provider choice, Qarinah memory, approvals, and verified context receipts.",
+	"description": "A provider-neutral AI code editor with Editor, Agent, Terminal, and Review modes, Qarinah context, and exact usage receipts.",
 	"capabilities.untrustedWorkspaces": "Fikeya can run local tools, so initialize it only in a workspace you trust.",
 	"container.title": "Fikeya",
 	"view.dashboard.name": "Fikeya",

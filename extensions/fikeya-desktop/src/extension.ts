@@ -9,8 +9,10 @@ import { escapeHtml, FikeyaLayout, FikeyaMode, fikeyaLayouts, fikeyaModes, parse
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import {
 	configureFikeyaProvider,
+	FikeyaAgentMemory,
 	FikeyaAgentRunHandle,
 	FikeyaAgentUsage,
+	FikeyaMemoryMode,
 	FikeyaProviderConfiguration,
 	FikeyaProviderProfile,
 	FikeyaProviderReceipt,
@@ -48,6 +50,7 @@ interface AgentSurfaceState {
 	readonly sessionId?: string;
 	readonly callId?: string;
 	readonly usage?: FikeyaAgentUsage;
+	readonly memory?: FikeyaAgentMemory;
 	readonly receiptsStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
 	readonly receipts: readonly FikeyaProviderReceipt[];
 	readonly failure?: string;
@@ -151,7 +154,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 					await this.removeProvider(message.providerName);
 					break;
 				case 'runAgent':
-					await this.runAgent(message.providerName, message.prompt, message.maxOutputTokens);
+					await this.runAgent(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode);
 					break;
 				case 'cancelAgent':
 					this.cancelAgent();
@@ -171,8 +174,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 
 	public async chooseLayout(): Promise<void> {
 		const selection = await vscode.window.showQuickPick([
-			{ label: vscode.l10n.t('Studio'), description: vscode.l10n.t('Show workspace, memory, approvals, and receipts.'), value: 'studio' as const },
-			{ label: vscode.l10n.t('Agent Focus'), description: vscode.l10n.t('Keep the active agent controls in view.'), value: 'agentFocus' as const }
+			{ label: vscode.l10n.t('Studio'), description: vscode.l10n.t('Show workspace, providers, the Qarinah graph, and receipts.'), value: 'studio' as const },
+			{ label: vscode.l10n.t('Agent Focus'), description: vscode.l10n.t('Prioritize the active coding surface and run evidence.'), value: 'agentFocus' as const }
 		], {
 			placeHolder: vscode.l10n.t('Choose the Fikeya Layout')
 		});
@@ -396,7 +399,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		await this.refreshProviders(false);
 	}
 
-	private async runAgent(providerName: string, prompt: string, maxOutputTokens: number): Promise<void> {
+	private async runAgent(
+		providerName: string,
+		prompt: string,
+		maxOutputTokens: number,
+		contextMaxCharacters: number,
+		memoryMode: FikeyaMemoryMode
+	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		if (!workspacePath || this.activeAgentRun || !this.state.providers.some(provider => provider.name === providerName)) {
 			return;
@@ -413,7 +422,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			}
 		};
 		this.refresh();
-		const operation = startFikeyaAgentRun(providerName, prompt, maxOutputTokens, workspacePath);
+		const operation = startFikeyaAgentRun(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, workspacePath);
 		this.activeAgentRun = operation;
 		const result = await operation.result;
 		if (this.activeAgentRun !== operation) {
@@ -445,6 +454,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 				sessionId: result.value.sessionId,
 				callId: result.value.callId,
 				usage: result.value.usage,
+				memory: result.value.memory,
 				receiptsStatus: 'loading',
 				receipts: []
 			}
@@ -560,6 +570,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		const memoryGraph = renderMemoryGraph(this.state, strings);
 		const memoryGraphData = serializeForHtml(this.state.memory.snapshot ?? { nodes: [], edges: [] });
 		const latestReceipt = this.state.agent.receipts.at(-1);
+		const selectedProvider = this.state.providers.find(provider => provider.name === this.state.agent.providerName) ?? this.state.providers.at(0);
+		const providerSummary = selectedProvider ? `${selectedProvider.name} / ${selectedProvider.model}` : strings.noProviderSelected;
+		const usageBasis = this.state.agent.usage?.measurement ?? strings.noUsageRecorded;
+		const contextStatus = formatContextStatus(this.state.agent.memory, strings);
+		const modeSurface = renderModeSurface(this.state.mode, strings);
 		const modeButtons = ([
 			['editor', strings.editor],
 			['agent', strings.agent],
@@ -581,29 +596,36 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 	<style nonce="${nonce}">
 		:root { color-scheme: light dark; }
 		* { box-sizing: border-box; }
-		body { margin: 0; padding: 14px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
+		body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
 		button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--vscode-button-border, transparent); color: var(--vscode-button-foreground); background: var(--vscode-button-background); font: inherit; cursor: pointer; }
 		button:hover { background: var(--vscode-button-hoverBackground); }
 		button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
 		button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
 		button:disabled { cursor: not-allowed; opacity: .58; }
 		button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
-		.shell { display: grid; gap: 12px; }
-		.masthead { display: grid; gap: 8px; }
-		.eyebrow { margin: 0; color: var(--vscode-descriptionForeground); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-		h1 { margin: 0; font-size: 24px; line-height: 1.15; }
+		.shell { display: grid; max-width: 960px; gap: 12px; margin: 0 auto; padding: 12px; }
+		.masthead { display: grid; gap: 7px; padding: 12px; border-top: 2px solid var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); }
+		.product-heading { display: flex; align-items: center; gap: 9px; }
+		.product-mark { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--vscode-focusBorder); color: var(--vscode-focusBorder); font-family: var(--vscode-editor-font-family); font-size: 10px; font-weight: 700; }
+		.workspace-label { min-width: 0; margin-left: auto; overflow: hidden; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+		.eyebrow { margin: 0; color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+		h1 { margin: 1px 0 0; font-size: 18px; line-height: 1.1; }
 		.subtitle, p { margin: 0; color: var(--vscode-descriptionForeground); line-height: 1.45; }
+		.subtitle { max-width: 72ch; }
+		.control-bar { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(150px, .65fr); gap: 6px; }
 		.switcher { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.switcher.modes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 		.switcher button { min-width: 0; overflow: hidden; color: var(--vscode-foreground); background: transparent; border-color: transparent; text-overflow: ellipsis; }
 		.switcher button.active { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+		.run-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--vscode-widget-border); }
+		.run-metric { min-width: 0; padding: 8px 9px; background: var(--vscode-editorWidget-background); }
+		.run-metric.provider { grid-column: 1 / -1; }
+		.run-metric span { display: block; color: var(--vscode-descriptionForeground); font-size: 10px; }
+		.run-metric strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 12px; font-variant-numeric: tabular-nums; }
+		.usage-basis { color: var(--vscode-descriptionForeground); font-size: 10px; }
 		.grid { display: grid; gap: 8px; }
 		.card { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.card h2 { margin: 0; font-size: 13px; }
-		.kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--vscode-widget-border); }
-		.kpi { min-width: 0; padding: 10px; background: var(--vscode-editorWidget-background); }
-		.kpi span { display: block; color: var(--vscode-descriptionForeground); font-size: 11px; }
-		.kpi strong { display: block; margin-top: 4px; overflow-wrap: anywhere; font-size: 14px; }
 		.badge, .status { display: inline-flex; align-items: center; width: fit-content; min-height: 20px; padding: 2px 6px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); font-size: 11px; }
 		.actions { display: flex; flex-wrap: wrap; gap: 6px; }
 		.providers { display: grid; gap: 1px; background: var(--vscode-widget-border); }
@@ -618,6 +640,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		.receipt dt { color: var(--vscode-descriptionForeground); }
 		.receipt dd { margin: 0; overflow-wrap: anywhere; }
 		.agent-surface { display: grid; gap: 10px; }
+		.mode-guide { display: grid; gap: 7px; padding: 12px; border-left: 2px solid var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); }
+		.mode-guide .mode-kicker { color: var(--vscode-focusBorder); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+		.mode-guide h2 { margin: 0; font-size: 15px; }
+		.mode-guide .mode-detail { padding-top: 7px; border-top: 1px solid var(--vscode-widget-border); font-size: 11px; }
 		.agent-form { display: grid; gap: 9px; }
 		.field { display: grid; gap: 4px; }
 		.field > span { color: var(--vscode-foreground); font-weight: 600; }
@@ -632,8 +658,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		.agent-output { max-height: 360px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--vscode-widget-border); color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 		.agent-receipt { display: grid; gap: 8px; }
 		.memory-graph { min-width: 0; }
-		.graph-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, .4fr) auto; gap: 6px; }
+		.graph-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(105px, .4fr) minmax(120px, .48fr) auto; gap: 6px; }
 		.graph-controls input { min-height: 30px; padding: 4px 7px; }
+		.graph-workspace { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(180px, .55fr); gap: 8px; }
 		.graph-viewport { position: relative; min-height: 360px; overflow: hidden; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
 		.graph-canvas { display: block; width: 100%; min-height: 360px; touch-action: none; user-select: none; }
 		.graph-hit { fill: transparent; cursor: grab; }
@@ -644,6 +671,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		.graph-node[data-dragging="true"] { cursor: grabbing; }
 		.graph-halo { fill: var(--vscode-editor-background); stroke: var(--vscode-widget-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
 		.graph-dot { stroke: var(--vscode-editor-foreground); stroke-width: .6; vector-effect: non-scaling-stroke; }
+		.graph-label { fill: var(--vscode-editor-foreground); stroke: var(--vscode-editor-background); stroke-width: 3px; paint-order: stroke; font-family: var(--vscode-editor-font-family); font-size: 9px; pointer-events: none; }
 		.graph-details { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.graph-details h3 { margin: 0; font-size: 13px; }
 		.graph-details code { overflow-wrap: anywhere; }
@@ -660,34 +688,37 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		body[data-layout="agentFocus"] .studio-only { display: none; }
 		body[data-layout="agentFocus"] .focus-only { display: grid; }
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
-		@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-		@media (max-width: 420px) { .graph-controls { grid-template-columns: 1fr; } }
+		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
+		@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+		@media (max-width: 720px) { .graph-workspace { grid-template-columns: 1fr; } }
+		@media (max-width: 520px) { .control-bar { grid-template-columns: 1fr; } .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } }
+		@media (max-width: 420px) { .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } }
 		@media (max-width: 280px) { .switcher.modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .provider-card { grid-template-columns: 1fr; } }
 	</style>
 </head>
 		<body data-layout="${this.state.layout}" data-mode="${this.state.mode}">
 	<main class="shell">
 		<header class="masthead">
-			<p class="eyebrow">${escapeHtml(strings.localFirstWorkbench)}</p>
-			<h1>${escapeHtml(strings.fikeya)}</h1>
+			<div class="product-heading"><span class="product-mark" aria-hidden="true">&lt;/&gt;</span><div><p class="eyebrow">${escapeHtml(strings.providerNeutralEditor)}</p><h1>${escapeHtml(strings.fikeya)}</h1></div><span class="workspace-label" title="${escapeHtml(strings.workspace)}">${escapeHtml(this.state.workspaceName)}</span></div>
 			<p class="subtitle">${escapeHtml(strings.subtitle)}</p>
 		</header>
-		<nav class="switcher" aria-label="${escapeHtml(strings.layout)}">${layoutButtons}</nav>
-		<nav class="switcher modes" aria-label="${escapeHtml(strings.mode)}">${modeButtons}</nav>
+		<div class="control-bar"><nav class="switcher modes" aria-label="${escapeHtml(strings.mode)}">${modeButtons}</nav><nav class="switcher" aria-label="${escapeHtml(strings.layout)}">${layoutButtons}</nav></div>
 		<section class="card focus-only" aria-labelledby="active-mode-title">
 			<h2 id="active-mode-title">${escapeHtml(strings.activeMode)}</h2>
 			<strong>${escapeHtml(modeLabel(this.state.mode, strings))}</strong>
 			<p>${escapeHtml(strings.agentFocusDescription)}</p>
 			<div class="actions"><button data-command="fikeya.runDoctor" type="button">${escapeHtml(strings.runDoctor)}</button></div>
 		</section>
-		<section class="kpis" aria-label="${escapeHtml(strings.workspaceStatus)}">
-			<div class="kpi"><span>${escapeHtml(strings.workspace)}</span><strong>${escapeHtml(this.state.workspaceName)}</strong></div>
-			<div class="kpi"><span>${escapeHtml(strings.runtime)}</span><strong>${escapeHtml(runtimeLabel(this.state.runtime, strings))}</strong></div>
-			<div class="kpi"><span>${escapeHtml(strings.inputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.inputTokens))}</strong></div>
-			<div class="kpi"><span>${escapeHtml(strings.outputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.outputTokens))}</strong></div>
+		<section class="run-strip" aria-label="${escapeHtml(strings.runContext)}">
+			<div class="run-metric provider"><span>${escapeHtml(strings.providerAndModel)}</span><strong>${escapeHtml(providerSummary)}</strong></div>
+			<div class="run-metric"><span>${escapeHtml(strings.runtime)}</span><strong>${escapeHtml(runtimeLabel(this.state.runtime, strings))}</strong></div>
+			<div class="run-metric"><span>${escapeHtml(strings.inputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.inputTokens))}</strong></div>
+			<div class="run-metric"><span>${escapeHtml(strings.cachedInputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.cachedInputTokens))}</strong></div>
+			<div class="run-metric"><span>${escapeHtml(strings.outputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.outputTokens))}</strong></div>
+			<div class="run-metric"><span>${escapeHtml(strings.context)}</span><strong>${escapeHtml(contextStatus)}</strong></div>
 		</section>
-		<p class="disclaimer">${escapeHtml(strings.metricsDisclaimer)}</p>
-		${agentSurface}
+		<p class="usage-basis">${escapeHtml(strings.usageSource)} ${escapeHtml(usageBasis)}. ${escapeHtml(strings.metricsDisclaimer)}</p>
+		${this.state.mode === 'agent' ? agentSurface : modeSurface}
 		<section class="grid two studio-only">
 			<article class="card">
 				<h2>${escapeHtml(strings.getStarted)}</h2>
@@ -710,16 +741,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			<div class="providers">${providerCards}</div>
 			<div class="actions"><button data-command="fikeya.configureProvider" type="button">${escapeHtml(strings.configureProvider)}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
 		</section>
-		<section class="grid two studio-only">
-			<article class="card">
-				<h2>${escapeHtml(strings.approvalsQueue)}</h2>
-				<p class="empty">${escapeHtml(strings.noApprovals)}</p>
-			</article>
-			<article class="card">
-				<h2>${escapeHtml(strings.latestCallReceipt)}</h2>
-				${renderReceipt(latestReceipt, this.state.agent, strings)}
-			</article>
-		</section>
+		${this.state.agent.sessionId ? `<section class="card studio-only"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}
 	</main>
 	<script id="fikeya-memory-graph-data" type="application/json" nonce="${nonce}">${memoryGraphData}</script>
 	<script nonce="${nonce}">
@@ -744,9 +766,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 				const providerName = agentForm.querySelector('[name="providerName"]')?.value;
 				const prompt = agentForm.querySelector('[name="prompt"]')?.value;
 				const maxOutputTokens = Number(agentForm.querySelector('[name="maxOutputTokens"]')?.value);
-				if (!networkConsent.checked || !providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens)) return;
+				const contextMaxCharacters = Number(agentForm.querySelector('[name="contextMaxCharacters"]')?.value);
+				const memoryMode = agentForm.querySelector('[name="memoryMode"]')?.value;
+				if (!networkConsent.checked || !providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return;
 				runButton.disabled = true;
-				vscode.postMessage({ type: 'runAgent', providerName, prompt, maxOutputTokens, allowNetwork: true });
+				vscode.postMessage({ type: 'runAgent', providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true });
 			});
 		}
 		document.querySelectorAll('[data-memory-refresh]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'refreshMemory' })));
@@ -760,10 +784,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			const hit = graphSvg.querySelector('[data-graph-hit]');
 			const search = document.querySelector('[data-graph-search]');
 			const typeFilter = document.querySelector('[data-graph-type]');
+			const relationFilter = document.querySelector('[data-graph-relation]');
 			const summary = document.querySelector('[data-graph-summary]');
 			const nodeById = new Map(graph.nodes.map(node => [node.id, node]));
-			const neighbors = new Map(graph.nodes.map(node => [node.id, new Set()]));
-			for (const edge of graph.edges) { neighbors.get(edge.source)?.add(edge.target); neighbors.get(edge.target)?.add(edge.source); }
 			const colors = {
 				worktree: 'var(--vscode-charts-red)',
 				memory: 'var(--vscode-charts-green)',
@@ -803,9 +826,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			const renderGraph = () => {
 				const query = (search?.value || '').trim().toLowerCase();
 				const wantedType = typeFilter?.value || 'all';
+				const wantedRelation = relationFilter?.value || 'all';
+				const filteredEdges = graph.edges.filter(edge => wantedRelation === 'all' || edge.type === wantedRelation);
+				const neighbors = new Map(graph.nodes.map(node => [node.id, new Set()]));
+				const relatedIds = new Set();
+				for (const edge of filteredEdges) { neighbors.get(edge.source)?.add(edge.target); neighbors.get(edge.target)?.add(edge.source); relatedIds.add(edge.source); relatedIds.add(edge.target); }
 				const direct = new Set(graph.nodes.filter(node => {
 					const text = [node.label, node.path, node.kind, ...node.terms].filter(Boolean).join(' ').toLowerCase();
-					return (wantedType === 'all' || node.type === wantedType) && (!query || text.includes(query));
+					return (wantedType === 'all' || node.type === wantedType) && (wantedRelation === 'all' || relatedIds.has(node.id)) && (!query || text.includes(query));
 				}).map(node => node.id));
 				const expanded = new Set(direct);
 				if (query) { for (const id of direct) { for (const neighbor of neighbors.get(id) || []) { if (wantedType === 'all' || nodeById.get(neighbor)?.type === wantedType) expanded.add(neighbor); } } }
@@ -817,7 +845,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 					group.forEach((node, index) => { if (!positions.has(node.id)) positions.set(node.id, naturalPosition(node, index, group, ring)); });
 				});
 				edgeLayer.textContent = '';
-				for (const edge of graph.edges) {
+				for (const edge of filteredEdges) {
 					if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) continue;
 					const source = positions.get(edge.source), target = positions.get(edge.target);
 					const line = svgElement('line');
@@ -828,7 +856,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 					const title = svgElement('title'); title.textContent = edge.type; line.append(title); edgeLayer.append(line);
 				}
 				nodeLayer.textContent = '';
-				for (const node of visible) {
+				for (const [nodeIndex, node] of visible.entries()) {
 					const position = positions.get(node.id);
 					const group = svgElement('g'); group.classList.add('graph-node'); group.dataset.nodeId = node.id; group.dataset.selected = String(node.id === selectedId); group.dataset.dragging = 'false';
 					group.setAttribute('transform', 'translate(' + position.x + ' ' + position.y + ')'); group.setAttribute('tabindex', '0'); group.setAttribute('role', 'button'); group.setAttribute('aria-label', node.type + ': ' + node.label);
@@ -836,12 +864,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 					const dot = svgElement('circle'); dot.classList.add('graph-dot'); dot.setAttribute('r', String(5 + Math.min(7, node.importance * 6))); dot.setAttribute('fill', colors[node.type]);
 					const title = svgElement('title'); title.textContent = node.label + ' | ' + node.type;
 					group.append(halo, dot, title);
+					if (query || nodeIndex < 12) { const label = svgElement('text'); label.classList.add('graph-label'); label.setAttribute('x', '14'); label.setAttribute('y', '3'); label.textContent = node.label.length > 28 ? node.label.slice(0, 27) + '…' : node.label; group.append(label); }
 					group.addEventListener('pointerdown', event => { if (event.button !== 0) return; event.stopPropagation(); pointerState = { type: 'node', id: node.id, pointerId: event.pointerId }; group.dataset.dragging = 'true'; graphSvg.setPointerCapture(event.pointerId); showNode(node); });
 					group.addEventListener('click', () => showNode(node));
 					group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showNode(node); } });
 					nodeLayer.append(group);
 				}
-				summary.textContent = visible.length + ' of ' + graph.nodes.length + ' bounded nodes | ' + graph.edges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target)).length + ' visible links';
+				summary.textContent = visible.length + ' of ' + graph.nodes.length + ' bounded nodes | ' + filteredEdges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target)).length + ' visible links';
 				if (selectedId && visibleIds.has(selectedId)) showNode(nodeById.get(selectedId));
 			};
 			hit.addEventListener('pointerdown', event => { if (event.button !== 0) return; const point = pointFromEvent(event); pointerState = { type: 'pan', pointerId: event.pointerId, point, origin: { ...pan } }; hit.dataset.panning = 'true'; graphSvg.setPointerCapture(event.pointerId); });
@@ -857,7 +886,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			document.querySelector('[data-graph-zoom-in]')?.addEventListener('click', () => { zoom = Math.min(2.5, zoom * 1.2); applyScene(); });
 			document.querySelector('[data-graph-zoom-out]')?.addEventListener('click', () => { zoom = Math.max(.55, zoom / 1.2); applyScene(); });
 			document.querySelector('[data-graph-reset]')?.addEventListener('click', () => { positions.clear(); pan = { x: 0, y: 0 }; zoom = 1; selectedId = null; applyScene(); renderGraph(); });
-			search?.addEventListener('input', renderGraph); typeFilter?.addEventListener('change', renderGraph); applyScene(); renderGraph();
+			search?.addEventListener('input', renderGraph); typeFilter?.addEventListener('change', renderGraph); relationFilter?.addEventListener('change', renderGraph); applyScene(); renderGraph();
 		}
 	</script>
 </body>
@@ -876,18 +905,23 @@ function renderMemoryGraph(state: DashboardState, strings: WebviewStrings): stri
 	if (snapshot.nodes.length === 0) {
 		return `<section class="card memory-graph studio-only"><h2>${escapeHtml(strings.memoryGraph)}</h2><p>${escapeHtml(strings.memoryGraphDescription)}</p><p class="empty">${escapeHtml(strings.memoryEmpty)}</p><p class="graph-summary">${escapeHtml(strings.graphManifest)} <code>${escapeHtml(snapshot.graphManifestHash)}</code></p></section>`;
 	}
+	const relationshipOptions = Array.from(new Set(snapshot.edges.map(edge => edge.type)))
+		.sort((left, right) => left.localeCompare(right))
+		.map(type => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`)
+		.join('');
 	return `<section class="card memory-graph studio-only" aria-labelledby="memory-graph-title">
 		<h2 id="memory-graph-title">${escapeHtml(strings.memoryGraph)}</h2>
 		<p>${escapeHtml(strings.memoryGraphDescription)}</p>
 		<div class="graph-controls">
 			<label class="field"><span>${escapeHtml(strings.searchNodes)}</span><input data-graph-search type="search" maxlength="160" placeholder="${escapeHtml(strings.searchNodesPlaceholder)}"></label>
 			<label class="field"><span>${escapeHtml(strings.nodeType)}</span><select data-graph-type><option value="all">${escapeHtml(strings.allTypes)}</option><option value="worktree">${escapeHtml(strings.worktrees)}</option><option value="memory">${escapeHtml(strings.memories)}</option><option value="file">${escapeHtml(strings.files)}</option><option value="concept">${escapeHtml(strings.concepts)}</option><option value="directory">${escapeHtml(strings.directories)}</option><option value="reference">${escapeHtml(strings.references)}</option></select></label>
+			<label class="field"><span>${escapeHtml(strings.relationType)}</span><select data-graph-relation><option value="all">${escapeHtml(strings.allRelationships)}</option>${relationshipOptions}</select></label>
 			<div class="actions"><button class="secondary" data-graph-zoom-in type="button" aria-label="${escapeHtml(strings.zoomIn)}">+</button><button class="secondary" data-graph-zoom-out type="button" aria-label="${escapeHtml(strings.zoomOut)}">-</button><button class="secondary" data-graph-reset type="button">${escapeHtml(strings.reset)}</button></div>
 		</div>
-		<div class="graph-viewport"><svg class="graph-canvas" data-memory-graph viewBox="0 0 800 480" role="img" aria-label="${escapeHtml(strings.memoryGraphAria)}"><rect class="graph-hit" data-graph-hit x="0" y="0" width="800" height="480"></rect><g data-graph-scene><g data-graph-edges></g><g data-graph-nodes></g></g></svg></div>
+		<div class="graph-workspace"><div class="graph-viewport"><svg class="graph-canvas" data-memory-graph viewBox="0 0 800 480" role="img" aria-label="${escapeHtml(strings.memoryGraphAria)}"><rect class="graph-hit" data-graph-hit x="0" y="0" width="800" height="480"></rect><g data-graph-scene><g data-graph-edges></g><g data-graph-nodes></g></g></svg></div>
+		<aside class="graph-details" aria-live="polite"><h3 data-graph-title>${escapeHtml(strings.chooseNode)}</h3><p data-graph-description>${escapeHtml(strings.chooseNodeDescription)}</p><dl class="receipt"><dt>${escapeHtml(strings.nodeType)}</dt><dd data-graph-detail="type">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.status)}</dt><dd data-graph-detail="status">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.connections)}</dt><dd data-graph-detail="connections">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.sourceEvent)}</dt><dd><code data-graph-detail="source">${escapeHtml(strings.unavailable)}</code></dd><dt>${escapeHtml(strings.evidence)}</dt><dd><code data-graph-detail="evidence">${escapeHtml(strings.unavailable)}</code></dd></dl></aside></div>
 		<output class="graph-summary" data-graph-summary aria-live="polite"></output>
 		<div class="graph-legend"><span><i data-type="worktree"></i>${escapeHtml(strings.worktrees)}</span><span><i data-type="memory"></i>${escapeHtml(strings.memories)}</span><span><i data-type="file"></i>${escapeHtml(strings.files)}</span><span><i data-type="concept"></i>${escapeHtml(strings.concepts)}</span><span><i data-type="directory"></i>${escapeHtml(strings.directories)}</span><span><i data-type="reference"></i>${escapeHtml(strings.references)}</span></div>
-		<aside class="graph-details" aria-live="polite"><h3 data-graph-title>${escapeHtml(strings.chooseNode)}</h3><p data-graph-description>${escapeHtml(strings.chooseNodeDescription)}</p><dl class="receipt"><dt>${escapeHtml(strings.nodeType)}</dt><dd data-graph-detail="type">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.status)}</dt><dd data-graph-detail="status">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.connections)}</dt><dd data-graph-detail="connections">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.sourceEvent)}</dt><dd><code data-graph-detail="source">${escapeHtml(strings.unavailable)}</code></dd><dt>${escapeHtml(strings.evidence)}</dt><dd><code data-graph-detail="evidence">${escapeHtml(strings.unavailable)}</code></dd></dl></aside>
 		<p class="graph-summary">${escapeHtml(strings.graphManifest)} <code>${escapeHtml(snapshot.graphManifestHash)}</code><br>${escapeHtml(strings.ledgerHead)} <code>${escapeHtml(snapshot.ledgerHeadHash ?? strings.unavailable)}</code></p>
 	</section>`;
 }
@@ -933,7 +967,7 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings): str
 		? ''
 		: `<div class="agent-receipt"><h2>${escapeHtml(strings.providerOutput)}</h2><pre class="agent-output" tabindex="0">${escapeHtml(state.agent.output)}</pre></div>`;
 	const identity = state.agent.sessionId
-		? `<dl class="receipt"><dt>${escapeHtml(strings.session)}</dt><dd><code>${escapeHtml(state.agent.sessionId)}</code></dd><dt>${escapeHtml(strings.call)}</dt><dd><code>${escapeHtml(state.agent.callId ?? strings.unavailable)}</code></dd><dt>${escapeHtml(strings.usageBasis)}</dt><dd>${escapeHtml(state.agent.usage?.measurement ?? strings.unavailable)}</dd></dl>`
+		? `<dl class="receipt"><dt>${escapeHtml(strings.session)}</dt><dd><code>${escapeHtml(state.agent.sessionId)}</code></dd><dt>${escapeHtml(strings.call)}</dt><dd><code>${escapeHtml(state.agent.callId ?? strings.unavailable)}</code></dd><dt>${escapeHtml(strings.usageBasis)}</dt><dd>${escapeHtml(state.agent.usage?.measurement ?? strings.unavailable)}</dd><dt>${escapeHtml(strings.context)}</dt><dd>${escapeHtml(formatContextStatus(state.agent.memory, strings))}</dd>${state.agent.memory?.receiptId ? `<dt>${escapeHtml(strings.contextReceipt)}</dt><dd><code>${escapeHtml(state.agent.memory.receiptId)}</code></dd>` : ''}${state.agent.memory?.responseSha256 ? `<dt>${escapeHtml(strings.contextEvidence)}</dt><dd><code>${escapeHtml(state.agent.memory.responseSha256)}</code></dd>` : ''}</dl>`
 		: '';
 	return `<section class="card agent-surface" aria-labelledby="agent-run-title">
 		<h2 id="agent-run-title">${escapeHtml(strings.agentRun)}</h2>
@@ -941,6 +975,8 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings): str
 		<form class="agent-form" data-agent-form autocomplete="off">
 			<label class="field"><span>${escapeHtml(strings.provider)}</span><select name="providerName"${running || state.providers.length === 0 ? ' disabled' : ''}>${providerOptions}</select></label>
 			<label class="field"><span>${escapeHtml(strings.prompt)}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(strings.promptPlaceholder)}"${running || state.providers.length === 0 ? ' disabled' : ''} required></textarea></label>
+			<label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${running || state.providers.length === 0 ? ' disabled' : ''}><option value="auto">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label>
+			<label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="512" max="64000" step="256" value="12000"${running || state.providers.length === 0 ? ' disabled' : ''}></label>
 			<label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="1" max="32768" step="1" value="1024"${running || state.providers.length === 0 ? ' disabled' : ''}></label>
 			<label class="consent"><input data-network-consent type="checkbox"${running || state.providers.length === 0 ? ' disabled' : ''}><span>${escapeHtml(strings.networkConsent)}</span></label>
 			<div class="actions"><button data-agent-run type="submit"${running || state.providers.length === 0 ? ' disabled' : ''}>${escapeHtml(strings.runAgent)}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div>
@@ -970,6 +1006,20 @@ function renderReceipt(receipt: FikeyaProviderReceipt | undefined, agent: AgentS
 	</dl>`;
 }
 
+function renderModeSurface(mode: FikeyaMode, strings: WebviewStrings): string {
+	const copy = mode === 'editor'
+		? { title: strings.editorModeTitle, description: strings.editorModeDescription, detail: strings.editorModeDetail }
+		: mode === 'terminal'
+			? { title: strings.terminalModeTitle, description: strings.terminalModeDescription, detail: strings.terminalModeDetail }
+			: { title: strings.reviewModeTitle, description: strings.reviewModeDescription, detail: strings.reviewModeDetail };
+	return `<section class="mode-guide" aria-labelledby="mode-guide-title">
+		<p class="mode-kicker">${escapeHtml(strings.activeMode)} / ${escapeHtml(modeLabel(mode, strings))}</p>
+		<h2 id="mode-guide-title">${escapeHtml(copy.title)}</h2>
+		<p>${escapeHtml(copy.description)}</p>
+		<p class="mode-detail">${escapeHtml(copy.detail)}</p>
+	</section>`;
+}
+
 function agentStatusLabel(agent: AgentSurfaceState, strings: WebviewStrings): string {
 	switch (agent.status) {
 		case 'running':
@@ -988,6 +1038,19 @@ function formatUsageValue(value: number | null | undefined): string {
 	return typeof value === 'number' ? value.toLocaleString() : vscode.l10n.t('Unavailable');
 }
 
+function formatContextStatus(memory: FikeyaAgentMemory | undefined, strings: WebviewStrings): string {
+	if (!memory) {
+		return strings.noContextReceipt;
+	}
+	if (memory.status === 'off') {
+		return strings.contextDisabled;
+	}
+	if (memory.status === 'unavailable') {
+		return strings.contextUnavailable;
+	}
+	return vscode.l10n.t('{0} cited items / {1} coverage', memory.evidenceCount ?? 0, memory.coverage ?? strings.unavailable);
+}
+
 function providerStatusSummary(state: DashboardState, strings: WebviewStrings): string {
 	if (state.providersStatus === 'loading' || state.providersStatus === 'not-loaded') {
 		return strings.loading;
@@ -1000,8 +1063,13 @@ function providerStatusSummary(state: DashboardState, strings: WebviewStrings): 
 
 interface WebviewStrings {
 	readonly fikeya: string;
-	readonly localFirstWorkbench: string;
+	readonly providerNeutralEditor: string;
 	readonly subtitle: string;
+	readonly runContext: string;
+	readonly providerAndModel: string;
+	readonly noProviderSelected: string;
+	readonly noUsageRecorded: string;
+	readonly usageSource: string;
 	readonly layout: string;
 	readonly mode: string;
 	readonly studio: string;
@@ -1012,11 +1080,17 @@ interface WebviewStrings {
 	readonly review: string;
 	readonly activeMode: string;
 	readonly agentFocusDescription: string;
-	readonly workspaceStatus: string;
+	readonly editorModeTitle: string;
+	readonly editorModeDescription: string;
+	readonly editorModeDetail: string;
+	readonly terminalModeTitle: string;
+	readonly terminalModeDescription: string;
+	readonly terminalModeDetail: string;
+	readonly reviewModeTitle: string;
+	readonly reviewModeDescription: string;
+	readonly reviewModeDetail: string;
 	readonly workspace: string;
 	readonly runtime: string;
-	readonly tokens: string;
-	readonly estimatedCost: string;
 	readonly unavailable: string;
 	readonly metricsDisclaimer: string;
 	readonly getStarted: string;
@@ -1038,6 +1112,8 @@ interface WebviewStrings {
 	readonly searchNodesPlaceholder: string;
 	readonly nodeType: string;
 	readonly allTypes: string;
+	readonly relationType: string;
+	readonly allRelationships: string;
 	readonly worktrees: string;
 	readonly memories: string;
 	readonly files: string;
@@ -1071,6 +1147,17 @@ interface WebviewStrings {
 	readonly provider: string;
 	readonly prompt: string;
 	readonly promptPlaceholder: string;
+	readonly context: string;
+	readonly contextMode: string;
+	readonly contextBudget: string;
+	readonly contextAuto: string;
+	readonly contextRequired: string;
+	readonly contextOff: string;
+	readonly contextReceipt: string;
+	readonly contextEvidence: string;
+	readonly noContextReceipt: string;
+	readonly contextDisabled: string;
+	readonly contextUnavailable: string;
 	readonly maximumOutputTokens: string;
 	readonly networkConsent: string;
 	readonly runAgent: string;
@@ -1094,12 +1181,8 @@ interface WebviewStrings {
 	readonly cachedInputTokens: string;
 	readonly requestEvidence: string;
 	readonly responseEvidence: string;
-	readonly approvalsQueue: string;
-	readonly noApprovals: string;
-	readonly contextReceipt: string;
 	readonly inputTokens: string;
 	readonly outputTokens: string;
-	readonly providerCost: string;
 	readonly evidence: string;
 	readonly noReceipt: string;
 	readonly notChecked: string;
@@ -1111,8 +1194,13 @@ interface WebviewStrings {
 function getWebviewStrings(): WebviewStrings {
 	return {
 		fikeya: vscode.l10n.t('Fikeya'),
-		localFirstWorkbench: vscode.l10n.t('Local-First Coding Agent Workbench'),
-		subtitle: vscode.l10n.t('Choose a mode, connect your provider, and keep verified project context close to the work.'),
+		providerNeutralEditor: vscode.l10n.t('Provider-Neutral AI Code Editor'),
+		subtitle: vscode.l10n.t('Plan, edit, run, and review with the model you choose. Fikeya assembles bounded project context and records exact provider usage when the provider reports it.'),
+		runContext: vscode.l10n.t('Active Run Context'),
+		providerAndModel: vscode.l10n.t('Provider / Model'),
+		noProviderSelected: vscode.l10n.t('Configure a provider to begin'),
+		noUsageRecorded: vscode.l10n.t('No usage recorded'),
+		usageSource: vscode.l10n.t('Usage source:'),
 		layout: vscode.l10n.t('Layout'),
 		mode: vscode.l10n.t('Mode'),
 		studio: vscode.l10n.t('Studio'),
@@ -1122,12 +1210,18 @@ function getWebviewStrings(): WebviewStrings {
 		terminal: vscode.l10n.t('Terminal'),
 		review: vscode.l10n.t('Review'),
 		activeMode: vscode.l10n.t('Active Mode'),
-		agentFocusDescription: vscode.l10n.t('The focused layout keeps the current mode and its controls visible.'),
-		workspaceStatus: vscode.l10n.t('Workspace Status'),
+		agentFocusDescription: vscode.l10n.t('The focused layout keeps the selected coding surface and its run evidence in view.'),
+		editorModeTitle: vscode.l10n.t('Write in the Full Editor'),
+		editorModeDescription: vscode.l10n.t('Use native navigation, language diagnostics, refactors, debugging, Git, and extensions while Fikeya keeps the active provider and context receipt visible.'),
+		editorModeDetail: vscode.l10n.t('Select Agent when the task needs a bounded model turn. The editor never sends code merely because this mode is active.'),
+		terminalModeTitle: vscode.l10n.t('Work in the Integrated Terminal'),
+		terminalModeDescription: vscode.l10n.t('Use the native shell, tasks, and test output without leaving the project. Direct terminal commands remain under your control.'),
+		terminalModeDetail: vscode.l10n.t('Automated process execution stays behind the runtime broker and exact request approval boundary.'),
+		reviewModeTitle: vscode.l10n.t('Inspect the Real Diff'),
+		reviewModeDescription: vscode.l10n.t('Use Source Control and the merge editor to inspect changed files while call receipts preserve provider, usage, and evidence metadata.'),
+		reviewModeDetail: vscode.l10n.t('Review mode focuses existing repository changes. It does not substitute generated findings or simulated test results.'),
 		workspace: vscode.l10n.t('Workspace'),
 		runtime: vscode.l10n.t('Runtime'),
-		tokens: vscode.l10n.t('Tokens'),
-		estimatedCost: vscode.l10n.t('Estimated Cost'),
 		unavailable: vscode.l10n.t('Unavailable'),
 		metricsDisclaimer: vscode.l10n.t('Token counts are shown only when the provider reports them. Fikeya does not estimate provider billing here.'),
 		getStarted: vscode.l10n.t('Get Started'),
@@ -1149,6 +1243,8 @@ function getWebviewStrings(): WebviewStrings {
 		searchNodesPlaceholder: vscode.l10n.t('Decision, file, concept, or path'),
 		nodeType: vscode.l10n.t('Node Type'),
 		allTypes: vscode.l10n.t('All Types'),
+		relationType: vscode.l10n.t('Relationship'),
+		allRelationships: vscode.l10n.t('All Relationships'),
 		worktrees: vscode.l10n.t('Worktrees'),
 		memories: vscode.l10n.t('Memories'),
 		files: vscode.l10n.t('Files'),
@@ -1182,6 +1278,17 @@ function getWebviewStrings(): WebviewStrings {
 		provider: vscode.l10n.t('Provider'),
 		prompt: vscode.l10n.t('Prompt'),
 		promptPlaceholder: vscode.l10n.t('Describe the coding task or question.'),
+		context: vscode.l10n.t('Project Context'),
+		contextMode: vscode.l10n.t('Qarinah Context Mode'),
+		contextBudget: vscode.l10n.t('Maximum Context Characters'),
+		contextAuto: vscode.l10n.t('Auto - continue safely if unavailable'),
+		contextRequired: vscode.l10n.t('Required - stop if cited context is unavailable'),
+		contextOff: vscode.l10n.t('Off - send no Qarinah project context'),
+		contextReceipt: vscode.l10n.t('Context Receipt'),
+		contextEvidence: vscode.l10n.t('Context Evidence'),
+		noContextReceipt: vscode.l10n.t('No context receipt yet'),
+		contextDisabled: vscode.l10n.t('Disabled for this run'),
+		contextUnavailable: vscode.l10n.t('Unavailable; no context attached'),
 		maximumOutputTokens: vscode.l10n.t('Maximum Output Tokens'),
 		networkConsent: vscode.l10n.t('Allow this run to make one provider network request. Consent resets after every run.'),
 		runAgent: vscode.l10n.t('Run Agent'),
@@ -1205,12 +1312,8 @@ function getWebviewStrings(): WebviewStrings {
 		cachedInputTokens: vscode.l10n.t('Cached Input Tokens'),
 		requestEvidence: vscode.l10n.t('Request Evidence'),
 		responseEvidence: vscode.l10n.t('Response Evidence'),
-		approvalsQueue: vscode.l10n.t('Approvals Queue'),
-		noApprovals: vscode.l10n.t('No approvals are waiting.'),
-		contextReceipt: vscode.l10n.t('Context Receipt'),
 		inputTokens: vscode.l10n.t('Input Tokens'),
 		outputTokens: vscode.l10n.t('Output Tokens'),
-		providerCost: vscode.l10n.t('Provider Cost'),
 		evidence: vscode.l10n.t('Evidence'),
 		noReceipt: vscode.l10n.t('No provider receipt yet'),
 		notChecked: vscode.l10n.t('Not Checked'),

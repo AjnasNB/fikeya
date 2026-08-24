@@ -206,6 +206,8 @@ export const copyrightFilter = Object.freeze<string[]>([
 	'!build/darwin/patch-dmg.py',
 	// Fikeya-owned Python files retain AGPL SPDX headers instead of the Code OSS MIT header.
 	'!scripts/fikeya/**/*.py',
+	// The built-in Fikeya product extension is AGPL-3.0-or-later and retains its SPDX header.
+	'!extensions/fikeya-desktop/**',
 	'!build/linux/libcxx-fetcher.*',
 	'!build/npm/gyp/custom-headers/**',
 	'!resources/linux/snap/snapcraft.yaml',

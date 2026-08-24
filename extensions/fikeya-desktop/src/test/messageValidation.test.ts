@@ -34,12 +34,16 @@ describe('Fikeya webview message validation', () => {
 			providerName: 'azure-primary',
 			prompt: 'Explain the failing test.',
 			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), {
 			type: 'runAgent',
 			providerName: 'azure-primary',
 			prompt: 'Explain the failing test.',
 			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		});
 
@@ -48,6 +52,8 @@ describe('Fikeya webview message validation', () => {
 			providerName: 'azure-primary',
 			prompt: 'No consent.',
 			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'required',
 			allowNetwork: false
 		}), undefined);
 	});
@@ -58,6 +64,8 @@ describe('Fikeya webview message validation', () => {
 			providerName: '../provider',
 			prompt: 'hello',
 			maxOutputTokens: 1024,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), undefined);
 		assert.strictEqual(parseWebviewMessage({
@@ -65,6 +73,17 @@ describe('Fikeya webview message validation', () => {
 			providerName: 'local',
 			prompt: '🧠'.repeat(70_000),
 			maxOutputTokens: 1024,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
+			allowNetwork: true
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runAgent',
+			providerName: 'local',
+			prompt: 'hello',
+			maxOutputTokens: 1024,
+			contextMaxCharacters: 64_001,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), undefined);
 	});

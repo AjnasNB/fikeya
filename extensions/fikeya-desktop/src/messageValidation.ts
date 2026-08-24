@@ -16,7 +16,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'refreshProviders' }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: 'auto' | 'off' | 'required'; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'refreshReceipts' }
 	| { readonly type: 'refreshMemory' };
@@ -81,7 +81,12 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| typeof value.maxOutputTokens !== 'number'
 				|| !Number.isSafeInteger(value.maxOutputTokens)
 				|| value.maxOutputTokens < 1
-				|| value.maxOutputTokens > 32_768) {
+				|| value.maxOutputTokens > 32_768
+				|| typeof value.contextMaxCharacters !== 'number'
+				|| !Number.isSafeInteger(value.contextMaxCharacters)
+				|| value.contextMaxCharacters < 512
+				|| value.contextMaxCharacters > 64_000
+				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')) {
 				return undefined;
 			}
 			return {
@@ -89,6 +94,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				providerName: value.providerName,
 				prompt: value.prompt,
 				maxOutputTokens: value.maxOutputTokens,
+				contextMaxCharacters: value.contextMaxCharacters,
+				memoryMode: value.memoryMode,
 				allowNetwork: true
 			};
 		}
