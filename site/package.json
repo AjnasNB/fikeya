@@ -1,0 +1,12 @@
+{
+	"name": "fikeya-site",
+	"private": true,
+	"version": "0.0.0",
+	"scripts": {
+		"test": "node validate.mjs",
+		"deploy": "wrangler pages deploy . --project-name fikeya-site"
+	},
+	"devDependencies": {
+		"wrangler": "^4.83.0"
+	}
+}
