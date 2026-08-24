@@ -110,7 +110,8 @@
 		"compile": "npx gulp compile-extension:fikeya-desktop",
 		"watch": "npx gulp watch-extension:fikeya-desktop",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js"
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js",
+		"build:vsix": "npm test && node ./scripts/package-extension.mjs"
 	},
 	"devDependencies": {
 		"@types/node": "24.x",
