@@ -19,8 +19,11 @@ Supported methods:
 - `memory.initialize`, `memory.policy`, `memory.approve`, and `memory.status`
 - `memory.record`, `memory.prepare`, `memory.compact`, and `memory.refresh`
 - `memory.inspect`, `memory.receipts`, and `memory.worktrees`
+- `memory.scan`, `memory.symbols`, and `memory.symbolGraph.summary`
 
 Content capture remains opt-in and policy-hash approved. `memory.prepare` rebuilds stale projections by default so a fresh event is immediately retrievable.
+
+Repository scanning and symbol indexing use hard file, byte, depth, result, and query limits. The graph-summary method returns coverage and hashes instead of sending the complete repository graph across the protocol. Symbol queries return bounded paths, spans, signatures, and reference structure; they do not return source-file bodies.
 
 ## Verify
 

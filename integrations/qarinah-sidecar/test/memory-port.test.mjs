@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -99,4 +99,42 @@ test('records and retrieves cited project memory through Qarinah', async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test('scans a workspace and returns bounded symbol intelligence', async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-symbols-'));
+	try {
+		await writeFile(path.join(root, 'math.ts'), [
+			'export function add(left: number, right: number): number {',
+			'\treturn left + right;',
+			'}',
+			''
+		].join('\n'), 'utf8');
+		const port = new MemoryPort(root);
+		const initialized = await port.dispatch('memory.initialize', { capture: 'content' }, 'initialize-symbols');
+		await port.dispatch('memory.approve', {
+			capture: 'content',
+			policyHash: initialized.policy.policyHash
+		}, 'approve-symbols');
+
+		const scan = await port.dispatch('memory.scan', { maxFiles: 10 }, 'scan');
+		const symbols = await port.dispatch('memory.symbols', { query: 'add', limit: 5 }, 'symbols');
+		const summary = await port.dispatch('memory.symbolGraph.summary', {}, 'graph-summary');
+
+		assert.equal(scan.fileCount, 1);
+		assert.ok(symbols.resultCount >= 1);
+		assert.ok(symbols.results.some(result => result.symbol.name === 'add'));
+		assert.ok(summary.symbolCount >= 1);
+		assert.equal(summary.fileCount, 1);
+		assert.match(summary.manifestHash, /^sha256:[0-9a-f]{64}$/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('rejects symbol and scan requests above hard resource limits', async () => {
+	const port = new MemoryPort('.');
+	await assert.rejects(() => port.dispatch('memory.scan', { maxFiles: 50_001 }, 'oversized-scan'), /maximum of 50000/);
+	await assert.rejects(() => port.dispatch('memory.symbols', { query: 'x'.repeat(4_097) }, 'oversized-query'), /4096-character limit/);
+	await assert.rejects(() => port.dispatch('memory.symbols', { kinds: ['executable'] }, 'invalid-kind'), /unsupported symbol kind/);
 });

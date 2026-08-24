@@ -10,12 +10,15 @@ import {
 	approveWorkspaceTrust,
 	buildDeveloperMemoryView,
 	buildSessionContextReceipts,
+	buildSymbolGraph,
 	compileContext,
 	initializeWorkspace,
 	inspectWorkspacePolicy,
 	listGitWorktrees,
 	runCodingContextHarness,
 	runProjectMemoryCycle,
+	scanProjectStructure,
+	searchSymbols,
 	verifyStore
 } from 'qarinah';
 
@@ -122,6 +125,12 @@ export class MemoryPort {
 					return this.#receipts(params);
 				case 'memory.worktrees':
 					return listGitWorktrees(this.#root);
+				case 'memory.scan':
+					return this.#scan(params, controller.signal);
+				case 'memory.symbols':
+					return this.#symbols(params, controller.signal);
+				case 'memory.symbolGraph.summary':
+					return this.#symbolGraphSummary(params, controller.signal);
 				default:
 					throw new MethodNotFoundError(method);
 			}
@@ -233,6 +242,49 @@ export class MemoryPort {
 			write: params.write === true
 		});
 	}
+
+	async #scan(params, signal) {
+		throwIfAborted(signal);
+		return scanProjectStructure({
+			cwd: this.#root,
+			maxFiles: boundedPositiveInteger(params.maxFiles, 20_000, 50_000),
+			maxFileBytes: boundedPositiveInteger(params.maxFileBytes, 1_048_576, 2_097_152),
+			maxTotalBytes: boundedPositiveInteger(params.maxTotalBytes, 67_108_864, 134_217_728),
+			maxDepth: boundedPositiveInteger(params.maxDepth, 32, 64)
+		});
+	}
+
+	async #symbols(params, signal) {
+		const query = boundedString(params.query, '', 4_096);
+		return searchSymbols(query, {
+			cwd: this.#root,
+			rebuild: params.rebuild !== false,
+			persist: true,
+			signal,
+			limit: boundedPositiveInteger(params.limit, 24, 100),
+			kinds: optionalSymbolKinds(params.kinds)
+		});
+	}
+
+	async #symbolGraphSummary(params, signal) {
+		const graph = await buildSymbolGraph({
+			cwd: this.#root,
+			persist: params.persist !== false,
+			signal
+		});
+		return {
+			schemaVersion: graph.schemaVersion,
+			workspaceId: graph.workspaceId,
+			generatedAt: graph.generatedAt,
+			source: graph.source,
+			extractor: graph.extractor,
+			coverage: graph.coverage,
+			fileCount: graph.files.length,
+			symbolCount: graph.symbols.length,
+			edgeCount: graph.edges.length,
+			manifestHash: graph.manifestHash
+		};
+	}
 }
 
 export class MethodNotFoundError extends Error {
@@ -314,8 +366,44 @@ function optionalString(value, fallback) {
 	return typeof value === 'string' ? value : fallback;
 }
 
+function boundedString(value, fallback, maximumLength) {
+	const result = optionalString(value, fallback);
+	if (result.length > maximumLength) {
+		throw new TypeError(`String value exceeds the ${maximumLength}-character limit.`);
+	}
+	return result;
+}
+
 function optionalPositiveInteger(value, fallback) {
 	return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function boundedPositiveInteger(value, fallback, maximum) {
+	const result = optionalPositiveInteger(value, fallback);
+	if (result > maximum) {
+		throw new TypeError(`Integer value exceeds the maximum of ${maximum}.`);
+	}
+	return result;
+}
+
+function optionalSymbolKinds(value) {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!Array.isArray(value)) {
+		throw new TypeError('kinds must be an array.');
+	}
+	const supported = new Set(['function', 'class', 'interface', 'type', 'enum', 'namespace', 'method', 'property', 'getter', 'setter', 'parameter', 'variable', 'import']);
+	if (!value.every(kind => typeof kind === 'string' && supported.has(kind))) {
+		throw new TypeError('kinds contains an unsupported symbol kind.');
+	}
+	return value;
+}
+
+function throwIfAborted(signal) {
+	if (signal.aborted) {
+		throw signal.reason instanceof Error ? signal.reason : new Error('Operation cancelled.');
+	}
 }
 
 function requiredEnum(value, values, name) {
