@@ -56,7 +56,7 @@ assert((html.match(/Interface preview/g) || []).length >= 6, 'Interface previews
 assert(html.includes('published six-fixture portable estimate'), 'Benchmark scope qualifier is missing');
 assert(html.includes('not provider-billed usage, total cost, model quality, or a universal result'), 'Benchmark disclaimer is missing');
 assert(html.includes('https://qarinah.io/docs/benchmarks/'), 'Benchmark methodology link is missing');
-assert(html.includes('Browser and crawler access is not bundled or enabled in this alpha.'), 'Connector availability boundary is missing');
+assert(html.includes('Tool executables are installed separately and remain disabled by default.'), 'Connector availability boundary is missing');
 assert(!html.includes('npm run setup'), 'Unsupported setup command found');
 assert(!html.includes('fikeya run '), 'Unsupported run command found');
 assert(!html.includes('fikeya receipt '), 'Unsupported receipt command found');

@@ -297,15 +297,15 @@ fikeya provider list --available</code></pre>
 			<section class="section architecture-section" id="architecture">
 				<div class="shell">
 					<div class="section-heading narrow">
-						<h2>A transparent path with explicit release status.</h2>
-						<p>The foundation is usable today. Agent routing and permissioned web connectors remain active integration work and are not silently enabled.</p>
+						<h2>A complete local stack with explicit release status.</h2>
+						<p>The public alpha now ships the desktop, CLI, provider runtime, native agent core, Qarinah bridge, ACP and MCP adapters, and reviewed web-tool presets. External executables remain separate and disabled until the developer enables an exact preset.</p>
 					</div>
 					<div class="architecture-flow">
 						<article><span>Alpha now</span><h3>Desktop and CLI</h3><p>Workbench panel, saved layouts, workspace setup, diagnostics, and provider profiles.</p></article>
 						<article><span>Alpha now</span><h3>Local runtime</h3><p>Durable SQLite events, resumable and forkable session state, typed receipts, and safe provider metadata.</p></article>
-						<article><span>Alpha now</span><h3>Execution broker</h3><p>Argument vectors, workspace-bound paths, dry-run default, allowlists, and exact one-use approvals.</p></article>
+						<article><span>Security hardening</span><h3>Native agent core</h3><p>Checkpointed plan, act, observe, and review stages with request-bound approval grants, cancellation, recovery, and execution receipts.</p></article>
 						<article><span>Local integration</span><h3>Qarinah memory</h3><p>Root-bound sidecar calls for cited packs, decisions, conflicts, hashes, and worktree continuity.</p></article>
-						<article><span>Integration track</span><h3>ACP, MCP, browser, crawler</h3><p>Typed connector boundaries for permissioned tools. Browser and crawler access is not bundled or enabled in this alpha.</p></article>
+						<article><span>Adapters shipped</span><h3>ACP, MCP, browser, crawler</h3><p>Typed ACP and MCP clients plus reviewed Browser and Crawler presets. Tool executables are installed separately and remain disabled by default.</p></article>
 					</div>
 				</div>
 			</section>
@@ -313,9 +313,9 @@ fikeya provider list --available</code></pre>
 			<section class="section shell cli-section">
 				<div class="cli-copy">
 					<h2>The same control from a terminal.</h2>
-					<p>Initialize a workspace, run diagnostics, list provider types, configure or remove a profile, and explicitly test connectivity without opening the desktop.</p>
+					<p>Initialize a workspace, diagnose it, manage provider profiles, run bounded model turns, inspect usage receipts, and opt into reviewed tools without opening the desktop.</p>
 					<div class="command-index" aria-label="CLI capabilities">
-						<span>init</span><span>doctor</span><span>provider list</span><span>provider configure</span><span>provider remove</span><span>provider test</span>
+						<span>init</span><span>doctor</span><span>provider configure</span><span>provider test</span><span>agent run</span><span>agent cancel</span><span>agent receipts</span><span>tool enable</span><span>tool status</span>
 					</div>
 				</div>
 				<div class="code-window">
@@ -347,7 +347,7 @@ Reports profile, HTTP status, and latency only.</code></pre>
 						<article><h3>One-use approval</h3><p>A short-lived token is bound to the canonical executable, arguments, directory, and environment keys. A changed request invalidates it.</p></article>
 						<article><h3>Typed usage fields</h3><p>Provider-reported usage, tokenizer measurements, and local estimates use distinct receipt fields instead of being presented as the same number.</p></article>
 						<article><h3>No site telemetry</h3><p>This site makes no analytics or advertising requests. Product telemetry is not enabled by this website.</p></article>
-						<article><h3>Connector restraint</h3><p>Browser and crawler integrations will use the same permission boundary. They are not bundled or enabled in the current public alpha.</p></article>
+						<article><h3>Connector restraint</h3><p>Browser and crawler presets are reviewed, digest-bound, and disabled by default. Their separate executables do not run merely because a workspace opens.</p></article>
 					</div>
 				</div>
 			</section>
