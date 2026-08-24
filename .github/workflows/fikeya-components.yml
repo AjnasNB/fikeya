@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - '.github/workflows/fikeya-components.yml'
+      - 'build/filters.ts'
+      - 'build/gulpfile.hygiene.ts'
       - 'extensions/fikeya-desktop/**'
       - 'fikeya-agent-core/**'
       - 'fikeya-runtime/**'
       - 'integrations/qarinah-sidecar/**'
       - 'packages/fikeya-protocol/**'
+      - 'product.json'
+      - 'LICENSE.txt'
       - 'scripts/fikeya/**'
       - 'site/**'
   push:
@@ -16,11 +20,15 @@ on:
       - main
     paths:
       - '.github/workflows/fikeya-components.yml'
+      - 'build/filters.ts'
+      - 'build/gulpfile.hygiene.ts'
       - 'extensions/fikeya-desktop/**'
       - 'fikeya-agent-core/**'
       - 'fikeya-runtime/**'
       - 'integrations/qarinah-sidecar/**'
       - 'packages/fikeya-protocol/**'
+      - 'product.json'
+      - 'LICENSE.txt'
       - 'scripts/fikeya/**'
       - 'site/**'
   workflow_dispatch:
@@ -33,6 +41,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  desktop-foundation:
+    name: Desktop product foundation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify product identity, license boundaries, and package inputs
+        run: python scripts/fikeya/verify_desktop_foundation.py
+
   bootstrap-preflight:
     name: Bootstrap preflight / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
