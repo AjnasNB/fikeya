@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
-import shutil
 import signal
 import sqlite3
 import sys
@@ -34,7 +33,7 @@ from .providers import (
     ProviderTester,
     build_profile,
 )
-from .qarinah import QarinahAdapter
+from .qarinah import qarinah_adapter_kind, select_qarinah_adapter
 from .state import StateStore
 from .tool_presets import (
     PresetCatalog,
@@ -293,12 +292,12 @@ def _run_doctor(args: argparse.Namespace) -> int:
         checks.append({"detail": "available", "name": "os-keyring", "ok": True})
     except SecretStoreUnavailable as error:
         checks.append({"detail": str(error), "name": "os-keyring", "ok": False})
-    qarinah_path = shutil.which("qarinah")
+    qarinah_kind, qarinah_detail = qarinah_adapter_kind()
     checks.append(
         {
-            "detail": "installed" if qarinah_path else "optional CLI not found",
+            "detail": qarinah_detail,
             "name": "qarinah",
-            "ok": qarinah_path is not None,
+            "ok": qarinah_kind is not None,
             "optional": True,
         }
     )
@@ -430,8 +429,8 @@ def _run_agent(args: argparse.Namespace) -> int:
     store = ProviderStore(runtime_home(args.home))
     runner = AgentRunner(workspace, store)
     if args.agent_command == "run":
-        if args.memory != "off" and shutil.which("qarinah") is not None:
-            runner.memory = QarinahAdapter(
+        if args.memory != "off":
+            runner.memory = select_qarinah_adapter(
                 workspace_root=workspace.root,
                 state=runner.state,
             )
