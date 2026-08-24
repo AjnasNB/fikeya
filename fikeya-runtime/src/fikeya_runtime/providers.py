@@ -562,19 +562,8 @@ def _probe_request(
     profile: ProviderProfile,
     secret: str | None,
 ) -> tuple[str, dict[str, str]]:
-    headers = {"Accept": "application/json", "User-Agent": "fikeya-runtime/0.1"}
-    if profile.credential_type not in {"none", "entra-id"} and not secret:
-        raise ProviderError("The provider credential is missing from the OS keyring.")
-    if profile.credential_type in {"bearer", "entra-id"} and secret is not None:
-        headers["Authorization"] = f"Bearer {secret}"
-    elif profile.credential_type == "api-key" and secret is not None:
-        if profile.kind == ProviderKind.ANTHROPIC:
-            headers["x-api-key"] = secret
-            headers["anthropic-version"] = "2023-06-01"
-        else:
-            headers["api-key"] = secret
-    if profile.organization is not None:
-        headers["OpenAI-Organization"] = profile.organization
+    headers = provider_headers(profile, secret)
+
     base_url = profile.base_url
     if profile.kind == ProviderKind.OLLAMA:
         base_url = profile.base_url.removesuffix("/v1")
@@ -588,6 +577,30 @@ def _probe_request(
     else:
         path = "/models"
     return f"{base_url.rstrip('/')}{path}", headers
+
+
+def provider_headers(
+    profile: ProviderProfile,
+    credential: str | None,
+) -> dict[str, str]:
+    """Construct ephemeral request headers without logging credential bytes."""
+
+    headers = {"Accept": "application/json", "User-Agent": "fikeya-runtime/0.1"}
+    if profile.credential_type not in {"none", "entra-id"} and not credential:
+        raise ProviderError("The provider credential is missing from the OS keyring.")
+    if profile.credential_type == "entra-id" and not credential:
+        raise ProviderError("Azure Entra ID did not provide an access token.")
+    if profile.credential_type in {"bearer", "entra-id"} and credential is not None:
+        headers["Authorization"] = f"Bearer {credential}"
+    elif profile.credential_type == "api-key" and credential is not None:
+        if profile.kind == ProviderKind.ANTHROPIC:
+            headers["x-api-key"] = credential
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["api-key"] = credential
+    if profile.organization is not None:
+        headers["OpenAI-Organization"] = profile.organization
+    return headers
 
 
 def _validate_base_url(value: str) -> None:

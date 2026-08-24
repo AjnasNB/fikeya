@@ -24,6 +24,10 @@ class ProviderError(FikeyaError):
     """Raised for invalid provider configuration or connectivity."""
 
 
+class CancellationError(FikeyaError):
+    """Raised when a person cancels a bounded runtime operation."""
+
+
 class StateError(FikeyaError):
     """Raised when session state violates an invariant."""
 

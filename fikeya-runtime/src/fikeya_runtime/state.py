@@ -66,6 +66,27 @@ CREATE TABLE IF NOT EXISTS context_receipts (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS provider_call_receipts (
+    call_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    provider_name TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    api_mode TEXT NOT NULL CHECK (api_mode IN ('responses', 'chat-completions')),
+    request_sha256 TEXT NOT NULL,
+    response_sha256 TEXT NOT NULL,
+    request_bytes INTEGER NOT NULL CHECK (request_bytes >= 0),
+    response_bytes INTEGER NOT NULL CHECK (response_bytes >= 0),
+    status_code INTEGER NOT NULL CHECK (status_code >= 100 AND status_code <= 599),
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    usage_measurement TEXT NOT NULL
+        CHECK (usage_measurement IN ('provider-reported', 'unavailable')),
+    input_tokens INTEGER CHECK (input_tokens IS NULL OR input_tokens >= 0),
+    output_tokens INTEGER CHECK (output_tokens IS NULL OR output_tokens >= 0),
+    cached_input_tokens INTEGER
+        CHECK (cached_input_tokens IS NULL OR cached_input_tokens >= 0),
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS approvals (
     approval_id TEXT PRIMARY KEY,
     request_sha256 TEXT NOT NULL,
@@ -79,7 +100,9 @@ CREATE TABLE IF NOT EXISTS approvals (
 CREATE INDEX IF NOT EXISTS events_by_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS usage_by_session ON usage_records(session_id, created_at);
 CREATE INDEX IF NOT EXISTS receipts_by_session ON context_receipts(session_id, created_at);
-PRAGMA user_version = 1;
+CREATE INDEX IF NOT EXISTS provider_calls_by_session
+    ON provider_call_receipts(session_id, created_at);
+PRAGMA user_version = 2;
 """
 
 
@@ -103,7 +126,7 @@ class StateStore:
 
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise StateError(f"Unsupported state schema version: {version}")
             connection.executescript(_SCHEMA)
         try:
@@ -138,7 +161,9 @@ class StateStore:
                     (parent_session_id,),
                 ).fetchone()
                 if parent is None or parent["maximum"] is None:
-                    raise StateError(f"Parent session does not exist: {parent_session_id}")
+                    raise StateError(
+                        f"Parent session does not exist: {parent_session_id}"
+                    )
                 if fork_sequence > int(parent["maximum"]):
                     raise StateError("Fork sequence is beyond the parent stream.")
             elif fork_sequence is not None:
@@ -386,7 +411,12 @@ class StateStore:
             raise StateError("Receipt sizes and durations cannot be negative.")
         if evidence_count is not None and evidence_count < 0:
             raise StateError("evidence_count cannot be negative.")
-        if coverage is not None and coverage not in {"any", "none", "partial", "direct"}:
+        if coverage is not None and coverage not in {
+            "any",
+            "none",
+            "partial",
+            "direct",
+        }:
             raise StateError("coverage is not a recognized retrieval status.")
         receipt_id = f"ctx_{uuid.uuid4().hex}"
         with self._connect() as connection:
@@ -410,6 +440,108 @@ class StateStore:
             )
         return receipt_id
 
+    def record_provider_call(
+        self,
+        session_id: str,
+        *,
+        provider_name: str,
+        model_name: str,
+        api_mode: str,
+        request_sha256: str,
+        response_sha256: str,
+        request_bytes: int,
+        response_bytes: int,
+        status_code: int,
+        duration_ms: int,
+        usage_measurement: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+    ) -> str:
+        """Persist one content-free provider receipt and optional exact usage."""
+
+        self.get_session(session_id)
+        if api_mode not in {"responses", "chat-completions"}:
+            raise StateError("Provider receipt API mode is unsupported.")
+        if usage_measurement not in {"provider-reported", "unavailable"}:
+            raise StateError("Provider receipt usage measurement is unsupported.")
+        metrics = (input_tokens, output_tokens, cached_input_tokens)
+        if usage_measurement == "provider-reported" and any(
+            value is None for value in metrics
+        ):
+            raise StateError("Provider-reported usage requires all token fields.")
+        if usage_measurement == "unavailable" and any(
+            value is not None for value in metrics
+        ):
+            raise StateError("Unavailable usage cannot contain token fields.")
+        if any(value is not None and value < 0 for value in metrics):
+            raise StateError("Provider receipt token values cannot be negative.")
+        if request_bytes < 0 or response_bytes < 0 or duration_ms < 0:
+            raise StateError("Provider receipt sizes and duration cannot be negative.")
+        if not 100 <= status_code <= 599:
+            raise StateError("Provider receipt status code is outside the HTTP range.")
+        call_id = f"call_{uuid.uuid4().hex}"
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO provider_call_receipts VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                (
+                    call_id,
+                    session_id,
+                    provider_name,
+                    model_name,
+                    api_mode,
+                    request_sha256,
+                    response_sha256,
+                    request_bytes,
+                    response_bytes,
+                    status_code,
+                    duration_ms,
+                    usage_measurement,
+                    input_tokens,
+                    output_tokens,
+                    cached_input_tokens,
+                    utc_now(),
+                ),
+            )
+        return call_id
+
+    def provider_call_receipts(self, session_id: str) -> tuple[dict[str, object], ...]:
+        """Return content-free receipts in deterministic creation order."""
+
+        self.get_session(session_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM provider_call_receipts
+                WHERE session_id = ? ORDER BY created_at, call_id
+                """,
+                (session_id,),
+            ).fetchall()
+        return tuple(
+            {
+                "apiMode": row["api_mode"],
+                "cachedInputTokens": row["cached_input_tokens"],
+                "callId": row["call_id"],
+                "createdAt": row["created_at"],
+                "durationMs": row["duration_ms"],
+                "inputTokens": row["input_tokens"],
+                "model": row["model_name"],
+                "outputTokens": row["output_tokens"],
+                "provider": row["provider_name"],
+                "requestBytes": row["request_bytes"],
+                "requestSha256": row["request_sha256"],
+                "responseBytes": row["response_bytes"],
+                "responseSha256": row["response_sha256"],
+                "statusCode": row["status_code"],
+                "usageMeasurement": row["usage_measurement"],
+            }
+            for row in rows
+        )
+
     def usage_totals(self, session_id: str) -> dict[str, int | None]:
         """Aggregate provider-reported usage for one session."""
 
@@ -430,7 +562,9 @@ class StateStore:
         return {
             "cachedInputTokens": int(row["cached_input_tokens"]),
             "costMicroUsd": (
-                int(row["cost_micro_usd"]) if row["cost_micro_usd"] is not None else None
+                int(row["cost_micro_usd"])
+                if row["cost_micro_usd"] is not None
+                else None
             ),
             "inputTokens": int(row["input_tokens"]),
             "outputTokens": int(row["output_tokens"]),

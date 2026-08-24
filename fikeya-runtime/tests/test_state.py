@@ -6,7 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from fikeya_runtime.errors import StateError
 from fikeya_runtime.events import EventType
 from fikeya_runtime.state import StateStore
@@ -58,7 +57,9 @@ def test_stream_resume_cancel_and_terminal_invariant(tmp_path: Path) -> None:
         store.append_event(session.session_id, EventType.MESSAGE, {"text": "late"})
 
 
-def test_fork_lineage_keeps_inherited_and_local_positions_distinct(tmp_path: Path) -> None:
+def test_fork_lineage_keeps_inherited_and_local_positions_distinct(
+    tmp_path: Path,
+) -> None:
     store = _store(tmp_path)
     root = store.create_session(session_id="ses_root")
     store.append_event(root.session_id, EventType.MESSAGE, {"text": "root two"})
@@ -126,3 +127,52 @@ def test_usage_and_context_receipts_store_only_metrics(tmp_path: Path) -> None:
             "outputTokens": 30,
         },
     }
+
+
+def test_provider_call_receipt_is_content_free_and_migrates_schema(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.sqlite3")
+    store.initialize()
+    session = store.create_session(session_id="ses_provider")
+
+    call_id = store.record_provider_call(
+        session.session_id,
+        provider_name="work",
+        model_name="example",
+        api_mode="responses",
+        request_sha256="sha256:request",
+        response_sha256="sha256:response",
+        request_bytes=120,
+        response_bytes=80,
+        status_code=200,
+        duration_ms=42,
+        usage_measurement="provider-reported",
+        input_tokens=30,
+        output_tokens=10,
+        cached_input_tokens=4,
+    )
+
+    receipts = store.provider_call_receipts(session.session_id)
+    assert receipts == (
+        {
+            "apiMode": "responses",
+            "cachedInputTokens": 4,
+            "callId": call_id,
+            "createdAt": receipts[0]["createdAt"],
+            "durationMs": 42,
+            "inputTokens": 30,
+            "model": "example",
+            "outputTokens": 10,
+            "provider": "work",
+            "requestBytes": 120,
+            "requestSha256": "sha256:request",
+            "responseBytes": 80,
+            "responseSha256": "sha256:response",
+            "statusCode": 200,
+            "usageMeasurement": "provider-reported",
+        },
+    )
+
+    with store._connect() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
