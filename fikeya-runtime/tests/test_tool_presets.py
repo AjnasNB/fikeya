@@ -205,6 +205,7 @@ def test_prepare_and_spawn_are_shell_free_and_never_invoke_a_real_tool(
     ToolEnablementStore(workspace).enable(preset, confirmed=True)
     executable = tmp_path / "cockroach-browser.exe"
     executable.write_bytes(b"not executed")
+    executable.chmod(0o700)
     loader = ToolPresetLoader()
     plan = loader.prepare_launch(
         workspace,
