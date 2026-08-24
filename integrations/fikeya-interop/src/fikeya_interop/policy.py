@@ -50,11 +50,17 @@ class PathPolicy:
         candidate = Path(value)
         if not candidate.is_absolute():
             candidate = self.root / candidate
-        resolved = candidate.resolve(strict=must_exist)
+        resolved = candidate.resolve(strict=False)
         try:
             resolved.relative_to(self.root)
         except ValueError as error:
             raise PermissionDeniedError("path is outside the configured workspace root") from error
+        if must_exist:
+            resolved = resolved.resolve(strict=True)
+            try:
+                resolved.relative_to(self.root)
+            except ValueError as error:
+                raise PermissionDeniedError("path is outside the configured workspace root") from error
         return resolved
 
 

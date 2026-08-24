@@ -98,18 +98,28 @@ class JsonLineRpcProcess:
                 future.set_exception(ProtocolError("JSON-RPC process closed"))
         self._pending.clear()
         process = self._process
+        if process is not None and process.stdin is not None:
+            process.stdin.close()
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                await process.stdin.wait_closed()
         if process is not None and process.returncode is None:
-            process.terminate()
             try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
+                await asyncio.wait_for(process.wait(), timeout=0.5)
             except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=1.5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
         for task in (self._reader_task, self._stderr_task):
             if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                try:
+                    await asyncio.wait_for(task, timeout=0.5)
+                except asyncio.TimeoutError:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
 
     async def _send(self, message: Mapping[str, Any]) -> None:
         process = self._process
