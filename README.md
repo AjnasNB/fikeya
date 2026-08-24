@@ -1,76 +1,69 @@
-# Visual Studio Code - Open Source ("Code - OSS")
-[![Feature Requests](https://img.shields.io/github/issues/microsoft/vscode/feature-request.svg)](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-[![Bugs](https://img.shields.io/github/issues/microsoft/vscode/bug.svg)](https://github.com/microsoft/vscode/issues?utf8=✓&q=is%3Aissue+is%3Aopen+label%3Abug)
+# Fikeya
 
-## The Repository
+Fikeya is an open coding-agent workbench with one runtime and two interfaces: a desktop editor for visual work and a CLI for headless automation.
 
-This repository ("`Code - OSS`") is where we (Microsoft) develop the [Visual Studio Code](https://code.visualstudio.com) product together with the community. Not only do we work on code and issues here, but we also publish our [roadmap](https://github.com/microsoft/vscode/wiki/Roadmap), [monthly iteration plans](https://github.com/microsoft/vscode/wiki/Iteration-Plans), and our [endgame plans](https://github.com/microsoft/vscode/wiki/Running-the-Endgame). This source code is available to everyone under the standard [MIT license](https://github.com/microsoft/vscode/blob/main/LICENSE.txt).
+Its goal is simple: let developers use the model and agent they prefer without losing project memory, control of tools, or a verifiable record of what changed.
 
-## Visual Studio Code
+## What Fikeya Includes
 
-<p align="center">
-  <img alt="VS Code in action" src="https://github.com/user-attachments/assets/56af271c-949d-454c-a3ea-16188c063414">
-</p>
+- **Four working modes:** Editor, Agent, Terminal, and Review.
+- **Two desktop layouts:** Studio for code-first work and Agent Focus for plan-first work.
+- **Provider-neutral configuration:** Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints.
+- **One runtime for Desktop and CLI:** the same session, approval, tool, usage, and evidence contracts in both interfaces.
+- **Qarinah project memory:** compact, evidence-linked project context, decisions, tool outcomes, worktrees, and context receipts.
+- **Bounded execution:** workspace-root validation, explicit approvals, cancellation, disposable Git worktrees, and post-execution hashes.
+- **Open protocols:** ACP for complete agents and MCP for tools and resources.
+- **Optional browser and crawler tools:** available only after the developer grants the relevant permission.
 
-[Visual Studio Code](https://code.visualstudio.com) is a distribution of the `Code - OSS` repository with Microsoft-specific customizations released under a traditional [Microsoft product license](https://code.visualstudio.com/License/).
+## Product Shape
 
-[Visual Studio Code](https://code.visualstudio.com) combines the simplicity of a code editor with what developers need for their core edit-build-debug cycle. It provides comprehensive code editing, navigation, and understanding support along with lightweight debugging, a rich extensibility model, and lightweight integration with existing tools.
+```text
+Fikeya Desktop                         Fikeya CLI
+Editor | Agent | Terminal | Review     init | run | review | doctor
+                    │
+                    ▼
+             Fikeya Local Gateway
+ACP | MCP | typed events | approvals | cancellation | resume
+                    │
+                    ▼
+              Fikeya Runtime
+providers | planning | tools | worktrees | usage receipts
+                    │
+          ┌─────────┼──────────┐
+          ▼         ▼          ▼
+       Qarinah    Browser    Crawler
+        memory      tools      tools
+```
 
-Visual Studio Code is updated monthly with new features and bug fixes. You can download it for Windows, macOS, and Linux on the [Visual Studio Code website](https://code.visualstudio.com/Download). To get the latest releases every day, install the [Insiders build](https://code.visualstudio.com/insiders).
+## Security Model
 
-## Contributing
+Provider credentials are stored in VS Code SecretStorage or the operating-system credential store. Configuration files contain secret references, never plaintext keys. The runtime communicates over local stdio, does not expose an unauthenticated HTTP service, and does not execute model-supplied shell strings directly.
 
-There are many ways in which you can participate in this project, for example:
+See [the security model](docs/fikeya/SECURITY.md) and [architecture](docs/fikeya/ARCHITECTURE.md).
 
-* [Submit bugs and feature requests](https://github.com/microsoft/vscode/issues), and help us verify them as they are checked in
-* Review [source code changes](https://github.com/microsoft/vscode/pulls)
-* Review the [documentation](https://github.com/microsoft/vscode-docs) and make pull requests for anything from typos to new content.
+## Build Status
 
-If you are interested in fixing issues and contributing directly to the codebase, please see the document [How to Contribute](https://github.com/microsoft/vscode/wiki/How-to-Contribute), which covers the following:
+Fikeya is under active foundation development. The current milestone covers the branded Code OSS desktop, secure Python runtime, provider profiles, CLI, local gateway contract, workspace initialization, approval-aware tools, and the first Qarinah integration. Release claims will be added only after clean-install Desktop and CLI fixtures pass on Windows, macOS, and Linux.
 
-* [How to build and run from source](https://github.com/microsoft/vscode/wiki/How-to-Contribute)
-* [The development workflow, including debugging and running tests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#debugging)
-* [Coding guidelines](https://github.com/microsoft/vscode/wiki/Coding-Guidelines)
-* [Submitting pull requests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests)
-* [Finding an issue to work on](https://github.com/microsoft/vscode/wiki/How-to-Contribute#where-to-contribute)
-* [Contributing to translations](https://aka.ms/vscodeloc)
+## Development
 
-## Feedback
+The editor shell follows the upstream Code OSS build process. Fikeya-specific work lives in the built-in desktop extension, protocol package, Python runtime, integrations, tests, and public site.
 
-* Ask a question on [Stack Overflow](https://stackoverflow.com/questions/tagged/vscode)
-* [Request a new feature](CONTRIBUTING.md)
-* Upvote [popular feature requests](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-* [File an issue](https://github.com/microsoft/vscode/issues)
-* Connect with the extension author community on [GitHub Discussions](https://github.com/microsoft/vscode-discussions/discussions) or [Slack](https://aka.ms/vscode-dev-community)
-* Follow [@code](https://x.com/code) and let us know what you think!
+```powershell
+npm install
+npm run compile
+```
 
-See our [wiki](https://github.com/microsoft/vscode/wiki/Feedback-Channels) for a description of each of these channels and information on some other available community-driven channels.
+The Python runtime has its own setup and test commands in `fikeya-runtime/README.md` once that package is present.
 
-## Related Projects
+## Licensing
 
-Many of the core components and extensions to VS Code live in their own repositories on GitHub. For example, the [node debug adapter](https://github.com/microsoft/vscode-node-debug) and the [mono debug adapter](https://github.com/microsoft/vscode-mono-debug) repositories are separate from each other. For a complete list, please visit the [Related Projects](https://github.com/microsoft/vscode/wiki/Related-Projects) page on our [wiki](https://github.com/microsoft/vscode/wiki).
+The Code OSS base and its bundled upstream components retain their original MIT and third-party licenses. Fikeya-owned runtime and product-layer code are licensed under AGPL-3.0-or-later unless a file states otherwise. Public protocol schemas and interoperability SDKs are intended to remain permissively licensed so other tools can implement them.
 
-## Bundled Extensions
+Open source permits inspection, modification, redistribution, and commercial use under the applicable licenses. Fikeya preserves required notices and does not claim that copyleft prevents copying.
 
-VS Code includes a set of built-in extensions located in the [extensions](extensions) folder, including grammars and snippets for many languages. Extensions that provide rich language support (inline suggestions, Go to Definition) for a language have the suffix `language-features`. For example, the `json` extension provides coloring for `JSON` and the `json-language-features` extension provides rich language support for `JSON`.
+See [LICENSE.txt](LICENSE.txt), `LICENSES/`, and `THIRD_PARTY_NOTICES.md`.
 
-## Development Container
+## Upstream
 
-This repository includes a Visual Studio Code Dev Containers / GitHub Codespaces development container.
-
-* For [Dev Containers](https://aka.ms/vscode-remote/download/containers), use the **Dev Containers: Clone Repository in Container Volume...** command, which creates a Docker volume for better disk I/O on macOS and Windows.
-  * If you already have VS Code and Docker installed, you can also click [here](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/microsoft/vscode) to get started. This will cause VS Code to automatically install the Dev Containers extension if needed, clone the source code into a container volume, and spin up a dev container for use.
-
-* For Codespaces, install the [GitHub Codespaces](https://marketplace.visualstudio.com/items?itemName=GitHub.codespaces) extension in VS Code, and use the **Codespaces: Create New Codespace** command.
-
-Docker / the Codespace should have at least **4 cores and 6 GB of RAM (8 GB recommended)** to run a full build. See the [development container README](.devcontainer/README.md) for more information.
-
-## Code of Conduct
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information, see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## License
-
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the [MIT](LICENSE.txt) license.
+Fikeya Desktop is built on [Code OSS](https://github.com/microsoft/vscode). Microsoft Visual Studio Code product branding, proprietary services, and Marketplace access are not part of Fikeya.
