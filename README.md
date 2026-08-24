@@ -1,6 +1,6 @@
 # Fikeya
 
-Fikeya is an open coding-agent workbench with one runtime and two interfaces: a desktop editor for visual work and a CLI for headless automation.
+Fikeya is an open coding-agent workbench with one runtime and two interfaces: a desktop editor for visual work and a CLI for headless automation. It is designed to plan, edit, run, review, and resume software work without locking the project to one model provider.
 
 Its goal is simple: let developers use the model and agent they prefer without losing project memory, control of tools, or a verifiable record of what changed.
 
@@ -14,6 +14,7 @@ Its goal is simple: let developers use the model and agent they prefer without l
 - **Bounded execution:** workspace-root validation, explicit approvals, cancellation, disposable Git worktrees, and post-execution hashes.
 - **Open protocols:** ACP for complete agents and MCP for tools and resources.
 - **Optional browser and crawler tools:** available only after the developer grants the relevant permission.
+- **Native agent loop:** typed plan, act, observe, and review stages with checkpoints, cancellation, bounded retries, exact-call approvals, and execution receipts.
 
 ## Product Shape
 
@@ -43,7 +44,7 @@ See [the security model](docs/fikeya/SECURITY.md) and [architecture](docs/fikeya
 
 ## Build Status
 
-Fikeya is under active foundation development. The current milestone covers the branded Code OSS desktop, secure Python runtime, provider profiles, CLI, local gateway contract, workspace initialization, approval-aware tools, and the first Qarinah integration. Release claims will be added only after clean-install Desktop and CLI fixtures pass on Windows, macOS, and Linux.
+Fikeya is under active public-alpha development. The current milestone covers the branded Code OSS desktop, secure Python runtime, provider profiles, CLI, ACP and MCP interoperability packages, workspace initialization, opt-in browser and crawler tool presets, a checkpointed native agent core, and Qarinah integration. It is not described as a stable release until clean-install Desktop and CLI fixtures pass on Windows, macOS, and Linux and the packaged artifacts are signed.
 
 ## Development
 
