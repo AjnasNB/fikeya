@@ -78,6 +78,11 @@ expect(
     "trustedExtensionAuthAccess" not in product,
     "product.json must not grant provider-specific extensions privileged authentication access.",
 )
+expect_equal(
+    product.get("builtInExtensionsEnabledWithAutoUpdates"),
+    [],
+    "provider-neutral built-in extension auto-update allowlist",
+)
 app_id_keys = (
     "win32x64AppId",
     "win32arm64AppId",

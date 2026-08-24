@@ -944,7 +944,7 @@ export class ExtensionsScanner extends Disposable {
 		const builtinExtensions = await this.extensionsScannerService.scanSystemExtensions({});
 		const userExtensions = await this.extensionsScannerService.scanAllUserExtensions();
 		const staleExtensions = userExtensions.filter(userExtension => {
-			if (!this.productService.builtInExtensionsEnabledWithAutoUpdates.some(id => id.toLowerCase() === userExtension.identifier.id.toLowerCase())) {
+			if (!this.productService.builtInExtensionsEnabledWithAutoUpdates?.some(id => id.toLowerCase() === userExtension.identifier.id.toLowerCase())) {
 				return false;
 			}
 			const builtinExtension = builtinExtensions.find(e => areSameExtensions(e.identifier, userExtension.identifier));
