@@ -1,0 +1,15 @@
+{
+  "name": "@fikeya/tool-presets",
+  "version": "0.1.0",
+  "description": "Validated opt-in MCP presets for separately installed Fikeya tools.",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "check": "node validate.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0 || ^26.0.0"
+  }
+}
