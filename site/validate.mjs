@@ -4,6 +4,7 @@ import { extname } from 'node:path';
 const root = new URL('.', import.meta.url);
 const requiredFiles = [
 	'.assetsignore',
+	'.gitignore',
 	'_headers',
 	'app.js',
 	'favicon.svg',
@@ -29,6 +30,7 @@ for (const file of requiredFiles) {
 const html = await readFile(new URL('index.html', root), 'utf8');
 const css = await readFile(new URL('styles.css', root), 'utf8');
 const js = await readFile(new URL('app.js', root), 'utf8');
+const assetsIgnore = await readFile(new URL('.assetsignore', root), 'utf8');
 const headers = await readFile(new URL('_headers', root), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('site.webmanifest', root), 'utf8'));
 const wranglerText = await readFile(new URL('wrangler.jsonc', root), 'utf8');
@@ -71,6 +73,8 @@ assert(headers.includes("frame-ancestors 'none'"), 'Header CSP is missing clickj
 assert(headers.includes('X-Content-Type-Options: nosniff'), 'nosniff header is missing');
 assert(headers.includes('Permissions-Policy:'), 'Permissions Policy header is missing');
 assert(manifest.name === 'Fikeya', 'Web manifest name is incorrect');
+assert(assetsIgnore.includes('.wrangler'), 'Wrangler local state is not excluded from static assets');
+assert(assetsIgnore.includes('node_modules'), 'Dependencies are not excluded from static assets');
 assert(wranglerText.includes('"compatibility_date": "2026-08-24"'), 'Cloudflare compatibility date is incorrect');
 assert(!wranglerText.match(/account_id|zone_id|api_token|route/i), 'Wrangler config must not contain account, zone, token, or route values');
 
