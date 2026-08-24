@@ -1,0 +1,76 @@
+{
+  "$schema": "./preset.schema.json",
+  "schemaVersion": "fikeya.tool-preset.v1",
+  "id": "cockroach-crawler",
+  "displayName": "Cockroach Crawler",
+  "summary": "Collect and transform public-web evidence through an installed Cockroach Crawler MCP server with an operator-owned origin allowlist.",
+  "enabledByDefault": false,
+  "enablement": {
+    "mode": "explicit-user",
+    "scope": "workspace",
+    "confirmation": "required"
+  },
+  "transport": {
+    "type": "stdio",
+    "command": "cockroach-mcp",
+    "args": [],
+    "shell": false
+  },
+  "dependency": {
+    "package": "cockroach-crawler",
+    "versionRange": ">=0.7.0 <0.8.0",
+    "license": "MIT",
+    "source": "https://github.com/AjnasNB/cockroach-crawler",
+    "homepage": "https://cockroachcrawler.com"
+  },
+  "capabilities": {
+    "effect": "read-only",
+    "allowedTools": [
+      "crawl",
+      "map_site",
+      "select",
+      "find_similar",
+      "relocate_element",
+      "crawl_spider",
+      "export_records",
+      "extract_structured"
+    ],
+    "deniedCapabilities": [
+      "credential use",
+      "private-network access",
+      "model-controlled origin expansion",
+      "CAPTCHA or authorization bypass"
+    ]
+  },
+  "environment": {
+    "fixed": {
+      "COCKROACH_MAX_PAGES": "10",
+      "COCKROACH_MAX_DEPTH": "1",
+      "COCKROACH_MAX_REQUESTS": "50",
+      "COCKROACH_MAX_DURATION_MS": "60000"
+    },
+    "configuration": [
+      {
+        "name": "COCKROACH_ALLOWED_ORIGINS",
+        "required": true,
+        "format": "comma-separated-http-origins-without-credentials-or-paths"
+      }
+    ],
+    "secretReferences": []
+  },
+  "limits": {
+    "startupTimeoutMs": 10000,
+    "requestTimeoutMs": 90000,
+    "shutdownTimeoutMs": 5000,
+    "maxConcurrentRequests": 1,
+    "maxRequestsPerSession": 50,
+    "maxSessionDurationMs": 300000,
+    "maxResponseBytes": 8388608
+  },
+  "upstreamPolicyRequirements": [
+    "The operator must supply at least one explicit HTTP(S) origin before the MCP server starts.",
+    "Same-origin traversal, robots policy, network validation, and redirect validation remain enforced upstream.",
+    "The host must reject requests or responses that exceed this preset's process and message limits.",
+    "The preset does not authorize private networks, credentials, challenge bypass, or origin expansion."
+  ]
+}
