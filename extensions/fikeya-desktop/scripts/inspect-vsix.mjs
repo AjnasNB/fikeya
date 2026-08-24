@@ -13,7 +13,8 @@ import yauzl from 'yauzl';
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const extensionRoot = path.resolve(scriptDirectory, '..');
 const sourceManifest = JSON.parse(await readFile(path.join(extensionRoot, 'package.json'), 'utf8'));
-const artifactPath = path.resolve(process.argv[2] ?? path.join(extensionRoot, 'artifacts', `fikeya-desktop-${sourceManifest.version}.vsix`));
+const vsixTarget = process.env.FIKEYA_VSIX_TARGET ?? currentVsixTarget();
+const artifactPath = path.resolve(process.argv[2] ?? path.join(extensionRoot, 'artifacts', `fikeya-desktop-${sourceManifest.version}-${vsixTarget}.vsix`));
 const entries = await readZipEntries(artifactPath);
 const names = [...entries.keys()].sort();
 
@@ -27,6 +28,8 @@ const requiredEntries = [
 	'extension/out/memory.js',
 	'extension/out/messageValidation.js',
 	'extension/out/runtime.js',
+	`extension/runtime/${process.platform === 'win32' ? 'fikeya-runtime.exe' : 'fikeya-runtime'}`,
+	'extension/runtime/fikeya-runtime.json',
 	'extension/sidecar/qarinah-memory-view.mjs',
 	'extension/sidecar/qarinah-runtime.json',
 	'extension/third_party/qarinah/LICENSE',
@@ -78,6 +81,23 @@ const bundleHash = `sha256:${createHash('sha256').update(entries.get('extension/
 if (receipt.bundleSha256 !== bundleHash) {
 	throw new Error('Bundled Qarinah runtime hash does not match its receipt.');
 }
+const pythonRuntimeReceipt = parseJsonEntry(entries, 'extension/runtime/fikeya-runtime.json');
+const expectedRuntimeEntry = `extension/${pythonRuntimeReceipt.executable}`;
+if (pythonRuntimeReceipt.schemaVersion !== 'fikeya.desktop-bundled-python-runtime.v1'
+	|| pythonRuntimeReceipt.target !== vsixTarget || !entries.has(expectedRuntimeEntry)
+	|| pythonRuntimeReceipt.packages?.find?.(item => item.name === 'keyring')?.version !== '25.7.0') {
+	throw new Error('Bundled standalone Fikeya Runtime receipt is incomplete or targets a different platform.');
+}
+const runtimeHash = `sha256:${createHash('sha256').update(entries.get(expectedRuntimeEntry)).digest('hex')}`;
+if (runtimeHash !== pythonRuntimeReceipt.executableSha256) {
+	throw new Error('Bundled standalone Fikeya Runtime hash does not match its receipt.');
+}
+const declaredRuntimeLicenses = [pythonRuntimeReceipt.pythonLicenseFile, ...pythonRuntimeReceipt.packages.map(item => item.licenseFile)];
+for (const licensePath of declaredRuntimeLicenses) {
+	if (typeof licensePath !== 'string' || !entries.has(`extension/${licensePath}`) || entries.get(`extension/${licensePath}`).length === 0) {
+		throw new Error(`Bundled standalone Fikeya Runtime license is missing: ${licensePath}`);
+	}
+}
 
 const artifactBytes = (await stat(artifactPath)).size;
 const artifactSha256 = `sha256:${createHash('sha256').update(await readFile(artifactPath)).digest('hex')}`;
@@ -89,6 +109,8 @@ const report = {
 	entryCount: names.length,
 	qarinahVersion: '0.4.0',
 	bundleSha256: bundleHash,
+	runtimeTarget: pythonRuntimeReceipt.target,
+	runtimeSha256: runtimeHash,
 	forbiddenEntries: 0
 };
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -116,7 +138,10 @@ function readZipEntries(filePath) {
 					archive.readEntry();
 					return;
 				}
-				if (entry.uncompressedSize > 4 * 1024 * 1024) {
+				const entryLimit = /extension\/runtime\/fikeya-runtime(?:\.exe)?$/.test(entry.fileName)
+					? 16 * 1024 * 1024
+					: 4 * 1024 * 1024;
+				if (entry.uncompressedSize > entryLimit) {
 					reject(new Error(`VSIX entry exceeds the four-megabyte inspection limit: ${entry.fileName}`));
 					archive.close();
 					return;
@@ -138,4 +163,12 @@ function readZipEntries(filePath) {
 			archive.readEntry();
 		});
 	});
+}
+
+function currentVsixTarget() {
+	const architecture = process.arch === 'arm64' ? 'arm64' : 'x64';
+	if (process.platform === 'win32') return `win32-${architecture}`;
+	if (process.platform === 'darwin') return `darwin-${architecture}`;
+	if (process.platform === 'linux') return `linux-${architecture}`;
+	throw new Error(`Unsupported VSIX platform: ${process.platform}/${process.arch}`);
 }

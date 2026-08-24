@@ -16,6 +16,7 @@ const extensionRoot = path.resolve(scriptDirectory, '..');
 const repositoryRoot = path.resolve(extensionRoot, '..', '..');
 const stagingRoot = path.join(extensionRoot, '.package', 'extension');
 const artifactRoot = path.join(extensionRoot, 'artifacts');
+const runtimeBuildRoot = path.join(extensionRoot, '.runtime-build');
 const sourcePackage = await readJson(path.join(extensionRoot, 'package.json'));
 const lock = await readJson(path.join(extensionRoot, 'package-lock.json'));
 const qarinahPackagePath = path.join(extensionRoot, 'node_modules', 'qarinah');
@@ -23,6 +24,7 @@ const qarinahPackage = await readJson(path.join(qarinahPackagePath, 'package.jso
 const qarinahLock = lock.packages?.['node_modules/qarinah'];
 const ignoreLock = lock.packages?.['node_modules/ignore'];
 const sourceDateEpoch = process.env.SOURCE_DATE_EPOCH ?? '1767225600';
+const vsixTarget = process.env.FIKEYA_VSIX_TARGET ?? currentVsixTarget();
 
 if (!/^\d{10}$/.test(sourceDateEpoch) || Number(sourceDateEpoch) < 315_532_800) {
 	throw new Error('SOURCE_DATE_EPOCH must be a ten-digit Unix timestamp no earlier than 1980-01-01.');
@@ -37,6 +39,30 @@ if (sourcePackage.license !== 'AGPL-3.0-or-later') {
 await rm(path.dirname(stagingRoot), { recursive: true, force: true });
 await mkdir(stagingRoot, { recursive: true });
 await mkdir(artifactRoot, { recursive: true });
+
+const pythonCommand = process.env.FIKEYA_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3');
+const runtimeBuild = spawnSync(pythonCommand, [
+	path.join(extensionRoot, 'scripts', 'build-fikeya-runtime.py'),
+	'--extension-root',
+	extensionRoot,
+	'--repository-root',
+	repositoryRoot,
+	'--target',
+	vsixTarget
+], {
+	cwd: extensionRoot,
+	env: { ...process.env, SOURCE_DATE_EPOCH: sourceDateEpoch },
+	encoding: 'utf8',
+	stdio: ['ignore', 'pipe', 'pipe'],
+	windowsHide: true
+});
+if (runtimeBuild.status !== 0) {
+	throw new Error(`Standalone Fikeya Runtime build failed.\n${boundedOutput(runtimeBuild.stderr || runtimeBuild.stdout)}`);
+}
+const pythonRuntimeBuildReceipt = await readJson(path.join(runtimeBuildRoot, 'build-receipt.json'));
+if (pythonRuntimeBuildReceipt.target !== vsixTarget || pythonRuntimeBuildReceipt.schemaVersion !== 'fikeya.desktop-python-runtime-build.v1') {
+	throw new Error('Standalone Fikeya Runtime build receipt does not match the requested VSIX target.');
+}
 
 const packagedManifest = { ...sourcePackage };
 delete packagedManifest.devDependencies;
@@ -59,6 +85,30 @@ await copyInto(path.join(qarinahPackagePath, 'LICENSE'), path.join(stagingRoot, 
 await copyInto(path.join(qarinahPackagePath, 'NOTICE'), path.join(stagingRoot, 'third_party', 'qarinah', 'NOTICE'));
 await copyInto(path.join(qarinahPackagePath, 'THIRD_PARTY_NOTICES.md'), path.join(stagingRoot, 'third_party', 'qarinah', 'THIRD_PARTY_NOTICES.md'));
 await copyInto(path.join(extensionRoot, 'node_modules', 'ignore', 'LICENSE-MIT'), path.join(stagingRoot, 'third_party', 'ignore', 'LICENSE-MIT'));
+
+const runtimeExecutableSource = path.join(runtimeBuildRoot, 'dist', pythonRuntimeBuildReceipt.executable);
+const runtimeExecutableTarget = path.join(stagingRoot, 'runtime', pythonRuntimeBuildReceipt.executable);
+await copyInto(runtimeExecutableSource, runtimeExecutableTarget);
+const packagedRuntimeLicenses = [];
+for (const item of pythonRuntimeBuildReceipt.packages) {
+	if (!item || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(item.name)
+		|| !/^licenses\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(item.licenseFile)) {
+		throw new Error('Standalone Fikeya Runtime build receipt contains an unsafe license path.');
+	}
+	const packagedPath = path.join('third_party', 'python-runtime', item.name, path.basename(item.licenseFile));
+	await copyInto(path.join(runtimeBuildRoot, item.licenseFile), path.join(stagingRoot, packagedPath));
+	packagedRuntimeLicenses.push({ ...item, licenseFile: packagedPath.replaceAll('\\', '/') });
+}
+const pythonLicensePath = path.join('third_party', 'python-runtime', 'python', 'LICENSE.txt');
+await copyInto(path.join(runtimeBuildRoot, pythonRuntimeBuildReceipt.pythonLicenseFile), path.join(stagingRoot, pythonLicensePath));
+await writeJson(path.join(stagingRoot, 'runtime', 'fikeya-runtime.json'), {
+	...pythonRuntimeBuildReceipt,
+	schemaVersion: 'fikeya.desktop-bundled-python-runtime.v1',
+	executable: `runtime/${pythonRuntimeBuildReceipt.executable}`,
+	executableSha256: await sha256File(runtimeExecutableTarget),
+	packages: packagedRuntimeLicenses,
+	pythonLicenseFile: pythonLicensePath.replaceAll('\\', '/')
+});
 
 const bundledSidecar = path.join(stagingRoot, 'sidecar', 'qarinah-memory-view.mjs');
 await mkdir(path.dirname(bundledSidecar), { recursive: true });
@@ -105,10 +155,10 @@ const runtimeReceipt = {
 };
 await writeJson(path.join(stagingRoot, 'sidecar', 'qarinah-runtime.json'), runtimeReceipt);
 
-const artifactPath = path.join(artifactRoot, `fikeya-desktop-${sourcePackage.version}.vsix`);
+const artifactPath = path.join(artifactRoot, `fikeya-desktop-${sourcePackage.version}-${vsixTarget}.vsix`);
 await rm(artifactPath, { force: true });
 const vscePath = path.join(extensionRoot, 'node_modules', '@vscode', 'vsce', 'vsce');
-const packaged = spawnSync(process.execPath, [vscePath, 'package', '--no-dependencies', '--out', artifactPath], {
+const packaged = spawnSync(process.execPath, [vscePath, 'package', '--no-dependencies', '--target', vsixTarget, '--out', artifactPath], {
 	cwd: stagingRoot,
 	env: { ...process.env, SOURCE_DATE_EPOCH: sourceDateEpoch },
 	encoding: 'utf8',
@@ -122,6 +172,8 @@ if (packaged.status !== 0) {
 process.stdout.write(`${JSON.stringify({
 	artifactPath,
 	sha256: await sha256File(artifactPath),
+	target: vsixTarget,
+	runtimeSha256: await sha256File(runtimeExecutableTarget),
 	qarinahVersion: qarinahPackage.version,
 	qarinahIntegrity: qarinahLock.integrity
 }, null, 2)}\n`);
@@ -161,4 +213,18 @@ function packageReceipt(name, version, license, integrity) {
 
 function boundedOutput(value) {
 	return String(value).replaceAll(extensionRoot, '<extension>').slice(0, 4_096);
+}
+
+function currentVsixTarget() {
+	const architecture = process.arch === 'arm64' ? 'arm64' : 'x64';
+	if (process.platform === 'win32') {
+		return `win32-${architecture}`;
+	}
+	if (process.platform === 'darwin') {
+		return `darwin-${architecture}`;
+	}
+	if (process.platform === 'linux') {
+		return `linux-${architecture}`;
+	}
+	throw new Error(`Unsupported VSIX platform: ${process.platform}/${process.arch}`);
 }
