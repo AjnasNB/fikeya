@@ -2,6 +2,17 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "fikeya-site-worker",
 	"compatibility_date": "2026-08-24",
+	"workers_dev": true,
+	"routes": [
+		{
+			"pattern": "fikeya.com/*",
+			"zone_name": "fikeya.com"
+		},
+		{
+			"pattern": "www.fikeya.com/*",
+			"zone_name": "fikeya.com"
+		}
+	],
 	"assets": {
 		"directory": "./dist",
 		"not_found_handling": "404-page"
