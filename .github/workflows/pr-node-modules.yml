@@ -145,7 +145,7 @@ jobs:
 
   macOS:
     name: macOS
-    runs-on: macos-26-xlarge
+    runs-on: macos-latest
     env:
       NPM_ARCH: arm64
       VSCODE_ARCH: arm64
