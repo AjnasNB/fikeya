@@ -9,12 +9,22 @@ import argparse
 import getpass
 import json
 import shutil
+import signal
 import sqlite3
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
+from .agent import AgentRunner
 from .credentials import CredentialResolver
-from .errors import FikeyaError, ProviderError, SecretStoreUnavailable
+from .errors import (
+    CancellationError,
+    FikeyaError,
+    ProviderError,
+    SecretStoreUnavailable,
+)
+from .inference import MAX_REQUEST_BYTES, CancellationToken
 from .providers import (
     PROVIDER_REGISTRY,
     OSKeyringSecretStore,
@@ -100,6 +110,41 @@ def _parser() -> argparse.ArgumentParser:
     )
     test.add_argument("--timeout", type=float, default=10.0)
     test.add_argument("--json", action="store_true")
+
+    agent = subcommands.add_parser(
+        "agent", help="Run or inspect bounded model sessions."
+    )
+    agent_commands = agent.add_subparsers(dest="agent_command", required=True)
+
+    agent_run = agent_commands.add_parser(
+        "run", help="Run one model turn without persisting prompt or output content."
+    )
+    agent_run.add_argument("path", nargs="?", default=".")
+    agent_run.add_argument("--provider", required=True)
+    agent_run.add_argument(
+        "--prompt-stdin",
+        action="store_true",
+        help="Read the prompt from stdin so it is absent from process arguments.",
+    )
+    agent_run.add_argument("--allow-network", action="store_true")
+    agent_run.add_argument("--timeout", type=float, default=60.0)
+    agent_run.add_argument("--max-output-tokens", type=int, default=1_024)
+    agent_run.add_argument("--json", action="store_true")
+
+    agent_cancel = agent_commands.add_parser(
+        "cancel", help="Cancel one active durable session."
+    )
+    agent_cancel.add_argument("session_id")
+    agent_cancel.add_argument("--workspace", default=".")
+    agent_cancel.add_argument("--reason", default="person cancelled")
+    agent_cancel.add_argument("--json", action="store_true")
+
+    agent_receipts = agent_commands.add_parser(
+        "receipts", help="List content-free provider receipts for one session."
+    )
+    agent_receipts.add_argument("session_id")
+    agent_receipts.add_argument("--workspace", default=".")
+    agent_receipts.add_argument("--json", action="store_true")
     return parser
 
 
@@ -114,7 +159,15 @@ def main(argv: list[str] | None = None) -> int:
             return _run_doctor(args)
         if args.command == "provider":
             return _run_provider(args)
+        if args.command == "agent":
+            return _run_agent(args)
         raise AssertionError("argparse accepted an unknown command")
+    except KeyboardInterrupt:
+        _emit(
+            {"cancelled": True, "error": "Operation cancelled.", "ok": False},
+            as_json=getattr(args, "json", False),
+        )
+        return 130
     except (FikeyaError, OSError, sqlite3.Error) as error:
         _emit({"error": str(error), "ok": False}, as_json=getattr(args, "json", False))
         return 2
@@ -324,6 +377,92 @@ def _read_provider_secret(
     return value or None
 
 
+def _run_agent(args: argparse.Namespace) -> int:
+    workspace_path = args.path if args.agent_command == "run" else args.workspace
+    workspace = Workspace.load(workspace_path)
+    store = ProviderStore(runtime_home(args.home))
+    runner = AgentRunner(workspace, store)
+    if args.agent_command == "run":
+        if not args.prompt_stdin:
+            raise ProviderError(
+                "Agent prompts must use --prompt-stdin so they do not enter process arguments."
+            )
+        prompt = sys.stdin.read(MAX_REQUEST_BYTES + 1)
+        if len(prompt.encode("utf-8")) > MAX_REQUEST_BYTES:
+            raise ProviderError(
+                f"Agent prompt exceeds {MAX_REQUEST_BYTES} UTF-8 bytes."
+            )
+        cancellation = CancellationToken()
+        try:
+            with _cancellation_signals(cancellation):
+                result = runner.run(
+                    provider_name=args.provider,
+                    prompt=prompt,
+                    allow_network=args.allow_network,
+                    timeout=args.timeout,
+                    max_output_tokens=args.max_output_tokens,
+                    cancellation=cancellation,
+                )
+        except CancellationError:
+            _emit(
+                {"cancelled": True, "error": "Operation cancelled.", "ok": False},
+                as_json=args.json,
+            )
+            return 130
+        usage = result.provider_call.usage
+        _emit(
+            {
+                "callId": result.call_id,
+                "ok": True,
+                "output": result.output,
+                "sessionId": result.session_id,
+                "usage": {
+                    "cachedInputTokens": usage.cached_input_tokens,
+                    "inputTokens": usage.input_tokens,
+                    "measurement": usage.measurement,
+                    "outputTokens": usage.output_tokens,
+                },
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.agent_command == "cancel":
+        runner.cancel(args.session_id, args.reason)
+        _emit(
+            {"cancelled": True, "ok": True, "sessionId": args.session_id},
+            as_json=args.json,
+        )
+        return 0
+    if args.agent_command == "receipts":
+        receipts = runner.state.provider_call_receipts(args.session_id)
+        _emit(
+            {"ok": True, "receipts": list(receipts), "sessionId": args.session_id},
+            as_json=args.json,
+        )
+        return 0
+    raise AssertionError("argparse accepted an unknown agent command")
+
+
+@contextmanager
+def _cancellation_signals(token: CancellationToken) -> Iterator[None]:
+    watched = [signal.SIGINT]
+    if hasattr(signal, "SIGTERM"):
+        watched.append(signal.SIGTERM)
+    previous: dict[signal.Signals, object] = {}
+
+    def cancel(_signum: int, _frame: object) -> None:
+        token.cancel()
+
+    try:
+        for watched_signal in watched:
+            previous[watched_signal] = signal.getsignal(watched_signal)
+            signal.signal(watched_signal, cancel)
+        yield
+    finally:
+        for watched_signal, handler in previous.items():
+            signal.signal(watched_signal, handler)
+
+
 def _emit(value: dict[str, object], *, as_json: bool) -> None:
     if as_json:
         print(
@@ -354,5 +493,7 @@ def _emit(value: dict[str, object], *, as_json: bool) -> None:
     message = value.get("message")
     if message:
         print(message)
+    elif isinstance(value.get("output"), str):
+        print(value["output"])
     else:
         print(json.dumps(value, ensure_ascii=False, sort_keys=True))

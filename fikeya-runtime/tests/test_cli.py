@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
@@ -54,3 +55,71 @@ def test_cli_init_and_provider_listing_make_no_network_calls(
     assert main(["--home", str(home), "provider", "test", "local", "--json"]) == 2
     denied = json.loads(capsys.readouterr().out)
     assert "Network probe denied" in denied["error"]
+
+
+def test_cli_agent_requires_stdin_and_explicit_network_opt_in(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: object,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["--home", str(home), "init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "provider",
+                "configure",
+                "local",
+                "--kind",
+                "ollama",
+                "--model",
+                "qwen",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "agent",
+                "run",
+                str(workspace),
+                "--provider",
+                "local",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    missing_stdin = json.loads(capsys.readouterr().out)
+    assert "--prompt-stdin" in missing_stdin["error"]
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("content stays on stdin"))
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "agent",
+                "run",
+                str(workspace),
+                "--provider",
+                "local",
+                "--prompt-stdin",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    denied = json.loads(capsys.readouterr().out)
+    assert "Model execution denied" in denied["error"]

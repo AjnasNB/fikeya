@@ -97,6 +97,14 @@ class ProviderCallResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderRequestFingerprint:
+    """Content-free identity of the exact serialized provider request."""
+
+    request_sha256: str
+    request_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class JsonResponse:
     """A bounded decoded HTTP response used by injectable transports."""
 
@@ -279,6 +287,23 @@ class ProviderExecutor:
             response_bytes=len(response.raw_body),
             usage=usage,
         )
+
+
+def provider_request_fingerprint(
+    profile: ProviderProfile,
+    request: InferenceRequest,
+) -> ProviderRequestFingerprint:
+    """Hash the exact request representation without retaining its content."""
+
+    payload = stable_json(_request_payload(profile, request)).encode("utf-8")
+    if len(payload) > MAX_REQUEST_BYTES:
+        raise ConfigurationError(
+            f"Serialized provider request exceeds {MAX_REQUEST_BYTES} bytes."
+        )
+    return ProviderRequestFingerprint(
+        request_sha256=sha256_bytes(payload),
+        request_bytes=len(payload),
+    )
 
 
 def _execution_url(profile: ProviderProfile) -> str:
