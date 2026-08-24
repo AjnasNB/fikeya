@@ -773,6 +773,7 @@ class ChatSetupExtensionUrlHandler implements IExtensionUrlHandlerOverride {
 export class ChatTeardownContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.chatTeardown';
+	private readonly managedAiExtensionIds: readonly string[];
 
 	constructor(
 		@IChatEntitlementService chatEntitlementService: ChatEntitlementService,
@@ -780,58 +781,65 @@ export class ChatTeardownContribution extends Disposable implements IWorkbenchCo
 		@IExtensionsWorkbenchService private readonly extensionsWorkbenchService: IExtensionsWorkbenchService,
 		@IWorkbenchExtensionEnablementService private readonly extensionEnablementService: IWorkbenchExtensionEnablementService,
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
-		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IProductService productService: IProductService,
 	) {
 		super();
 
 		const context = chatEntitlementService.context?.value;
-		this.registerConfigurationListener(Boolean(context));
-		if (!context) {
-			return; // no provider-specific entitlement context to manage
+		this.managedAiExtensionIds = Array.from(new Set([
+			productService.defaultChatAgent?.chatExtensionId,
+			...(productService.builtInAiExtensions ?? []),
+		].filter((id): id is string => Boolean(id)).map(id => id.toLowerCase())));
+		const manageBuiltInAiExtensions = this.managedAiExtensionIds.length > 0;
+
+		this.registerConfigurationListener(manageBuiltInAiExtensions);
+		if (manageBuiltInAiExtensions) {
+			this.registerExtensionListener();
 		}
 
-		this.registerExtensionListener();
-		this.registerActions();
+		if (!context) {
+			return; // no provider-specific entitlement actions to register
+		}
 
-		this.handleChatDisabled(false, true);
+		this.registerActions();
 	}
 
-	private handleChatDisabled(fromEvent: boolean, manageDefaultChatExtension: boolean): void {
+	private async handleChatDisabled(fromEvent: boolean, manageBuiltInAiExtensions: boolean): Promise<void> {
 		const chatDisabled = this.configurationService.inspect(ChatAIDisabledSettingId);
 		if (chatDisabled.value === true) {
-			if (manageDefaultChatExtension) {
-				this.maybeEnableOrDisableExtension(typeof chatDisabled.workspaceValue === 'boolean' ? EnablementState.DisabledWorkspace : EnablementState.DisabledGlobally);
+			if (manageBuiltInAiExtensions) {
+				await this.maybeEnableOrDisableExtensions(typeof chatDisabled.workspaceValue === 'boolean' ? EnablementState.DisabledWorkspace : EnablementState.DisabledGlobally);
 			}
 			if (fromEvent) {
 				this.maybeHideAuxiliaryBar();
 			}
-		} else if (chatDisabled.value === false && fromEvent && manageDefaultChatExtension /* do not enable extensions unless its an explicit settings change */) {
-			this.maybeEnableOrDisableExtension(typeof chatDisabled.workspaceValue === 'boolean' ? EnablementState.EnabledWorkspace : EnablementState.EnabledGlobally);
+		} else if (chatDisabled.value === false && fromEvent && manageBuiltInAiExtensions /* do not enable extensions unless its an explicit settings change */) {
+			await this.maybeEnableOrDisableExtensions(typeof chatDisabled.workspaceValue === 'boolean' ? EnablementState.EnabledWorkspace : EnablementState.EnabledGlobally);
 		}
 	}
 
-	private registerConfigurationListener(manageDefaultChatExtension: boolean): void {
+	private registerConfigurationListener(manageBuiltInAiExtensions: boolean): void {
 		// Configuration changes
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (!e.affectsConfiguration(ChatAIDisabledSettingId)) {
 				return;
 			}
 
-			this.handleChatDisabled(true, manageDefaultChatExtension);
+			void this.handleChatDisabled(true, manageBuiltInAiExtensions);
 		}));
 	}
 
 	private async registerExtensionListener(): Promise<void> {
-		// Extension installation
-		await this.extensionsWorkbenchService.queryLocal();
+		// Register first so a configuration change cannot race local extension discovery.
 		this._register(this.extensionsWorkbenchService.onChange(e => {
-			if (e && !ExtensionIdentifier.equals(e.identifier.id, defaultChat.chatExtensionId)) {
+			if (e && !this.isManagedAiExtension(e.identifier.id)) {
 				return; // unrelated event
 			}
 
-			const defaultChatExtension = this.extensionsWorkbenchService.local.find(value => ExtensionIdentifier.equals(value.identifier.id, defaultChat.chatExtensionId));
-			if (defaultChatExtension?.local && this.extensionEnablementService.isEnabled(defaultChatExtension.local)) {
-				if (defaultChatExtension.enablementState === EnablementState.EnabledWorkspace) {
+			const enabledAiExtension = this.extensionsWorkbenchService.local.find(value => this.isManagedAiExtension(value.identifier.id) && value.local && this.extensionEnablementService.isEnabled(value.local));
+			if (enabledAiExtension?.local) {
+				if (enabledAiExtension.enablementState === EnablementState.EnabledWorkspace) {
 					if (this.configurationService.inspect(ChatAIDisabledSettingId).workspaceValue === true) {
 						this.configurationService.updateValue(ChatAIDisabledSettingId, false, ConfigurationTarget.WORKSPACE);
 					}
@@ -840,23 +848,30 @@ export class ChatTeardownContribution extends Disposable implements IWorkbenchCo
 				}
 			}
 		}));
+
+		await this.extensionsWorkbenchService.queryLocal();
+		await this.handleChatDisabled(false, true);
 	}
 
-	private async maybeEnableOrDisableExtension(state: EnablementState.EnabledGlobally | EnablementState.EnabledWorkspace | EnablementState.DisabledGlobally | EnablementState.DisabledWorkspace): Promise<void> {
-		const defaultChatExtension = this.extensionsWorkbenchService.local.find(value => ExtensionIdentifier.equals(value.identifier.id, defaultChat.chatExtensionId));
-		if (!defaultChatExtension?.local) {
+	private isManagedAiExtension(extensionId: string): boolean {
+		return this.managedAiExtensionIds.some(id => ExtensionIdentifier.equals(extensionId, id));
+	}
+
+	private async maybeEnableOrDisableExtensions(state: EnablementState.EnabledGlobally | EnablementState.EnabledWorkspace | EnablementState.DisabledGlobally | EnablementState.DisabledWorkspace): Promise<void> {
+		const managedExtensions = this.extensionsWorkbenchService.local.filter(value => this.isManagedAiExtension(value.identifier.id) && value.local);
+		if (managedExtensions.length === 0) {
 			return;
 		}
 
 		const workspace = state === EnablementState.EnabledWorkspace || state === EnablementState.DisabledWorkspace;
-		const canChange = workspace
-			? this.extensionEnablementService.canChangeWorkspaceEnablement(defaultChatExtension.local)
-			: this.extensionEnablementService.canChangeEnablement(defaultChatExtension.local);
-		if (!canChange) {
+		const changeableExtensions = managedExtensions.filter(extension => extension.local && (workspace
+			? this.extensionEnablementService.canChangeWorkspaceEnablement(extension.local)
+			: this.extensionEnablementService.canChangeEnablement(extension.local)));
+		if (changeableExtensions.length === 0) {
 			return;
 		}
 
-		await this.extensionsWorkbenchService.setEnablement([defaultChatExtension], state);
+		await this.extensionsWorkbenchService.setEnablement(changeableExtensions, state);
 		await this.extensionsWorkbenchService.updateRunningExtensions(state === EnablementState.EnabledGlobally || state === EnablementState.EnabledWorkspace ? localize('restartExtensionHost.reason.enable', "Enabling AI features") : localize('restartExtensionHost.reason.disable', "Disabling AI features"));
 	}
 

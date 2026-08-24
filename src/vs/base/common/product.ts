@@ -270,6 +270,11 @@ export interface IProductConfiguration {
 	readonly aiGeneratedWorkspaceTrust?: IAiGeneratedWorkspaceTrust;
 
 	readonly defaultChatAgent?: IDefaultChatAgent;
+	/**
+	 * Built-in AI extensions that should follow `chat.disableAIFeatures` even
+	 * when the product intentionally does not nominate a default chat vendor.
+	 */
+	readonly builtInAiExtensions?: readonly string[];
 	readonly chatParticipantRegistry?: string;
 	readonly chatSessionRecommendations?: IChatSessionRecommendation[];
 	readonly emergencyAlertUrl?: string;

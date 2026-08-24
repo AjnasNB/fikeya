@@ -79,6 +79,11 @@ expect(
     "defaultChatAgent" not in product,
     "product.json must not hard-wire a provider-specific default chat agent.",
 )
+expect_equal(
+    product.get("builtInAiExtensions"),
+    ["github.copilot-chat"],
+    "provider-neutral built-in AI teardown allowlist",
+)
 expect(
     "trustedExtensionAuthAccess" not in product,
     "product.json must not grant provider-specific extensions privileged authentication access.",
