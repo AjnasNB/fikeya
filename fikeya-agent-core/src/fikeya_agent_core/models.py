@@ -22,7 +22,19 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 def canonical_json(value: object) -> bytes:
     """Return one deterministic UTF-8 JSON representation."""
 
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def strict_json_loads(value: str | bytes) -> object:
+    """Decode standards-compliant JSON while rejecting NaN and infinities."""
+
+    return json.loads(value, parse_constant=_reject_json_constant)
 
 
 def sha256_value(value: object) -> str:
@@ -228,6 +240,14 @@ class ApprovalRequest:
     arguments_sha256: str
     summary: str
 
+    def __post_init__(self) -> None:
+        if not _IDENTIFIER.fullmatch(self.request_id) or not _IDENTIFIER.fullmatch(self.session_id):
+            raise ConfigurationError("approval request or session identifier is invalid")
+        if not _IDENTIFIER.fullmatch(self.tool_name) or not _SHA256.fullmatch(self.arguments_sha256):
+            raise ConfigurationError("approval tool name or argument digest is invalid")
+        if not self.summary or len(self.summary.encode("utf-8")) > 4_096:
+            raise ConfigurationError("approval summary must be 1-4096 UTF-8 bytes")
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderDecision:
@@ -256,6 +276,15 @@ class ProviderUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cached_input_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        values = (self.input_tokens, self.output_tokens, self.cached_input_tokens)
+        if any(
+            value is not None
+            and (isinstance(value, bool) or not isinstance(value, int) or value < 0)
+            for value in values
+        ):
+            raise ProtocolError("provider usage counts must be non-negative integers or unavailable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +335,12 @@ class SessionState:
     updated_at_ms: int = field(default_factory=lambda: int(time.time() * 1_000))
     failure_code: str | None = None
 
+    def __post_init__(self) -> None:
+        if not _IDENTIFIER.fullmatch(self.session_id):
+            raise ConfigurationError("session identifier is invalid")
+        if not self.prompt:
+            raise ConfigurationError("session prompt cannot be empty")
+
     @property
     def terminal(self) -> bool:
         """Return whether no further execution is permitted."""
@@ -323,3 +358,7 @@ class AgentEvent:
     stage: Stage
     data: dict[str, JsonValue]
     created_at_ms: int
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-standard JSON numeric constant is forbidden: {value}")

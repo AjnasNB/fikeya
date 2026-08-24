@@ -17,6 +17,8 @@ from fikeya_agent_core import (
     EvidenceContext,
     ProtocolError,
     ProviderDecision,
+    SessionState,
+    ToolCall,
 )
 
 
@@ -46,3 +48,10 @@ def test_cancellation_token_matches_runtime_cooperative_shape() -> None:
     assert token.cancelled is True
     with pytest.raises(CancellationError):
         token.raise_if_cancelled()
+
+
+def test_non_standard_json_numbers_and_invalid_session_ids_are_rejected() -> None:
+    with pytest.raises(ProtocolError, match="JSON serializable"):
+        ToolCall("call:nan", "repo:read", {"offset": float("nan")})
+    with pytest.raises(ConfigurationError, match="session identifier"):
+        SessionState("not valid whitespace", "task")

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -15,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
-from .errors import LimitExceededError, ProtocolError, SessionNotFoundError, StateConflictError
+from .errors import ConfigurationError, LimitExceededError, ProtocolError, SessionNotFoundError, StateConflictError
 from .models import (
     ApprovalRequest,
     EvidenceCitation,
@@ -25,6 +24,7 @@ from .models import (
     ToolCall,
     ToolResult,
     canonical_json,
+    strict_json_loads,
 )
 
 _SCHEMA_VERSION = 1
@@ -172,8 +172,8 @@ def decode_state(payload: bytes) -> SessionState:
     """Decode and validate a versioned JSON checkpoint."""
 
     try:
-        value = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        value = strict_json_loads(payload)
+    except (UnicodeDecodeError, ValueError) as error:
         raise ProtocolError("agent checkpoint is not valid UTF-8 JSON") from error
     if not isinstance(value, dict) or value.get("schemaVersion") != _SCHEMA_VERSION:
         raise ProtocolError("agent checkpoint has an unsupported schema version")
@@ -206,7 +206,7 @@ def decode_state(payload: bytes) -> SessionState:
             updated_at_ms=_integer(value, "updatedAtMs"),
             failure_code=_optional_string(value, "failureCode"),
         )
-    except (KeyError, TypeError, ValueError, ProtocolError) as error:
+    except (ConfigurationError, KeyError, TypeError, ValueError, ProtocolError) as error:
         raise ProtocolError("agent checkpoint shape is invalid") from error
 
 

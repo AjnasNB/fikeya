@@ -98,6 +98,8 @@ def test_provider_decisions_are_stage_specific_and_unknown_fields_fail_closed() 
         decode_provider_decision('{"kind":"answer","content":"no"}', Stage.PLAN)
     with pytest.raises(ProtocolError, match="unknown fields"):
         decode_provider_decision('{"kind":"plan","content":"ok","secret":"x"}', Stage.PLAN)
+    with pytest.raises(ProtocolError, match="JSON object"):
+        decode_provider_decision('{"kind":"plan","content":NaN}', Stage.PLAN)
 
 
 def test_provider_prompt_and_evidence_mark_qarinah_content_untrusted() -> None:

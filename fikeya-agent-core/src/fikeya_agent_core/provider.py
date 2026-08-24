@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -23,6 +22,7 @@ from .models import (
     Stage,
     ToolCall,
     canonical_json,
+    strict_json_loads,
 )
 
 RuntimeRequestFactory = Callable[[str, str | None, int], object]
@@ -172,8 +172,8 @@ def decode_provider_decision(text: str, stage: Stage) -> ProviderDecision:
     """Decode one strict JSON decision and enforce the active-stage contract."""
 
     try:
-        value = json.loads(text)
-    except json.JSONDecodeError as error:
+        value = strict_json_loads(text)
+    except ValueError as error:
         raise ProtocolError("provider output must be one JSON object") from error
     if not isinstance(value, dict):
         raise ProtocolError("provider output must be one JSON object")
