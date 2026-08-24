@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fikeya.dev/schema/lifecycle-event.v1.json",
+  "title": "Fikeya lifecycle event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "id",
+    "type",
+    "occurredAt",
+    "workspaceId",
+    "sessionId",
+    "payload"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "enum": [
+        "session.started",
+        "prompt.submitted",
+        "plan.updated",
+        "context.prepared",
+        "model.requested",
+        "model.completed",
+        "tool.requested",
+        "approval.requested",
+        "approval.decided",
+        "tool.started",
+        "tool.completed",
+        "compaction.started",
+        "compaction.completed",
+        "artifact.created",
+        "decision.recorded",
+        "summary.recorded",
+        "turn.completed",
+        "session.ended"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turnId": {
+      "type": "string"
+    },
+    "parentId": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "algorithm",
+          "digest"
+        ],
+        "properties": {
+          "algorithm": {
+            "const": "sha256"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "qarinah": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eventId",
+        "eventHash"
+      ],
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "eventHash": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
+
