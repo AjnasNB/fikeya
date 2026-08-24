@@ -1440,6 +1440,13 @@ a {
 
 	.nav-shell nav {
 		grid-column: 1;
+		overflow-x: visible;
+	}
+
+	.nav-links {
+		min-width: 0;
+		flex-wrap: wrap;
+		gap: 0.65rem 1rem;
 	}
 
 	.hero h1 {
