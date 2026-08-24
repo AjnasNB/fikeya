@@ -270,18 +270,22 @@ def test_request_response_concurrency_count_and_timeout_budgets() -> None:
         ),
         monotonic=clock,
     )
-    with budget.request(b"one"):
-        with pytest.raises(ToolPresetError, match="concurrent"):
-            with budget.request(b"two"):
-                pass
-    with pytest.raises(ToolPresetError, match="request-byte"):
-        with budget.request(b"x" * 1_025):
-            pass
+    with (
+        budget.request(b"one"),
+        pytest.raises(ToolPresetError, match="concurrent"),
+        budget.request(b"two"),
+    ):
+        pass
+    with pytest.raises(
+        ToolPresetError, match="request-byte"
+    ), budget.request(b"x" * 1_025):
+        pass
     with pytest.raises(ToolPresetError, match="response-byte"):
         budget.validate_response(b"x" * 1_025)
-    with pytest.raises(ToolPresetError, match="timeout"):
-        with budget.request(b"two"):
-            clock.value += 0.101
+    with pytest.raises(
+        ToolPresetError, match="timeout"
+    ), budget.request(b"two"):
+        clock.value += 0.101
 
 
 def test_bundled_presets_match_the_reviewed_integration_manifests() -> None:
