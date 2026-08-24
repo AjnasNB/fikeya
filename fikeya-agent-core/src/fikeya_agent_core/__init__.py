@@ -37,6 +37,12 @@ from .models import (
     ToolResult,
 )
 from .protocols import ExecutionBroker, Provider
+from .provider import (
+    RuntimeProviderAdapter,
+    decode_provider_decision,
+    render_provider_prompt,
+    render_system_instructions,
+)
 
 __all__ = [
     "AgentCoreError",
@@ -64,6 +70,7 @@ __all__ = [
     "RetryableBrokerError",
     "RetryableProviderError",
     "ReviewAction",
+    "RuntimeProviderAdapter",
     "SessionNotFoundError",
     "SessionState",
     "Stage",
@@ -72,4 +79,7 @@ __all__ = [
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
+    "decode_provider_decision",
+    "render_provider_prompt",
+    "render_system_instructions",
 ]
