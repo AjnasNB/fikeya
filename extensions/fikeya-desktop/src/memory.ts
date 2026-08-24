@@ -7,8 +7,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-const maximumSidecarOutputBytes = 2 * 1024 * 1024;
-const sidecarTimeoutMilliseconds = 20_000;
+const maximumSidecarOutputBytes = 512 * 1024;
+const sidecarTimeoutMilliseconds = 30_000;
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
 const nodeTypes = new Set(['worktree', 'memory', 'file', 'concept', 'directory', 'reference']);
 
@@ -133,6 +133,7 @@ export function loadQarinahMemory(extensionPath: string, workspacePath: string):
 
 export function resolveQarinahSidecarPath(extensionPath: string): string | undefined {
 	const candidates = [
+		path.resolve(extensionPath, 'sidecar', 'qarinah-memory-view.mjs'),
 		path.resolve(extensionPath, 'sidecar', 'qarinah-sidecar.mjs'),
 		path.resolve(extensionPath, '..', '..', 'integrations', 'qarinah-sidecar', 'src', 'sidecar.mjs')
 	];

@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'node:assert/strict';
+import path from 'node:path';
 import { describe, test } from 'node:test';
-import { parseMemorySidecarResponse, parseMemorySnapshot } from '../memory';
+import { parseMemorySidecarResponse, parseMemorySnapshot, resolveQarinahSidecarPath } from '../memory';
 
 const hashA = `sha256:${'a'.repeat(64)}`;
 const hashB = `sha256:${'b'.repeat(64)}`;
@@ -63,6 +64,11 @@ function memoryView(): Record<string, unknown> {
 }
 
 describe('Fikeya Qarinah memory bridge', () => {
+	test('prefers the compact extension-owned Qarinah view adapter', () => {
+		const extensionPath = path.resolve(__dirname, '..', '..');
+		assert.strictEqual(resolveQarinahSidecarPath(extensionPath), path.join(extensionPath, 'sidecar', 'qarinah-memory-view.mjs'));
+	});
+
 	test('accepts a bounded cited graph projection', () => {
 		const parsed = parseMemorySnapshot(memoryView());
 		assert.strictEqual(parsed?.workspaceName, 'fikeya');

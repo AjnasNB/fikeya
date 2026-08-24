@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
 import { escapeHtml, FikeyaLayout, FikeyaMode, fikeyaLayouts, fikeyaModes, parseWebviewMessage } from './messageValidation';
+import { FikeyaMemorySnapshot, loadQarinahMemory } from './memory';
 import {
 	configureFikeyaProvider,
 	FikeyaAgentRunHandle,
@@ -52,6 +53,11 @@ interface AgentSurfaceState {
 	readonly failure?: string;
 }
 
+interface MemorySurfaceState {
+	readonly status: 'not-loaded' | 'loading' | 'ready' | 'unavailable';
+	readonly snapshot?: FikeyaMemorySnapshot;
+}
+
 interface DashboardState {
 	readonly layout: FikeyaLayout;
 	readonly mode: FikeyaMode;
@@ -60,6 +66,7 @@ interface DashboardState {
 	readonly providers: readonly FikeyaProviderProfile[];
 	readonly providerHealth: Readonly<Record<string, ProviderHealth>>;
 	readonly agent: AgentSurfaceState;
+	readonly memory: MemorySurfaceState;
 	readonly runtime: 'not-checked' | 'checking' | 'ready' | 'attention';
 	readonly workspaceInitialized: boolean;
 	readonly runtimeProviderCount?: number;
@@ -104,6 +111,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			providers: [],
 			providerHealth: {},
 			agent: { status: 'idle', receiptsStatus: 'idle', receipts: [] },
+			memory: { status: 'not-loaded' },
 			runtime: 'not-checked',
 			workspaceInitialized: false,
 			runtimeProviderCount: undefined,
@@ -152,11 +160,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 					await this.refreshReceipts(true);
 					break;
 				case 'refreshMemory':
+					await this.refreshMemory(true);
 					break;
 			}
 		}));
 		this.refresh();
 		void this.refreshProviders(false);
+		void this.refreshMemory(false);
 	}
 
 	public async chooseLayout(): Promise<void> {
@@ -283,6 +293,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		const title = command === 'doctor' ? vscode.l10n.t('Running Fikeya Doctor') : vscode.l10n.t('Initializing Fikeya Workspace');
 		const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () => runFikeyaRuntime(command, workspacePath));
 		this.applyRuntimeResult(result, command);
+		if (result.ok) {
+			void this.refreshMemory(false);
+		}
 	}
 
 	private async refreshProviders(showFailure: boolean): Promise<void> {
@@ -465,6 +478,35 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		this.refresh();
 	}
 
+	private async refreshMemory(showFailure: boolean): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		if (!workspacePath) {
+			this.state = { ...this.state, memory: { status: 'unavailable' } };
+			this.refresh();
+			return;
+		}
+		this.state = { ...this.state, memory: { status: 'loading', snapshot: this.state.memory.snapshot } };
+		this.refresh();
+		const result = await loadQarinahMemory(this.context.extensionPath, workspacePath);
+		if (!result.ok || !result.snapshot) {
+			this.state = { ...this.state, memory: { status: 'unavailable' } };
+			this.refresh();
+			if (showFailure) {
+				const message = result.failure === 'sidecar-not-found'
+					? vscode.l10n.t('The pinned Qarinah sidecar is not available in this build.')
+					: vscode.l10n.t('Qarinah memory is unavailable. Initialize the workspace and run doctor.');
+				void vscode.window.showErrorMessage(message);
+			}
+			return;
+		}
+		this.state = {
+			...this.state,
+			memory: { status: 'ready', snapshot: result.snapshot },
+			qarinah: vscode.l10n.t('{0} events, verified graph', result.snapshot.eventCount)
+		};
+		this.refresh();
+	}
+
 	private async setLayout(layout: FikeyaLayout): Promise<void> {
 		await this.context.globalState.update(layoutStorageKey, layout);
 		this.state = { ...this.state, layout };
@@ -509,6 +551,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		const strings = getWebviewStrings();
 		const providerCards = renderProviderCards(this.state, strings);
 		const agentSurface = renderAgentSurface(this.state, strings);
+		const memoryGraph = renderMemoryGraph(this.state, strings);
+		const memoryGraphData = serializeForHtml(this.state.memory.snapshot ?? { nodes: [], edges: [] });
 		const latestReceipt = this.state.agent.receipts.at(-1);
 		const modeButtons = ([
 			['editor', strings.editor],
@@ -571,8 +615,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		.agent-form { display: grid; gap: 9px; }
 		.field { display: grid; gap: 4px; }
 		.field > span { color: var(--vscode-foreground); font-weight: 600; }
-		select, textarea, input[type="number"] { width: 100%; border: 1px solid var(--vscode-input-border, transparent); border-radius: 0; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font: inherit; }
-		select, input[type="number"] { min-height: 30px; padding: 4px 7px; }
+		select, textarea, input[type="number"], input[type="search"] { width: 100%; border: 1px solid var(--vscode-input-border, transparent); border-radius: 0; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font: inherit; }
+		select, input[type="number"], input[type="search"] { min-height: 30px; padding: 4px 7px; }
 		textarea { min-height: 108px; resize: vertical; padding: 7px; line-height: 1.45; }
 		select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 		.consent { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 7px; color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.4; }
@@ -581,11 +625,37 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		.agent-status[data-tone="error"] { border-left-color: var(--vscode-errorForeground); }
 		.agent-output { max-height: 360px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--vscode-widget-border); color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 		.agent-receipt { display: grid; gap: 8px; }
+		.memory-graph { min-width: 0; }
+		.graph-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, .4fr) auto; gap: 6px; }
+		.graph-controls input { min-height: 30px; padding: 4px 7px; }
+		.graph-viewport { position: relative; min-height: 360px; overflow: hidden; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
+		.graph-canvas { display: block; width: 100%; min-height: 360px; touch-action: none; user-select: none; }
+		.graph-hit { fill: transparent; cursor: grab; }
+		.graph-hit[data-panning="true"] { cursor: grabbing; }
+		.graph-edge { stroke: var(--vscode-editorWidget-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+		.graph-node { cursor: grab; }
+		.graph-node:focus-visible .graph-halo, .graph-node[data-selected="true"] .graph-halo { stroke: var(--vscode-focusBorder); stroke-width: 3; }
+		.graph-node[data-dragging="true"] { cursor: grabbing; }
+		.graph-halo { fill: var(--vscode-editor-background); stroke: var(--vscode-widget-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+		.graph-dot { stroke: var(--vscode-editor-foreground); stroke-width: .6; vector-effect: non-scaling-stroke; }
+		.graph-details { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
+		.graph-details h3 { margin: 0; font-size: 13px; }
+		.graph-details code { overflow-wrap: anywhere; }
+		.graph-legend { display: flex; flex-wrap: wrap; gap: 5px 10px; color: var(--vscode-descriptionForeground); font-size: 11px; }
+		.graph-legend span { display: inline-flex; align-items: center; gap: 4px; }
+		.graph-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-descriptionForeground); }
+		.graph-legend i[data-type="worktree"] { background: var(--vscode-charts-red); }
+		.graph-legend i[data-type="memory"] { background: var(--vscode-charts-green); }
+		.graph-legend i[data-type="file"] { background: var(--vscode-charts-blue); }
+		.graph-legend i[data-type="concept"] { background: var(--vscode-charts-purple); }
+		.graph-legend i[data-type="directory"] { background: var(--vscode-charts-yellow); }
+		.graph-summary { color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.focus-only { display: none; }
 		body[data-layout="agentFocus"] .studio-only { display: none; }
 		body[data-layout="agentFocus"] .focus-only { display: grid; }
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
 		@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+		@media (max-width: 420px) { .graph-controls { grid-template-columns: 1fr; } }
 		@media (max-width: 280px) { .switcher.modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .provider-card { grid-template-columns: 1fr; } }
 	</style>
 </head>
@@ -623,8 +693,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 				<h2>${escapeHtml(strings.qarinahMemory)}</h2>
 				<span class="badge">${escapeHtml(this.state.qarinah)}</span>
 				<p>${escapeHtml(strings.qarinahDescription)}</p>
+				<div class="actions"><button class="secondary" data-memory-refresh type="button">${escapeHtml(strings.refresh)}</button></div>
 			</article>
 		</section>
+		${memoryGraph}
 		<section class="card studio-only" aria-labelledby="providers-title">
 			<h2 id="providers-title">${escapeHtml(strings.providers)}</h2>
 			<span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span>
@@ -643,6 +715,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			</article>
 		</section>
 	</main>
+	<script id="fikeya-memory-graph-data" type="application/json" nonce="${nonce}">${memoryGraphData}</script>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openCommand', command: button.dataset.command })));
@@ -670,10 +743,154 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 				vscode.postMessage({ type: 'runAgent', providerName, prompt, maxOutputTokens, allowNetwork: true });
 			});
 		}
+		document.querySelectorAll('[data-memory-refresh]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'refreshMemory' })));
+		const graphDataElement = document.getElementById('fikeya-memory-graph-data');
+		const graphSvg = document.querySelector('[data-memory-graph]');
+		if (graphDataElement && graphSvg) {
+			const graph = JSON.parse(graphDataElement.textContent);
+			const scene = graphSvg.querySelector('[data-graph-scene]');
+			const edgeLayer = graphSvg.querySelector('[data-graph-edges]');
+			const nodeLayer = graphSvg.querySelector('[data-graph-nodes]');
+			const hit = graphSvg.querySelector('[data-graph-hit]');
+			const search = document.querySelector('[data-graph-search]');
+			const typeFilter = document.querySelector('[data-graph-type]');
+			const summary = document.querySelector('[data-graph-summary]');
+			const nodeById = new Map(graph.nodes.map(node => [node.id, node]));
+			const neighbors = new Map(graph.nodes.map(node => [node.id, new Set()]));
+			for (const edge of graph.edges) { neighbors.get(edge.source)?.add(edge.target); neighbors.get(edge.target)?.add(edge.source); }
+			const colors = {
+				worktree: 'var(--vscode-charts-red)',
+				memory: 'var(--vscode-charts-green)',
+				file: 'var(--vscode-charts-blue)',
+				concept: 'var(--vscode-charts-purple)',
+				directory: 'var(--vscode-charts-yellow)',
+				reference: 'var(--vscode-descriptionForeground)'
+			};
+			const positions = new Map();
+			let pan = { x: 0, y: 0 };
+			let zoom = 1;
+			let selectedId = null;
+			let pointerState = null;
+			const svgElement = name => document.createElementNS('http://www.w3.org/2000/svg', name);
+			const applyScene = () => scene.setAttribute('transform', 'translate(' + pan.x + ' ' + pan.y + ') scale(' + zoom + ')');
+			const pointFromEvent = event => {
+				const rect = graphSvg.getBoundingClientRect();
+				return { x: (event.clientX - rect.left) * 800 / Math.max(1, rect.width), y: (event.clientY - rect.top) * 480 / Math.max(1, rect.height) };
+			};
+			const worldPoint = event => { const point = pointFromEvent(event); return { x: (point.x - pan.x) / zoom, y: (point.y - pan.y) / zoom }; };
+			const showNode = node => {
+				selectedId = node.id;
+				document.querySelector('[data-graph-title]').textContent = node.label;
+				document.querySelector('[data-graph-description]').textContent = node.path || node.kind;
+				document.querySelector('[data-graph-detail="type"]').textContent = node.type + ' | ' + node.kind;
+				document.querySelector('[data-graph-detail="status"]').textContent = node.status + (node.conflicted ? ' | conflict recorded' : '');
+				document.querySelector('[data-graph-detail="connections"]').textContent = node.incoming + ' incoming | ' + node.outgoing + ' outgoing';
+				document.querySelector('[data-graph-detail="source"]').textContent = node.sourceEventId || 'Derived node';
+				document.querySelector('[data-graph-detail="evidence"]').textContent = node.evidenceHash || node.contentHash || 'No direct content hash';
+				document.querySelectorAll('.graph-node').forEach(element => { element.dataset.selected = String(element.dataset.nodeId === node.id); });
+			};
+			const naturalPosition = (node, index, group, ring) => {
+				const radius = group.length === 1 && graph.nodes.length === 1 ? 0 : 58 + ring * 46;
+				const angle = -Math.PI / 2 + Math.PI * 2 * index / Math.max(1, group.length) + ring * .31;
+				return { x: 400 + Math.cos(angle) * radius, y: 240 + Math.sin(angle) * radius };
+			};
+			const renderGraph = () => {
+				const query = (search?.value || '').trim().toLowerCase();
+				const wantedType = typeFilter?.value || 'all';
+				const direct = new Set(graph.nodes.filter(node => {
+					const text = [node.label, node.path, node.kind, ...node.terms].filter(Boolean).join(' ').toLowerCase();
+					return (wantedType === 'all' || node.type === wantedType) && (!query || text.includes(query));
+				}).map(node => node.id));
+				const expanded = new Set(direct);
+				if (query) { for (const id of direct) { for (const neighbor of neighbors.get(id) || []) { if (wantedType === 'all' || nodeById.get(neighbor)?.type === wantedType) expanded.add(neighbor); } } }
+				const visible = graph.nodes.filter(node => expanded.has(node.id)).sort((left, right) => right.importance - left.importance || left.id.localeCompare(right.id)).slice(0, 100);
+				const visibleIds = new Set(visible.map(node => node.id));
+				const types = ['worktree', 'memory', 'file', 'concept', 'directory', 'reference'].filter(type => visible.some(node => node.type === type));
+				types.forEach((type, ring) => {
+					const group = visible.filter(node => node.type === type);
+					group.forEach((node, index) => { if (!positions.has(node.id)) positions.set(node.id, naturalPosition(node, index, group, ring)); });
+				});
+				edgeLayer.textContent = '';
+				for (const edge of graph.edges) {
+					if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) continue;
+					const source = positions.get(edge.source), target = positions.get(edge.target);
+					const line = svgElement('line');
+					line.classList.add('graph-edge');
+					line.dataset.source = edge.source; line.dataset.target = edge.target;
+					line.setAttribute('x1', source.x); line.setAttribute('y1', source.y); line.setAttribute('x2', target.x); line.setAttribute('y2', target.y);
+					line.setAttribute('opacity', String(Math.max(.22, Math.min(.8, edge.weight))));
+					const title = svgElement('title'); title.textContent = edge.type; line.append(title); edgeLayer.append(line);
+				}
+				nodeLayer.textContent = '';
+				for (const node of visible) {
+					const position = positions.get(node.id);
+					const group = svgElement('g'); group.classList.add('graph-node'); group.dataset.nodeId = node.id; group.dataset.selected = String(node.id === selectedId); group.dataset.dragging = 'false';
+					group.setAttribute('transform', 'translate(' + position.x + ' ' + position.y + ')'); group.setAttribute('tabindex', '0'); group.setAttribute('role', 'button'); group.setAttribute('aria-label', node.type + ': ' + node.label);
+					const halo = svgElement('circle'); halo.classList.add('graph-halo'); halo.setAttribute('r', '11');
+					const dot = svgElement('circle'); dot.classList.add('graph-dot'); dot.setAttribute('r', String(5 + Math.min(7, node.importance * 6))); dot.setAttribute('fill', colors[node.type]);
+					const title = svgElement('title'); title.textContent = node.label + ' | ' + node.type;
+					group.append(halo, dot, title);
+					group.addEventListener('pointerdown', event => { if (event.button !== 0) return; event.stopPropagation(); pointerState = { type: 'node', id: node.id, pointerId: event.pointerId }; group.dataset.dragging = 'true'; graphSvg.setPointerCapture(event.pointerId); showNode(node); });
+					group.addEventListener('click', () => showNode(node));
+					group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showNode(node); } });
+					nodeLayer.append(group);
+				}
+				summary.textContent = visible.length + ' of ' + graph.nodes.length + ' bounded nodes | ' + graph.edges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target)).length + ' visible links';
+				if (selectedId && visibleIds.has(selectedId)) showNode(nodeById.get(selectedId));
+			};
+			hit.addEventListener('pointerdown', event => { if (event.button !== 0) return; const point = pointFromEvent(event); pointerState = { type: 'pan', pointerId: event.pointerId, point, origin: { ...pan } }; hit.dataset.panning = 'true'; graphSvg.setPointerCapture(event.pointerId); });
+			graphSvg.addEventListener('pointermove', event => {
+				if (!pointerState || pointerState.pointerId !== event.pointerId) return;
+				if (pointerState.type === 'pan') { const point = pointFromEvent(event); pan = { x: pointerState.origin.x + point.x - pointerState.point.x, y: pointerState.origin.y + point.y - pointerState.point.y }; applyScene(); return; }
+				const position = worldPoint(event); positions.set(pointerState.id, position); const group = nodeLayer.querySelector('[data-node-id="' + CSS.escape(pointerState.id) + '"]'); if (group) group.setAttribute('transform', 'translate(' + position.x + ' ' + position.y + ')');
+				for (const line of edgeLayer.querySelectorAll('line')) { if (line.dataset.source === pointerState.id) { line.setAttribute('x1', position.x); line.setAttribute('y1', position.y); } if (line.dataset.target === pointerState.id) { line.setAttribute('x2', position.x); line.setAttribute('y2', position.y); } }
+			});
+			const finishPointer = event => { if (!pointerState || pointerState.pointerId !== event.pointerId) return; hit.dataset.panning = 'false'; nodeLayer.querySelectorAll('.graph-node').forEach(node => { node.dataset.dragging = 'false'; }); try { graphSvg.releasePointerCapture(event.pointerId); } catch {} pointerState = null; };
+			graphSvg.addEventListener('pointerup', finishPointer); graphSvg.addEventListener('pointercancel', finishPointer);
+			graphSvg.addEventListener('wheel', event => { event.preventDefault(); const point = pointFromEvent(event); const next = Math.max(.55, Math.min(2.5, zoom * (event.deltaY < 0 ? 1.12 : .89))); const world = { x: (point.x - pan.x) / zoom, y: (point.y - pan.y) / zoom }; zoom = next; pan = { x: point.x - world.x * zoom, y: point.y - world.y * zoom }; applyScene(); }, { passive: false });
+			document.querySelector('[data-graph-zoom-in]')?.addEventListener('click', () => { zoom = Math.min(2.5, zoom * 1.2); applyScene(); });
+			document.querySelector('[data-graph-zoom-out]')?.addEventListener('click', () => { zoom = Math.max(.55, zoom / 1.2); applyScene(); });
+			document.querySelector('[data-graph-reset]')?.addEventListener('click', () => { positions.clear(); pan = { x: 0, y: 0 }; zoom = 1; selectedId = null; applyScene(); renderGraph(); });
+			search?.addEventListener('input', renderGraph); typeFilter?.addEventListener('change', renderGraph); applyScene(); renderGraph();
+		}
 	</script>
 </body>
 </html>`;
 	}
+}
+
+function renderMemoryGraph(state: DashboardState, strings: WebviewStrings): string {
+	if (state.memory.status === 'loading' || state.memory.status === 'not-loaded') {
+		return `<section class="card memory-graph studio-only"><h2>${escapeHtml(strings.memoryGraph)}</h2><p class="empty">${escapeHtml(strings.loadingMemory)}</p></section>`;
+	}
+	const snapshot = state.memory.snapshot;
+	if (state.memory.status === 'unavailable' || !snapshot) {
+		return `<section class="card memory-graph studio-only"><h2>${escapeHtml(strings.memoryGraph)}</h2><p class="empty">${escapeHtml(strings.memoryUnavailable)}</p><div class="actions"><button class="secondary" data-memory-refresh type="button">${escapeHtml(strings.refresh)}</button></div></section>`;
+	}
+	if (snapshot.nodes.length === 0) {
+		return `<section class="card memory-graph studio-only"><h2>${escapeHtml(strings.memoryGraph)}</h2><p>${escapeHtml(strings.memoryGraphDescription)}</p><p class="empty">${escapeHtml(strings.memoryEmpty)}</p><p class="graph-summary">${escapeHtml(strings.graphManifest)} <code>${escapeHtml(snapshot.graphManifestHash)}</code></p></section>`;
+	}
+	return `<section class="card memory-graph studio-only" aria-labelledby="memory-graph-title">
+		<h2 id="memory-graph-title">${escapeHtml(strings.memoryGraph)}</h2>
+		<p>${escapeHtml(strings.memoryGraphDescription)}</p>
+		<div class="graph-controls">
+			<label class="field"><span>${escapeHtml(strings.searchNodes)}</span><input data-graph-search type="search" maxlength="160" placeholder="${escapeHtml(strings.searchNodesPlaceholder)}"></label>
+			<label class="field"><span>${escapeHtml(strings.nodeType)}</span><select data-graph-type><option value="all">${escapeHtml(strings.allTypes)}</option><option value="worktree">${escapeHtml(strings.worktrees)}</option><option value="memory">${escapeHtml(strings.memories)}</option><option value="file">${escapeHtml(strings.files)}</option><option value="concept">${escapeHtml(strings.concepts)}</option><option value="directory">${escapeHtml(strings.directories)}</option><option value="reference">${escapeHtml(strings.references)}</option></select></label>
+			<div class="actions"><button class="secondary" data-graph-zoom-in type="button" aria-label="${escapeHtml(strings.zoomIn)}">+</button><button class="secondary" data-graph-zoom-out type="button" aria-label="${escapeHtml(strings.zoomOut)}">-</button><button class="secondary" data-graph-reset type="button">${escapeHtml(strings.reset)}</button></div>
+		</div>
+		<div class="graph-viewport"><svg class="graph-canvas" data-memory-graph viewBox="0 0 800 480" role="img" aria-label="${escapeHtml(strings.memoryGraphAria)}"><rect class="graph-hit" data-graph-hit x="0" y="0" width="800" height="480"></rect><g data-graph-scene><g data-graph-edges></g><g data-graph-nodes></g></g></svg></div>
+		<output class="graph-summary" data-graph-summary aria-live="polite"></output>
+		<div class="graph-legend"><span><i data-type="worktree"></i>${escapeHtml(strings.worktrees)}</span><span><i data-type="memory"></i>${escapeHtml(strings.memories)}</span><span><i data-type="file"></i>${escapeHtml(strings.files)}</span><span><i data-type="concept"></i>${escapeHtml(strings.concepts)}</span><span><i data-type="directory"></i>${escapeHtml(strings.directories)}</span><span><i data-type="reference"></i>${escapeHtml(strings.references)}</span></div>
+		<aside class="graph-details" aria-live="polite"><h3 data-graph-title>${escapeHtml(strings.chooseNode)}</h3><p data-graph-description>${escapeHtml(strings.chooseNodeDescription)}</p><dl class="receipt"><dt>${escapeHtml(strings.nodeType)}</dt><dd data-graph-detail="type">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.status)}</dt><dd data-graph-detail="status">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.connections)}</dt><dd data-graph-detail="connections">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.sourceEvent)}</dt><dd><code data-graph-detail="source">${escapeHtml(strings.unavailable)}</code></dd><dt>${escapeHtml(strings.evidence)}</dt><dd><code data-graph-detail="evidence">${escapeHtml(strings.unavailable)}</code></dd></dl></aside>
+		<p class="graph-summary">${escapeHtml(strings.graphManifest)} <code>${escapeHtml(snapshot.graphManifestHash)}</code><br>${escapeHtml(strings.ledgerHead)} <code>${escapeHtml(snapshot.ledgerHeadHash ?? strings.unavailable)}</code></p>
+	</section>`;
+}
+
+function serializeForHtml(value: unknown): string {
+	return JSON.stringify(value)
+		.replaceAll('<', '\\u003c')
+		.replaceAll('\u2028', '\\u2028')
+		.replaceAll('\u2029', '\\u2029');
 }
 
 function renderProviderCards(state: DashboardState, strings: WebviewStrings): string {
@@ -804,6 +1021,32 @@ interface WebviewStrings {
 	readonly runDoctor: string;
 	readonly qarinahMemory: string;
 	readonly qarinahDescription: string;
+	readonly memoryGraph: string;
+	readonly loadingMemory: string;
+	readonly memoryUnavailable: string;
+	readonly memoryGraphDescription: string;
+	readonly memoryEmpty: string;
+	readonly graphManifest: string;
+	readonly ledgerHead: string;
+	readonly searchNodes: string;
+	readonly searchNodesPlaceholder: string;
+	readonly nodeType: string;
+	readonly allTypes: string;
+	readonly worktrees: string;
+	readonly memories: string;
+	readonly files: string;
+	readonly concepts: string;
+	readonly directories: string;
+	readonly references: string;
+	readonly zoomIn: string;
+	readonly zoomOut: string;
+	readonly reset: string;
+	readonly memoryGraphAria: string;
+	readonly chooseNode: string;
+	readonly chooseNodeDescription: string;
+	readonly status: string;
+	readonly connections: string;
+	readonly sourceEvent: string;
 	readonly providers: string;
 	readonly providersDescription: string;
 	readonly runtimeProvidersNotChecked: string;
@@ -889,6 +1132,32 @@ function getWebviewStrings(): WebviewStrings {
 		runDoctor: vscode.l10n.t('Run Doctor'),
 		qarinahMemory: vscode.l10n.t('Qarinah Memory'),
 		qarinahDescription: vscode.l10n.t('Qarinah supplies evidence-linked memory and context receipts for this workspace.'),
+		memoryGraph: vscode.l10n.t('Verified Project Memory Graph'),
+		loadingMemory: vscode.l10n.t('Loading the bounded local graph from Qarinah.'),
+		memoryUnavailable: vscode.l10n.t('No verified graph is available. Initialize this workspace and make sure the pinned Qarinah sidecar is installed.'),
+		memoryGraphDescription: vscode.l10n.t('Search and inspect the real bounded project graph. Drag nodes, pan the canvas, and zoom without sending graph data to a network service.'),
+		memoryEmpty: vscode.l10n.t('The verified graph currently contains no displayable nodes. No demo data was substituted.'),
+		graphManifest: vscode.l10n.t('Graph manifest:'),
+		ledgerHead: vscode.l10n.t('Ledger head:'),
+		searchNodes: vscode.l10n.t('Search Nodes'),
+		searchNodesPlaceholder: vscode.l10n.t('Decision, file, concept, or path'),
+		nodeType: vscode.l10n.t('Node Type'),
+		allTypes: vscode.l10n.t('All Types'),
+		worktrees: vscode.l10n.t('Worktrees'),
+		memories: vscode.l10n.t('Memories'),
+		files: vscode.l10n.t('Files'),
+		concepts: vscode.l10n.t('Concepts'),
+		directories: vscode.l10n.t('Directories'),
+		references: vscode.l10n.t('References'),
+		zoomIn: vscode.l10n.t('Zoom In'),
+		zoomOut: vscode.l10n.t('Zoom Out'),
+		reset: vscode.l10n.t('Reset'),
+		memoryGraphAria: vscode.l10n.t('Interactive bounded Qarinah project-memory graph'),
+		chooseNode: vscode.l10n.t('Choose a Node'),
+		chooseNodeDescription: vscode.l10n.t('Select a node to inspect its local provenance and evidence identity.'),
+		status: vscode.l10n.t('Status'),
+		connections: vscode.l10n.t('Connections'),
+		sourceEvent: vscode.l10n.t('Source Event'),
 		providers: vscode.l10n.t('Provider Profiles'),
 		providersDescription: vscode.l10n.t('Provider metadata stays in Fikeya state. API credentials remain in OS-backed secret stores.'),
 		runtimeProvidersNotChecked: vscode.l10n.t('Run doctor to reconcile runtime profiles'),
