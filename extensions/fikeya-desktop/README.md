@@ -15,7 +15,7 @@ The selected mode and layout are persisted in VS Code global state. A webview me
 
 ## Runtime setup
 
-Open a trusted local folder, then use **Fikeya: Initialize Workspace** and **Fikeya: Run Doctor**. The extension invokes the `fikeya` CLI with an argument array, a bounded output size, a timeout, no shell, and the local workspace as its working directory.
+Open a trusted local folder, then use **Fikeya: Initialize Workspace** and **Fikeya: Run Doctor**. A packaged VSIX invokes its own platform-specific Fikeya Runtime executable with an argument array, a bounded output size, a timeout, no shell, and the local workspace as its working directory. It does not require a global `fikeya` command or Python installation. A source checkout without a bundled runtime retains a PATH fallback for development only.
 
 The extension understands the actual JSON emitted by:
 
@@ -52,11 +52,14 @@ From this directory, build and inspect the extension with:
 
 ```text
 npm ci
+python -m pip install -r runtime-build-requirements.txt
 npm run package:vsix
 ```
 
-The reproducible build writes `artifacts/fikeya-desktop-0.1.0.vsix`. It compiles and runs the focused test suite, bundles only the reachable Qarinah 0.4.0 dashboard runtime, invokes the official pinned `@vscode/vsce` packager, and then reopens the archive to verify its allowlisted contents and hashes. A fixed `SOURCE_DATE_EPOCH` is used by default so identical inputs produce the same VSIX bytes; release automation may supply another valid epoch explicitly.
+The reproducible, platform-targeted build writes `artifacts/fikeya-desktop-0.1.0-<target>.vsix`. It compiles and runs the focused test suite, freezes the local Fikeya Runtime into an extension-owned executable, bundles only the reachable Qarinah 0.4.0 workspace and dashboard runtime, invokes the official pinned `@vscode/vsce` packager, and then reopens the archive to verify its allowlisted contents and hashes. A fixed `SOURCE_DATE_EPOCH` is used by default so identical inputs produce the same VSIX bytes; release automation may supply another valid epoch explicitly.
 
-The package includes the extension's full AGPL-3.0-or-later license, Qarinah's Apache-2.0 license and notice, and the MIT notice for the bundled ignore parser. It excludes TypeScript sources, tests, source maps, `node_modules`, development caches, local `.qarinah`/`.codex` state, SQLite files, event ledgers, and credential-shaped material. The Qarinah bundle carries a content hash and npm-lock integrity receipt.
+The package includes the extension's full AGPL-3.0-or-later license, Qarinah's Apache-2.0 license and notice, the MIT notice for the bundled ignore parser, and the embedded Python runtime's dependency licenses. It excludes TypeScript sources, tests, source maps, `node_modules`, development caches, local `.qarinah`/`.codex` state, SQLite files, event ledgers, and credential-shaped material. Both bundled runtimes carry content hashes and dependency receipts.
+
+`npm run test:isolated-vsix` extracts the built archive into a fresh profile, empties `PATH`, initializes Fikeya and Qarinah, runs doctor, and loads the real zero-event Qarinah graph. No global Fikeya installation or synthetic graph fixture participates in that check.
 
 This artifact is the Fikeya Desktop VS Code extension. It is not a branded Fikeya desktop executable. Local and CI VSIX files are unsigned until the publisher completes marketplace identity, signing, and release-channel setup.
