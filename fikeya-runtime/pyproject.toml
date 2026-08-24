@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fikeya-runtime"
 version = "0.1.0a1"
-description = "Local-first runtime, protocol, and safety boundary for Fikeya coding agents."
+description = "Provider-neutral runtime, bounded-context compiler, and safety boundary for the Fikeya AI code editor."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
@@ -15,7 +15,7 @@ authors = [
 dependencies = [
   "keyring>=25.6,<27",
 ]
-keywords = ["ai", "coding-agent", "developer-tools", "local-first"]
+keywords = ["ai", "ai-code-editor", "coding-agent", "context-management", "developer-tools", "provider-neutral"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

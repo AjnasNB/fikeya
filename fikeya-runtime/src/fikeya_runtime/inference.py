@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Fikeya contributors
 
-"""Bounded OpenAI-compatible inference with content-free call receipts."""
+"""Bounded provider inference with content-free call receipts."""
 
 from __future__ import annotations
 
@@ -214,7 +214,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class ProviderExecutor:
-    """Execute one explicit OpenAI-compatible call without persisting content."""
+    """Execute one explicit provider call without persisting content."""
 
     def __init__(self, transport: JsonTransport | None = None) -> None:
         self.transport = transport or UrllibJsonTransport()
@@ -244,7 +244,7 @@ class ProviderExecutor:
             raise ConfigurationError(
                 "maximum_response_bytes is outside the safe range."
             )
-        if profile.api_mode == "native":
+        if profile.api_mode == "native" and profile.kind != ProviderKind.ANTHROPIC:
             raise ProviderError(
                 f"Native {profile.kind.value} execution is not shipped in this runtime slice."
             )
@@ -308,6 +308,8 @@ def provider_request_fingerprint(
 
 def _execution_url(profile: ProviderProfile) -> str:
     base_url = profile.base_url.rstrip("/")
+    if profile.kind == ProviderKind.ANTHROPIC:
+        return f"{base_url}/messages"
     if profile.kind == ProviderKind.AZURE_OPENAI and not base_url.endswith(
         "/openai/v1"
     ):
@@ -320,7 +322,15 @@ def _request_payload(
     profile: ProviderProfile,
     request: InferenceRequest,
 ) -> dict[str, object]:
-    if profile.api_mode == "responses":
+    if profile.kind == ProviderKind.ANTHROPIC and profile.api_mode == "native":
+        payload: dict[str, object] = {
+            "max_tokens": request.max_output_tokens,
+            "messages": [{"content": request.prompt, "role": "user"}],
+            "model": profile.model,
+        }
+        if request.system is not None:
+            payload["system"] = request.system
+    elif profile.api_mode == "responses":
         payload: dict[str, object] = {
             "input": request.prompt,
             "max_output_tokens": request.max_output_tokens,
@@ -363,6 +373,18 @@ def _response_text(api_mode: str, body: dict[str, object]) -> str:
                         pieces.append(content["text"])
             if pieces:
                 return "".join(pieces)
+    elif api_mode == "native":
+        content = body.get("content")
+        if isinstance(content, list):
+            pieces = [
+                block["text"]
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") == "text"
+                and isinstance(block.get("text"), str)
+            ]
+            if pieces:
+                return "".join(pieces)
     else:
         choices = body.get("choices")
         if isinstance(choices, list) and choices and isinstance(choices[0], dict):
@@ -380,6 +402,30 @@ def _provider_usage(api_mode: str, body: dict[str, object]) -> ProviderUsage:
         input_tokens = _non_negative_int(usage.get("input_tokens"))
         output_tokens = _non_negative_int(usage.get("output_tokens"))
         details = usage.get("input_tokens_details")
+    elif api_mode == "native":
+        base_input_tokens = _non_negative_int(usage.get("input_tokens"))
+        cache_creation_tokens = _non_negative_int(
+            usage.get("cache_creation_input_tokens", 0)
+        )
+        cache_read_tokens = _non_negative_int(usage.get("cache_read_input_tokens", 0))
+        output_tokens = _non_negative_int(usage.get("output_tokens"))
+        if (
+            base_input_tokens is None
+            or cache_creation_tokens is None
+            or cache_read_tokens is None
+            or output_tokens is None
+        ):
+            return ProviderUsage("unavailable", None, None, None)
+        # Anthropic reports these three input categories separately. The shared
+        # receipt's input_tokens field is normalized to total billed input while
+        # cached_input_tokens preserves the cache-read subset. Cache writes remain
+        # included in input_tokens until the versioned protocol gains a distinct field.
+        return ProviderUsage(
+            "provider-reported",
+            base_input_tokens + cache_creation_tokens + cache_read_tokens,
+            output_tokens,
+            cache_read_tokens,
+        )
     else:
         input_tokens = _non_negative_int(usage.get("prompt_tokens"))
         output_tokens = _non_negative_int(usage.get("completion_tokens"))

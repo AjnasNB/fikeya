@@ -134,16 +134,51 @@ def test_execution_requires_opt_in_and_honors_preflight_cancellation() -> None:
     assert transport.calls == []
 
 
-def test_native_provider_is_explicitly_not_claimed_as_implemented() -> None:
+def test_anthropic_messages_execution_uses_native_contract_and_usage() -> None:
+    transport = FakeTransport(
+        {
+            "content": [
+                {"type": "text", "text": "First sentence. "},
+                {"type": "thinking", "thinking": "not returned"},
+                {"type": "text", "text": "Second sentence."},
+            ],
+            "usage": {
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 12,
+                "input_tokens": 72,
+                "output_tokens": 18,
+            },
+        }
+    )
     profile = build_profile(
         name="anthropic",
         kind=ProviderKind.ANTHROPIC,
         model="claude-example",
     )
-    with pytest.raises(ProviderError, match="not shipped"):
-        ProviderExecutor(FakeTransport({})).execute(
-            profile,
-            "credential",
-            InferenceRequest("request"),
-            allow_network=True,
-        )
+
+    result = ProviderExecutor(transport).execute(
+        profile,
+        "credential",
+        InferenceRequest(
+            "Review the patch.",
+            system="Return only verified findings.",
+            max_output_tokens=512,
+        ),
+        allow_network=True,
+    )
+
+    call = transport.calls[0]
+    assert call["url"] == "https://api.anthropic.com/v1/messages"
+    assert call["headers"]["x-api-key"] == "credential"
+    assert call["headers"]["anthropic-version"] == "2023-06-01"
+    assert call["payload"] == {
+        "max_tokens": 512,
+        "messages": [{"content": "Review the patch.", "role": "user"}],
+        "model": "claude-example",
+        "system": "Return only verified findings.",
+    }
+    assert result.text == "First sentence. Second sentence."
+    assert result.usage.measurement == "provider-reported"
+    assert result.usage.input_tokens == 87
+    assert result.usage.output_tokens == 18
+    assert result.usage.cached_input_tokens == 12

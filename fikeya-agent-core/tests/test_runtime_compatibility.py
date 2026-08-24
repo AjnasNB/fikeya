@@ -121,7 +121,7 @@ async def test_runtime_errors_are_retryable_only_when_the_host_classifier_says_s
         allow_network=True,
         is_retryable_error=lambda error: False,
     )
-    with pytest.raises(RuntimeProviderError, match="not shipped"):
+    with pytest.raises(RuntimeProviderError, match="supported text output"):
         await passthrough.complete(request(Stage.PLAN), CancellationToken())
 
     mapped = RuntimeProviderAdapter(
