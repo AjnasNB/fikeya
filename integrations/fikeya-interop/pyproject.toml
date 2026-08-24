@@ -46,6 +46,14 @@ where = ["src"]
 [tool.setuptools.package-data]
 fikeya_interop = ["py.typed"]
 
+[tool.setuptools.data-files]
+"share/fikeya-interop/manifests" = [
+  "manifests/codex-app-server.json",
+  "manifests/generic-acp.example.json",
+  "manifests/generic-mcp.example.json",
+  "manifests/interop-manifest.schema.json",
+]
+
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 asyncio_mode = "auto"

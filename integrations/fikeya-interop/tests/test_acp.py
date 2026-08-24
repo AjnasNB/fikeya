@@ -138,13 +138,18 @@ async def test_acp_host_maps_permission_choices_and_root_bounds_files(tmp_path: 
             acp_schema.PermissionOption(option_id="no", name="Reject", kind="reject_once"),
         ],
     )
-    await host.write_text_file("session-1", "notes.txt", "bounded content")
-    read = await host.read_text_file("session-1", "notes.txt")
+    notes = workspace / "notes.txt"
+    await host.write_text_file("session-1", str(notes), "first line\nsecond line\nthird line\n")
+    read = await host.read_text_file("session-1", str(notes))
+    slice_read = await host.read_text_file("session-1", str(notes), line=2, limit=1)
 
     assert response.outcome.option_id == "yes"  # type: ignore[union-attr]
-    assert read.content == "bounded content"
+    assert read.content == "first line\nsecond line\nthird line\n"
+    assert slice_read.content == "second line\n"
     with pytest.raises(RequestError):
-        await host.read_text_file("session-1", "../outside.txt")
+        await host.read_text_file("session-1", str(workspace.parent / "outside.txt"))
+    with pytest.raises(RequestError, match="absolute"):
+        await host.read_text_file("session-1", "relative.txt")
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from pathlib import Path
 from typing import Any, Protocol
 
 from acp import PROTOCOL_VERSION, RequestError, spawn_agent_process
@@ -155,6 +156,12 @@ class FikeyaAcpHost:
         **kwargs: Any,
     ) -> ReadTextFileResponse:
         del session_id, kwargs
+        if not Path(path).is_absolute():
+            raise RequestError(-32602, "ACP file paths must be absolute")
+        if line is not None and line < 1:
+            raise RequestError(-32602, "ACP line numbers are one-based")
+        if limit is not None and limit < 0:
+            raise RequestError(-32602, "ACP line limits cannot be negative")
         try:
             target = self._paths.resolve(path, must_exist=True)
         except (OSError, PermissionDeniedError) as error:
@@ -167,13 +174,15 @@ class FikeyaAcpHost:
         text = payload.decode("utf-8")
         if line is not None or limit is not None:
             lines = text.splitlines(keepends=True)
-            start = max(0, line or 0)
-            stop = start + max(0, limit) if limit is not None else None
+            start = (line or 1) - 1
+            stop = start + limit if limit is not None else None
             text = "".join(lines[start:stop])
         return ReadTextFileResponse(content=text)
 
     async def write_text_file(self, session_id: str, path: str, content: str, **kwargs: Any) -> WriteTextFileResponse:
         del kwargs
+        if not Path(path).is_absolute():
+            raise RequestError(-32602, "ACP file paths must be absolute")
         payload = content.encode("utf-8")
         if len(payload) > self._limits.max_resource_bytes:
             raise RequestError(-32000, "file exceeds the configured write limit")

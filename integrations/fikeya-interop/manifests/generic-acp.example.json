@@ -1,0 +1,10 @@
+{
+  "$schema": "./interop-manifest.schema.json",
+  "version": 1,
+  "identifier": "example-acp-agent",
+  "protocol": "acp",
+  "command": "your-acp-agent",
+  "args": ["--acp"],
+  "workingDirectory": ".",
+  "environment": {}
+}

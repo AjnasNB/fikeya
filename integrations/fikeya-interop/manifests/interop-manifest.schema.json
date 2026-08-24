@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fikeya.dev/schemas/interop-manifest.v1.json",
+  "title": "Fikeya interoperability manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "identifier", "protocol", "command"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri-reference" },
+    "version": { "const": 1 },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "protocol": {
+      "enum": ["acp", "codex-app-server", "mcp"]
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "args": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "type": "string", "maxLength": 16384 },
+      "default": []
+    },
+    "workingDirectory": {
+      "type": "string",
+      "default": "."
+    },
+    "environment": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "pattern": "(^|_)([Aa][Pp][Ii]_?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Oo][Aa][Uu][Tt][Hh]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])($|_)"
+        }
+      },
+      "additionalProperties": { "type": "string" },
+      "default": {}
+    },
+    "toolAllowlist": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    }
+  }
+}

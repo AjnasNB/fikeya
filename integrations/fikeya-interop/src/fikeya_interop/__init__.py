@@ -1,6 +1,10 @@
 """Bounded interoperability ports for Fikeya."""
 
+from .acp import AcpAgentAdapter, FikeyaAcpHost
+from .codex import CodexAppServerAdapter, codex_process_spec
 from .errors import InteropError, LimitExceededError, PermissionDeniedError, ProtocolError
+from .manifest import InteropManifest, load_manifest
+from .mcp_client import McpToolAdapter
 from .models import (
     AgentCapabilities,
     ContentBlock,
@@ -18,12 +22,17 @@ from .policy import PathPolicy, ProcessPolicy, ToolPolicy
 from .receipts import MemoryReceiptSink, canonical_digest
 
 __all__ = [
+    "AcpAgentAdapter",
     "AgentCapabilities",
+    "CodexAppServerAdapter",
     "ContentBlock",
+    "FikeyaAcpHost",
     "InteropError",
+    "InteropManifest",
     "InteropReceipt",
     "LimitExceededError",
     "MemoryReceiptSink",
+    "McpToolAdapter",
     "NormalizedToolResult",
     "PathPolicy",
     "PermissionDecision",
@@ -38,4 +47,6 @@ __all__ = [
     "ToolDescriptor",
     "ToolPolicy",
     "canonical_digest",
+    "codex_process_spec",
+    "load_manifest",
 ]
