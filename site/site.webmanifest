@@ -1,0 +1,16 @@
+{
+	"name": "Fikeya",
+	"short_name": "Fikeya",
+	"description": "Local-first coding-agent workbench and CLI.",
+	"display": "standalone",
+	"background_color": "#090c0f",
+	"theme_color": "#090c0f",
+	"icons": [
+		{
+			"src": "favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		}
+	]
+}

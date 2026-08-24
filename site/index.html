@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="Fikeya is a local-first coding-agent workbench and CLI with secure provider profiles, approval-gated tools, durable sessions, and evidence-linked Qarinah project memory.">
+		<meta name="robots" content="index, follow, max-image-preview:large">
+		<meta name="theme-color" content="#090c0f">
+		<meta name="color-scheme" content="dark">
+		<meta property="og:type" content="website">
+		<meta property="og:site_name" content="Fikeya">
+		<meta property="og:title" content="Fikeya | Keep the work between coding-agent sessions">
+		<meta property="og:description" content="A local-first desktop and CLI foundation for durable sessions, secure provider setup, approval-gated tools, and cited project memory.">
+		<meta name="twitter:card" content="summary">
+		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
+		<title>Fikeya | Keep the work between coding-agent sessions</title>
+		<link rel="icon" href="favicon.svg" type="image/svg+xml">
+		<link rel="manifest" href="site.webmanifest">
+		<link rel="stylesheet" href="styles.css">
+		<script src="app.js" defer></script>
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+		<header class="site-header">
+			<div class="shell nav-shell">
+				<a class="brand" href="#top" aria-label="Fikeya home">
+					<span class="brand-mark" aria-hidden="true">F</span>
+					<span>Fikeya</span>
+				</a>
+				<nav aria-label="Primary navigation">
+					<ul class="nav-links">
+						<li><a href="#workspace">Workspace</a></li>
+						<li><a href="#memory">Memory</a></li>
+						<li><a href="#setup">Setup</a></li>
+						<li><a href="#architecture">Architecture</a></li>
+						<li><a href="#security">Security</a></li>
+					</ul>
+				</nav>
+				<a class="button button-small button-secondary nav-cta" href="#setup">Start Setup</a>
+			</div>
+		</header>
+
+		<main id="main">
+			<section class="hero shell" id="top">
+				<div class="hero-copy">
+					<p class="eyebrow">Public alpha / desktop and CLI</p>
+					<h1>Keep the work between coding-agent sessions.</h1>
+					<p class="hero-summary">Initialize a durable local workspace, configure providers without writing secrets into project files, and retrieve cited Qarinah context across Git worktrees.</p>
+					<p class="availability-note"><strong>Available now:</strong> local runtime setup, provider profiles, durable session events, content-free connection checks, and an approval-gated command broker.</p>
+					<div class="button-row">
+						<a class="button button-primary" href="#setup">Set Up Fikeya</a>
+						<a class="button button-secondary" href="#architecture">See the System</a>
+					</div>
+				</div>
+				<figure class="workbench-preview" aria-labelledby="hero-preview-caption">
+					<div class="window-bar">
+						<div class="window-title">Fikeya / checkout-api</div>
+						<div class="window-actions" aria-hidden="true"><span></span><span></span><span></span></div>
+					</div>
+					<div class="workbench-grid">
+						<div class="activity-rail" aria-hidden="true">
+							<span class="rail-item active">E</span>
+							<span class="rail-item">A</span>
+							<span class="rail-item">T</span>
+							<span class="rail-item">R</span>
+						</div>
+						<div class="file-tree" aria-hidden="true">
+							<strong>CHECKOUT-API</strong>
+							<span>src</span>
+							<span class="tree-child active-file">payment.ts</span>
+							<span class="tree-child">policy.ts</span>
+							<span>tests</span>
+							<span class="tree-child">payment.test.ts</span>
+						</div>
+						<div class="code-surface" aria-hidden="true">
+							<div class="code-tab">payment.ts</div>
+							<pre><code><span class="syntax-dim">21</span>  <span class="syntax-key">async</span> <span class="syntax-key">function</span> authorize(order) {
+<span class="syntax-dim">22</span>    <span class="syntax-key">const</span> policy = <span class="syntax-call">await</span> loadPolicy(order);
+<span class="syntax-dim">23</span>    <span class="syntax-key">return</span> policy.evaluate(order);
+<span class="syntax-dim">24</span>  }</code></pre>
+							<div class="inline-context"><strong>Retrieved 4 cited decisions</strong><span>Workspace scope: feature/payment-retry</span></div>
+						</div>
+						<div class="agent-pane" aria-hidden="true">
+							<div class="pane-heading">Agent Focus</div>
+							<p><strong>Plan</strong></p>
+							<ol>
+								<li>Inspect retry policy</li>
+								<li>Patch payment adapter</li>
+								<li>Run focused tests</li>
+							</ol>
+							<div class="approval-block"><strong>Approval required</strong><span>Run tests in isolated worktree</span></div>
+						</div>
+					</div>
+					<figcaption id="hero-preview-caption">Interface preview</figcaption>
+				</figure>
+			</section>
+
+			<section class="operation-strip" aria-label="Fikeya workflow">
+				<div class="shell operation-grid">
+					<div><strong>Initialize</strong><span>One durable identity per local workspace</span></div>
+					<div><strong>Configure</strong><span>Provider metadata plus operating-system vault secrets</span></div>
+					<div><strong>Authorize</strong><span>Exact, short-lived approval for bounded tool requests</span></div>
+					<div><strong>Remember</strong><span>Cited Qarinah context scoped to the active worktree</span></div>
+				</div>
+			</section>
+
+			<section class="section shell" id="workspace">
+				<div class="section-heading">
+					<h2>One workbench. Two ways to focus.</h2>
+					<p>The public alpha includes a Fikeya desktop panel with two saved layouts. The panels below are product illustrations, not captured run results.</p>
+				</div>
+				<div class="layout-switcher">
+					<div class="tab-list" role="tablist" aria-label="Workspace layout">
+						<button class="layout-tab" id="studio-tab" type="button" role="tab" aria-selected="true" aria-controls="studio-panel" tabindex="0" data-layout-tab="studio">Studio</button>
+						<button class="layout-tab" id="focus-tab" type="button" role="tab" aria-selected="false" aria-controls="focus-panel" tabindex="-1" data-layout-tab="focus">Agent Focus</button>
+					</div>
+					<div class="layout-stage">
+						<div id="studio-panel" class="layout-panel" role="tabpanel" aria-labelledby="studio-tab" data-layout-panel="studio">
+							<div class="layout-copy">
+								<h3>Studio layout</h3>
+								<p>Edit code, inspect the repository, run commands, and keep the agent beside the work.</p>
+								<ul class="compact-list">
+									<li>Full editor and repository tree</li>
+									<li>Docked terminal and test output</li>
+									<li>Runtime health and approval queue</li>
+								</ul>
+							</div>
+							<div class="mini-layout studio-layout" aria-label="Studio interface preview">
+								<div class="mini-sidebar"><span></span><span></span><span></span></div>
+								<div class="mini-editor"><span></span><span></span><span></span><span></span><span></span></div>
+								<div class="mini-agent"><strong>Plan</strong><span></span><span></span><span></span></div>
+								<div class="mini-terminal"><strong>Terminal</strong><span>3 tests passed</span></div>
+							</div>
+						</div>
+						<div id="focus-panel" class="layout-panel" role="tabpanel" aria-labelledby="focus-tab" data-layout-panel="focus" hidden>
+							<div class="layout-copy">
+								<h3>Agent Focus layout</h3>
+								<p>Inspect runtime status, provider setup, memory health, and approval requests from a focused panel.</p>
+								<ul class="compact-list">
+									<li>Workspace and provider diagnostics</li>
+									<li>Bounded approval request details</li>
+									<li>Session event and receipt summaries</li>
+								</ul>
+							</div>
+							<div class="mini-layout focus-layout" aria-label="Agent Focus interface preview">
+								<div class="focus-plan"><strong>Implement retry policy</strong><span>4 cited memories</span></div>
+								<div class="focus-events"><span>Read payment.ts</span><span>Edited 2 files</span><span>Requested test approval</span></div>
+								<div class="focus-side"><strong>Evidence</strong><span>decision: 3</span><span>tool: 5</span><span>test: 1</span></div>
+							</div>
+						</div>
+					</div>
+					<p class="preview-label">Interface preview</p>
+				</div>
+			</section>
+
+			<section class="section mode-section">
+				<div class="shell">
+					<div class="section-heading narrow">
+						<h2>Four surfaces around one local workspace.</h2>
+						<p>The editor and terminal come from the workbench. Fikeya adds runtime, memory, provider, and review surfaces beside them.</p>
+					</div>
+					<div class="mode-grid">
+						<article><span class="mode-key">E</span><h3>Editor Mode</h3><p>Write and review changes with repository context next to the file.</p></article>
+						<article><span class="mode-key">A</span><h3>Agent Mode</h3><p>Inspect session state, context health, and requests before a sensitive action runs.</p></article>
+						<article><span class="mode-key">T</span><h3>Terminal Mode</h3><p>Run commands directly while the Fikeya broker keeps automated execution bounded and dry-run by default.</p></article>
+						<article><span class="mode-key">R</span><h3>Review Mode</h3><p>Inspect session events, approvals, Qarinah citations, and typed usage metadata.</p></article>
+					</div>
+				</div>
+			</section>
+
+			<section class="section shell memory-section" id="memory">
+				<div class="memory-copy">
+					<p class="eyebrow">Qarinah continuity</p>
+					<h2>Project memory with evidence attached.</h2>
+					<p>Fikeya uses a local, root-bound sidecar to request task-specific Qarinah context. The returned pack retains source event identifiers and hashes so a person can inspect where each selected fact came from.</p>
+					<dl class="memory-facts">
+						<div><dt>Workspace aware</dt><dd>Separate ledgers for isolated Git worktrees</dd></div>
+						<div><dt>Conflict visible</dt><dd>Superseded decisions stay inspectable</dd></div>
+						<div><dt>Session portable</dt><dd>Resume from a compact cited context pack</dd></div>
+					</dl>
+				</div>
+				<figure class="graph-preview" aria-labelledby="graph-caption">
+					<div class="graph-toolbar"><strong>Context graph</strong><span>feature/payment-retry</span></div>
+					<div class="graph-canvas" aria-hidden="true">
+						<div class="edge edge-one"></div><div class="edge edge-two"></div><div class="edge edge-three"></div><div class="edge edge-four"></div>
+						<div class="graph-node node-center"><strong>Task</strong><span>Retry policy</span></div>
+						<div class="graph-node node-decision"><strong>Decision</strong><span>3 attempts</span></div>
+						<div class="graph-node node-file"><strong>File</strong><span>payment.ts</span></div>
+						<div class="graph-node node-test"><strong>Test</strong><span>passed</span></div>
+						<div class="graph-node node-tool"><strong>Tool</strong><span>terminal</span></div>
+					</div>
+					<figcaption id="graph-caption">Interface preview</figcaption>
+				</figure>
+			</section>
+
+			<section class="section shell benchmark-section" aria-labelledby="benchmark-title">
+				<div>
+					<h2 id="benchmark-title">A published context fixture, kept in scope.</h2>
+					<p>Qarinah's published six-fixture portable estimate reduced repeated-project context from 442,113 to 5,682 estimated tokens, a 98.71% reduction.</p>
+					<p class="qualifier">This is a character-based portable fixture estimate, not provider-billed usage, total cost, model quality, or a universal result. Provider-reported usage and local estimates remain separate fields in Fikeya receipts.</p>
+					<a class="text-link" href="https://qarinah.io/docs/benchmarks/" rel="noopener noreferrer">Read the fixtures, estimator, reproduction commands, and limits</a>
+				</div>
+				<div class="benchmark-numbers" aria-label="Published Qarinah context fixture results">
+					<div><span>Baseline estimate</span><strong>442,113</strong></div>
+					<div><span>Qarinah pack estimate</span><strong>5,682</strong></div>
+					<div><span>Fixture reduction</span><strong>98.71%</strong></div>
+				</div>
+			</section>
+
+			<section class="section setup-section" id="setup">
+				<div class="shell">
+					<div class="section-heading">
+						<h2>From clone to a verified local setup.</h2>
+						<p>These commands match the current public alpha. The desktop exposes the same runtime health and provider configuration beside the editor.</p>
+					</div>
+					<ol class="setup-flow">
+						<li class="setup-step">
+							<div class="step-copy"><span class="step-number">1</span><h3>Install the runtime</h3><p>Clone the public repository, create a Python environment, and install the checked-in alpha runtime.</p></div>
+							<figure class="setup-preview terminal-preview">
+								<div class="preview-top"><span>Terminal</span><span>PowerShell</span></div>
+								<pre><code>git clone https://github.com/AjnasNB/fikeya.git
+cd fikeya/fikeya-runtime
+python -m venv .venv
+.venv\Scripts\python -m pip install -e .</code></pre>
+								<figcaption>Interface preview</figcaption>
+							</figure>
+						</li>
+						<li class="setup-step">
+							<div class="step-copy"><span class="step-number">2</span><h3>Configure a provider profile</h3><p>Choose a connector and keep the credential in the operating-system keyring. Configuration does not send project content.</p></div>
+							<figure class="setup-preview settings-preview">
+								<div class="preview-top"><span>Settings / Providers</span><span>Local only</span></div>
+								<div class="form-preview">
+									<label>Provider<select disabled><option>Azure OpenAI</option></select></label>
+									<label>Endpoint<input value="https://your-resource.openai.azure.com" readonly></label>
+									<label>API credential<input type="password" value="local-credential-reference" readonly></label>
+									<div class="preview-button">Save to local vault</div>
+								</div>
+								<figcaption>Interface preview</figcaption>
+							</figure>
+						</li>
+						<li class="setup-step">
+							<div class="step-copy"><span class="step-number">3</span><h3>Initialize and diagnose</h3><p>Create the local workspace files, initialize SQLite, and verify Python, keyring, provider metadata, and the optional Qarinah CLI.</p></div>
+							<figure class="setup-preview command-preview">
+								<div class="preview-top"><span>Fikeya CLI</span><span>Project setup</span></div>
+								<pre><code>fikeya init .
+fikeya doctor .
+fikeya provider list --available</code></pre>
+								<div class="success-line"><strong>Verified</strong><span>Required local checks passed; optional integrations are reported separately</span></div>
+								<figcaption>Interface preview</figcaption>
+							</figure>
+						</li>
+						<li class="setup-step">
+							<div class="step-copy"><span class="step-number">4</span><h3>Opt in to a network probe</h3><p>Provider configuration is offline. A content-free connectivity request happens only with the explicit network flag.</p></div>
+							<figure class="setup-preview receipt-preview">
+								<div class="preview-top"><span>Provider probe</span><span>Explicit opt-in</span></div>
+								<dl>
+									<div><dt>Command</dt><dd>provider test work</dd></div>
+									<div><dt>Network</dt><dd>--allow-network</dd></div>
+									<div><dt>Response body</dt><dd>not persisted</dd></div>
+									<div><dt>Reported</dt><dd>status and latency</dd></div>
+								</dl>
+								<figcaption>Interface preview</figcaption>
+							</figure>
+						</li>
+					</ol>
+				</div>
+			</section>
+
+			<section class="section shell provider-section">
+				<div class="provider-heading">
+					<h2>Configure the endpoint without exposing the key.</h2>
+					<p>The alpha provider registry covers Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible endpoints. Metadata is inspectable; credential bytes stay in the operating-system keyring.</p>
+				</div>
+				<div class="provider-console" aria-label="Provider configuration interface preview">
+					<div class="provider-nav">
+						<strong>Configured</strong>
+						<button type="button" class="provider-item active" aria-pressed="true" data-model="Configured deployment" data-storage="Operating system vault" data-usage="Provider response" data-fallback="Off">Azure OpenAI<span>Example</span></button>
+						<button type="button" class="provider-item" aria-pressed="false" data-model="Configured model" data-storage="Operating system vault" data-usage="Provider response" data-fallback="Off">OpenAI compatible<span>Add</span></button>
+						<button type="button" class="provider-item" aria-pressed="false" data-model="Configured model" data-storage="Operating system vault" data-usage="Provider response" data-fallback="Off">Anthropic<span>Add</span></button>
+						<button type="button" class="provider-item" aria-pressed="false" data-model="Configured model" data-storage="Operating system vault" data-usage="Provider response" data-fallback="Off">OpenRouter / NVIDIA NIM<span>Add</span></button>
+						<button type="button" class="provider-item" aria-pressed="false" data-model="Local model" data-storage="No credential required" data-usage="Local runtime" data-fallback="Off">Ollama / local<span>Add</span></button>
+					</div>
+					<div class="provider-detail">
+						<div><span>Default model</span><strong id="provider-model">Configured deployment</strong></div>
+						<div><span>Credential storage</span><strong id="provider-storage">Operating system vault</strong></div>
+						<div><span>Usage source</span><strong id="provider-usage">Provider response</strong></div>
+						<div><span>Fallback</span><strong id="provider-fallback">Off</strong></div>
+					</div>
+				</div>
+				<p class="preview-label">Interface preview</p>
+			</section>
+
+			<section class="section architecture-section" id="architecture">
+				<div class="shell">
+					<div class="section-heading narrow">
+						<h2>A transparent path with explicit release status.</h2>
+						<p>The foundation is usable today. Agent routing and permissioned web connectors remain active integration work and are not silently enabled.</p>
+					</div>
+					<div class="architecture-flow">
+						<article><span>Alpha now</span><h3>Desktop and CLI</h3><p>Workbench panel, saved layouts, workspace setup, diagnostics, and provider profiles.</p></article>
+						<article><span>Alpha now</span><h3>Local runtime</h3><p>Durable SQLite events, resumable and forkable session state, typed receipts, and safe provider metadata.</p></article>
+						<article><span>Alpha now</span><h3>Execution broker</h3><p>Argument vectors, workspace-bound paths, dry-run default, allowlists, and exact one-use approvals.</p></article>
+						<article><span>Local integration</span><h3>Qarinah memory</h3><p>Root-bound sidecar calls for cited packs, decisions, conflicts, hashes, and worktree continuity.</p></article>
+						<article><span>Integration track</span><h3>ACP, MCP, browser, crawler</h3><p>Typed connector boundaries for permissioned tools. Browser and crawler access is not bundled or enabled in this alpha.</p></article>
+					</div>
+				</div>
+			</section>
+
+			<section class="section shell cli-section">
+				<div class="cli-copy">
+					<h2>The same control from a terminal.</h2>
+					<p>Initialize a workspace, run diagnostics, list provider types, configure or remove a profile, and explicitly test connectivity without opening the desktop.</p>
+					<div class="command-index" aria-label="CLI capabilities">
+						<span>init</span><span>doctor</span><span>provider list</span><span>provider configure</span><span>provider remove</span><span>provider test</span>
+					</div>
+				</div>
+				<div class="code-window">
+					<div class="preview-top"><span>Terminal</span><span>fikeya</span></div>
+					<pre><code><span class="prompt">$</span> fikeya init .
+Initialized Fikeya workspace.
+
+<span class="prompt">$</span> fikeya doctor .
+[ok] python
+[ok] workspace
+[ok] sqlite
+[ok] provider-metadata
+
+<span class="prompt">$</span> fikeya provider test work --allow-network
+Reports profile, HTTP status, and latency only.</code></pre>
+				</div>
+			</section>
+
+			<section class="section security-section" id="security">
+				<div class="shell security-grid">
+					<div class="security-lead">
+						<p class="eyebrow">Privacy and control</p>
+						<h2>Local secrets. Scoped tools. Inspectable actions.</h2>
+						<p>The public workflow does not require a tracking account. You choose the provider, workspace, and actions the agent can use.</p>
+					</div>
+					<div class="security-list">
+						<article><h3>Credential isolation</h3><p>API keys are stored by the operating system credential service. Project files contain references, never raw secrets.</p></article>
+						<article><h3>Exact command boundaries</h3><p>The broker accepts an argument vector, stays dry-run by default, enforces an executable allowlist, and refuses working directories outside the initialized workspace.</p></article>
+						<article><h3>One-use approval</h3><p>A short-lived token is bound to the canonical executable, arguments, directory, and environment keys. A changed request invalidates it.</p></article>
+						<article><h3>Typed usage fields</h3><p>Provider-reported usage, tokenizer measurements, and local estimates use distinct receipt fields instead of being presented as the same number.</p></article>
+						<article><h3>No site telemetry</h3><p>This site makes no analytics or advertising requests. Product telemetry is not enabled by this website.</p></article>
+						<article><h3>Connector restraint</h3><p>Browser and crawler integrations will use the same permission boundary. They are not bundled or enabled in the current public alpha.</p></article>
+					</div>
+				</div>
+			</section>
+
+			<section class="final-cta shell">
+				<div>
+					<h2>Keep the work. Change the session.</h2>
+					<p>Start with one repository, one local provider profile, and a green diagnostics report.</p>
+				</div>
+				<div class="button-row">
+					<a class="button button-primary" href="#setup">Open Setup Guide</a>
+					<a class="button button-secondary" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Inspect the Source</a>
+				</div>
+			</section>
+		</main>
+
+		<footer class="site-footer">
+			<div class="shell footer-grid">
+				<div><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">F</span><span>Fikeya</span></a><p>A local-first coding-agent workbench in public alpha.</p></div>
+				<nav aria-label="Footer navigation"><a href="#workspace">Workspace</a><a href="#setup">Setup</a><a href="#security">Security</a><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a></nav>
+				<p class="footer-note">Built in public. Credentials stay local.</p>
+			</div>
+		</footer>
+	</body>
+</html>
