@@ -26,6 +26,10 @@ PINNED_DISTRIBUTIONS = {
 }
 LEGACY_PYTHON_DISTRIBUTIONS = {"backports.tarfile": "1.2.0"}
 WINDOWS_DISTRIBUTIONS = {"pywin32-ctypes": "0.2.3"}
+VENDORED_PYTHON_LICENSE_VERSION = (3, 12)
+VENDORED_PYTHON_LICENSE_SHA256 = (
+    "6c4cb3ac7183d140222e754bbb81ae02c67a1cbe30352077358bca4b6c0f732a"
+)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -57,6 +61,26 @@ def distribution_license(distribution_name: str) -> tuple[importlib.metadata.Dis
     if len(candidates) != 1:
         raise RuntimeError(f"Expected one license file for {distribution_name}, found {len(candidates)}.")
     return distribution, Path(distribution.locate_file(candidates[0])).resolve()
+
+
+def resolve_python_license(
+    extension_root: Path,
+    prefix: Path,
+    base_prefix: Path,
+    version: tuple[int, int],
+) -> Path:
+    candidates = [prefix / "LICENSE.txt", base_prefix / "LICENSE.txt"]
+    vendored_license = extension_root / "third-party" / "python" / "LICENSE.txt"
+    if version == VENDORED_PYTHON_LICENSE_VERSION:
+        candidates.append(vendored_license)
+    license_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if license_path is None:
+        raise RuntimeError("The embedded Python distribution license was not found.")
+    if license_path == vendored_license:
+        license_sha256 = hashlib.sha256(license_path.read_bytes()).hexdigest()
+        if license_sha256 != VENDORED_PYTHON_LICENSE_SHA256:
+            raise RuntimeError("The vendored Python license does not match its reviewed digest.")
+    return license_path
 
 
 def tree_hash(source_root: Path) -> str:
@@ -161,16 +185,12 @@ def main() -> int:
             "metadataName": distribution.metadata.get("Name", name),
         })
 
-    python_license = next((
-        candidate
-        for candidate in (
-            Path(sys.prefix) / "LICENSE.txt",
-            Path(sys.base_prefix) / "LICENSE.txt",
-        )
-        if candidate.is_file()
-    ), None)
-    if python_license is None:
-        raise RuntimeError("The embedded Python distribution license was not found.")
+    python_license = resolve_python_license(
+        extension_root,
+        Path(sys.prefix),
+        Path(sys.base_prefix),
+        sys.version_info[:2],
+    )
     python_license_destination = license_root / "python" / "LICENSE.txt"
     python_license_destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(python_license, python_license_destination)
