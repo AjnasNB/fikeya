@@ -47,25 +47,23 @@ function contributingTextEndpoints(range: Range): { first: Text; last: Text } | 
 		return undefined;
 	}
 
-	// Prune unrendered subtrees: the transcript contains `<style>` elements and
-	// display:none metadata (a response's file-change summary) that the range
-	// spans but the user cannot see or select. Their text would otherwise look
-	// like an endpoint outside the response's markdown and reject the selection.
-	// Rejecting at the element level also skips their subtrees wholesale.
+	// Prune unrendered subtrees: the transcript contains `<style>` elements,
+	// display:none metadata (a response's file-change summary), and
+	// content-visibility:hidden sections that the range spans but the user cannot
+	// see or select. Their text would otherwise look like an endpoint outside the
+	// response's markdown and reject the selection. Use computed style instead of
+	// checkVisibility(): headless WebKit can report connected visible blocks as
+	// lacking a renderer, which would prune an entire selectable markdown subtree.
 	const walker = doc.createTreeWalker(scope, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
 		acceptNode: node => {
 			if (node.nodeType !== Node.ELEMENT_NODE) {
 				return NodeFilter.FILTER_ACCEPT;
 			}
 			const element = node as Element;
-			if (element.checkVisibility()) {
-				return NodeFilter.FILTER_SKIP;
-			}
-			// A `display: contents` element has no box of its own — so it reads
-			// as invisible — but its descendants do render and are selectable.
-			// Only read the computed style on this rare branch.
-			const display = dom.getWindow(element).getComputedStyle(element).display;
-			return display === 'contents' ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_REJECT;
+			const style = dom.getWindow(element).getComputedStyle(element);
+			return style.display === 'none' || style.contentVisibility === 'hidden'
+				? NodeFilter.FILTER_REJECT
+				: NodeFilter.FILTER_SKIP;
 		},
 	});
 	let first: Text | undefined;
