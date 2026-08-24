@@ -3,7 +3,8 @@
 Fikeya Runtime is the local-first execution and protocol foundation for Fikeya.
 It provides a typed session event stream, resumable and forkable sessions,
 provider configuration backed by the operating system credential store,
-content-free usage and context receipts, and an approval-gated tool broker.
+bounded OpenAI-compatible model execution, exact provider-usage receipts,
+content-free context receipts, and an approval-gated tool broker.
 
 This is an alpha foundation. It deliberately does not run a shell string,
 silently send project content to a model, or persist API keys in JSON or SQLite.
@@ -12,7 +13,7 @@ silently send project content to a model, or persist API keys in JSON or SQLite.
 
 ```console
 python -m venv .venv
-.venv\Scripts\python -m pip install -e ".[test]"
+.venv\Scripts\python -m pip install -e ".[azure,test]"
 .venv\Scripts\python -m pytest
 ```
 
@@ -32,15 +33,31 @@ The state file and its journal files are ignored by the nested
 
 ## Configure a provider safely
 
-Provider secrets are accepted through a hidden prompt by default. For CI or a
-local script, pipe the value through standard input. Never place a secret in a
-command argument.
+Provider secrets are accepted through a hidden prompt by default. For a local
+script, pipe the value through standard input. Never place a secret in a
+command argument, JSON file, workspace database, or source-controlled file.
+
+Azure OpenAI uses Entra ID by default. Install the `azure` extra, sign in with
+an Azure developer credential or supply a workload identity, and configure the
+resource's v1 base URL. No Azure access token is persisted by Fikeya.
 
 ```console
 fikeya provider configure work \
   --kind azure-openai \
-  --base-url https://example.openai.azure.com \
+  --base-url https://example.openai.azure.com/openai/v1 \
   --model my-deployment
+```
+
+An Azure API key remains an explicit alternative. It is written directly to
+the OS keyring:
+
+```console
+printf '%s' "$AZURE_MODEL_KEY" | fikeya provider configure azure-key \
+  --kind azure-openai \
+  --credential-type api-key \
+  --base-url https://example.openai.azure.com/openai/v1 \
+  --model my-deployment \
+  --secret-stdin
 ```
 
 ```console
@@ -64,6 +81,45 @@ fikeya provider test work --allow-network
 
 The command reports status and latency without printing a response body or
 credential.
+
+## Run one bounded agent turn
+
+Fikeya's first execution slice supports the Responses API and OpenAI-compatible
+chat completions. The prompt enters through standard input so it is not exposed
+in the process list. Network use always requires an explicit opt-in.
+
+```console
+printf '%s' "Explain the failing test." | fikeya agent run . \
+  --provider work \
+  --prompt-stdin \
+  --allow-network
+```
+
+Use `--json` for a typed UI or automation result. Pressing Ctrl+C requests
+cooperative cancellation, and active sessions can also be cancelled directly:
+
+```console
+fikeya agent cancel ses_example --workspace .
+```
+
+The live output is returned to the caller but is not written to SQLite. Fikeya
+stores request and response hashes, byte counts, latency, status, and exact
+provider-reported input, output, and cache tokens. If a provider omits usage,
+the receipt says `unavailable`; Fikeya does not invent an estimate.
+
+```console
+fikeya agent receipts ses_example --workspace . --json
+```
+
+Current execution support is deliberately scoped:
+
+- Azure OpenAI and OpenAI default to the Responses API.
+- OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible profiles default
+  to chat completions. Compatible profiles may opt into Responses explicitly.
+- Anthropic profiles can be stored and probed, but native Anthropic execution is
+  not claimed by this runtime slice.
+- Cancellation is cooperative at request and response-stream boundaries. The
+  configured timeout remains the hard bound while a socket operation is active.
 
 ## Tool safety model
 
