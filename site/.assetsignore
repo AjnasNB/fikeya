@@ -5,3 +5,4 @@ package-lock.json
 package.json
 validate.mjs
 wrangler.jsonc
+wrangler.worker.jsonc

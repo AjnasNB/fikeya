@@ -3,8 +3,10 @@
 	"private": true,
 	"version": "0.0.0",
 	"scripts": {
+		"build": "node build.mjs",
 		"test": "node validate.mjs",
-		"deploy": "wrangler pages deploy . --project-name fikeya-site"
+		"deploy": "npm run build && wrangler pages deploy dist --project-name fikeya-site",
+		"deploy:worker": "npm run build && wrangler deploy --config wrangler.worker.jsonc"
 	},
 	"devDependencies": {
 		"wrangler": "^4.83.0"
