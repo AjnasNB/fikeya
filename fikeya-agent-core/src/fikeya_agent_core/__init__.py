@@ -5,6 +5,7 @@
 
 from .cancellation import CancellationToken
 from .checkpoints import CheckpointStore, InMemoryCheckpointStore, SqliteCheckpointStore
+from .engine import AgentOrchestrator
 from .errors import (
     AgentCoreError,
     CancellationError,
@@ -48,6 +49,7 @@ __all__ = [
     "AgentCoreError",
     "AgentEvent",
     "AgentLimits",
+    "AgentOrchestrator",
     "ApprovalDecision",
     "ApprovalRequest",
     "CancellationError",
