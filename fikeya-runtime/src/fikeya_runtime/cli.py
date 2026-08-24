@@ -36,6 +36,12 @@ from .providers import (
 )
 from .qarinah import QarinahAdapter
 from .state import StateStore
+from .tool_presets import (
+    PresetCatalog,
+    ToolEnablementStore,
+    ToolPreset,
+    ToolPresetLoader,
+)
 from .workspace import Workspace, initialize_workspace, runtime_home
 
 
@@ -153,6 +159,37 @@ def _parser() -> argparse.ArgumentParser:
     agent_receipts.add_argument("session_id")
     agent_receipts.add_argument("--workspace", default=".")
     agent_receipts.add_argument("--json", action="store_true")
+
+    tool = subcommands.add_parser(
+        "tool", help="Inspect or explicitly enable reviewed external tools."
+    )
+    tool_commands = tool.add_subparsers(dest="tool_command", required=True)
+
+    tool_list = tool_commands.add_parser("list", help="List reviewed tool presets.")
+    tool_list.add_argument("--workspace")
+    tool_list.add_argument("--json", action="store_true")
+
+    tool_enable = tool_commands.add_parser(
+        "enable", help="Enable one exact preset digest in an initialized workspace."
+    )
+    tool_enable.add_argument("preset_id")
+    tool_enable.add_argument("--workspace", required=True)
+    tool_enable.add_argument("--confirm-workspace", action="store_true")
+    tool_enable.add_argument("--json", action="store_true")
+
+    tool_disable = tool_commands.add_parser(
+        "disable", help="Disable one preset in an initialized workspace."
+    )
+    tool_disable.add_argument("preset_id")
+    tool_disable.add_argument("--workspace", required=True)
+    tool_disable.add_argument("--json", action="store_true")
+
+    tool_status = tool_commands.add_parser(
+        "status", help="Show workspace enablement and executable diagnostics."
+    )
+    tool_status.add_argument("preset_id", nargs="?")
+    tool_status.add_argument("--workspace", required=True)
+    tool_status.add_argument("--json", action="store_true")
     return parser
 
 
@@ -169,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_provider(args)
         if args.command == "agent":
             return _run_agent(args)
+        if args.command == "tool":
+            return _run_tool(args)
         raise AssertionError("argparse accepted an unknown command")
     except KeyboardInterrupt:
         _emit(
@@ -463,6 +502,96 @@ def _run_agent(args: argparse.Namespace) -> int:
         )
         return 0
     raise AssertionError("argparse accepted an unknown agent command")
+
+
+def _run_tool(args: argparse.Namespace) -> int:
+    catalog = PresetCatalog()
+    loader = ToolPresetLoader(catalog)
+    if args.tool_command == "list":
+        enablements = None
+        if args.workspace is not None:
+            enablements = ToolEnablementStore(Workspace.load(args.workspace))
+        tools = [
+            _tool_entry(preset, loader, enablements)
+            for preset in catalog.list()
+        ]
+        _emit({"ok": True, "tools": tools}, as_json=args.json)
+        return 0
+    workspace = Workspace.load(args.workspace)
+    enablements = ToolEnablementStore(workspace)
+    if args.tool_command == "enable":
+        preset = catalog.get(args.preset_id)
+        status = enablements.enable(
+            preset,
+            confirmed=args.confirm_workspace,
+        )
+        _emit(
+            {
+                "enabled": status.enabled,
+                "message": f"Enabled {preset.display_name} for this workspace.",
+                "ok": True,
+                "tool": _tool_entry(preset, loader, enablements),
+                "workspaceId": workspace.config.workspace_id,
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.tool_command == "disable":
+        preset = catalog.get(args.preset_id)
+        removed = enablements.disable(preset.preset_id)
+        _emit(
+            {
+                "disabled": True,
+                "message": f"Disabled {preset.display_name} for this workspace.",
+                "ok": True,
+                "previouslyEnabled": removed,
+                "tool": _tool_entry(preset, loader, enablements),
+                "workspaceId": workspace.config.workspace_id,
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.tool_command == "status":
+        presets = (
+            (catalog.get(args.preset_id),)
+            if args.preset_id is not None
+            else catalog.list()
+        )
+        _emit(
+            {
+                "ok": True,
+                "tools": [
+                    _tool_entry(preset, loader, enablements)
+                    for preset in presets
+                ],
+                "workspaceId": workspace.config.workspace_id,
+            },
+            as_json=args.json,
+        )
+        return 0
+    raise AssertionError("argparse accepted an unknown tool command")
+
+
+def _tool_entry(
+    preset: ToolPreset,
+    loader: ToolPresetLoader,
+    enablements: ToolEnablementStore | None,
+) -> dict[str, object]:
+    status = enablements.status(preset) if enablements is not None else None
+    diagnostic = loader.diagnostic(preset)
+    value = preset.public_json()
+    value.update(
+        {
+            "enabled": status.enabled if status is not None else False,
+            "enabledAt": status.enabled_at if status is not None else None,
+            "executableFound": diagnostic.executable_found,
+            "provenanceWarning": diagnostic.warning,
+            "requiresConfirmation": (
+                status.requires_confirmation if status is not None else False
+            ),
+        }
+    )
+    return value
 
 
 @contextmanager
