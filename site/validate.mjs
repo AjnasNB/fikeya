@@ -50,7 +50,7 @@ assert(!html.match(/\sstyle\s*=/i), 'Inline style attribute found');
 assert(!html.match(/\bsrc=["']https?:\/\//i), 'Remote asset found');
 assert(html.includes('href="#main"'), 'Missing skip link');
 assert(html.includes('id="main"'), 'Missing main target');
-assert(html.includes('<h1>Keep the work between coding-agent sessions.</h1>'), 'Hero text changed unexpectedly');
+assert(html.includes('<h1>Plan, code, run, review, and remember why.</h1>'), 'Hero text changed unexpectedly');
 assert(html.includes('Public alpha / desktop and CLI'), 'Public alpha status is missing');
 assert((html.match(/Interface preview/g) || []).length >= 6, 'Interface previews are not clearly labeled');
 assert(html.includes('published six-fixture portable estimate'), 'Benchmark scope qualifier is missing');
