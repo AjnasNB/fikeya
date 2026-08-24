@@ -8,6 +8,8 @@ import { IEntitlementsData } from '../../../../../base/common/defaultAccount.js'
 import { mock } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { ChatAIDisabledSettingId } from '../../../../../platform/chat/common/chatSettings.js';
+import { IConfigurationChangeEvent } from '../../../../../platform/configuration/common/configuration.js';
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { MockContextKeyService } from '../../../../../platform/keybinding/test/common/mockKeybindingService.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
@@ -557,18 +559,45 @@ suite('getQuotaReset', () => {
 suite('ChatEntitlementService', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function createService(): ChatEntitlementService {
+	function createService(configurationService = new TestConfigurationService()): ChatEntitlementService {
 		return store.add(new ChatEntitlementService(
 			store.add(new TestInstantiationService()),
 			new class extends mock<IProductService>() { },
 			new class extends mock<IWorkbenchEnvironmentService>() { },
 			store.add(new MockContextKeyService()),
-			new TestConfigurationService(),
+			configurationService,
 			NullTelemetryService,
 			new NullLogService(),
 			store.add(new TestStorageService()),
 		));
 	}
+
+	test('tracks hidden state without a default chat provider', async () => {
+		const configurationService = new TestConfigurationService();
+		const service = createService(configurationService);
+		const fireDisabledSettingChange = () => configurationService.onDidChangeConfigurationEmitter.fire(new class extends mock<IConfigurationChangeEvent>() {
+			override affectsConfiguration(configuration: string): boolean {
+				return configuration === ChatAIDisabledSettingId;
+			}
+		});
+
+		await configurationService.setUserConfiguration(ChatAIDisabledSettingId, true);
+		fireDisabledSettingChange();
+		const configurationHidden = service.sentiment.hidden;
+
+		service.setForceHidden(true);
+		await configurationService.setUserConfiguration(ChatAIDisabledSettingId, false);
+		fireDisabledSettingChange();
+		const policyHidden = service.sentiment.hidden;
+
+		service.setForceHidden(false);
+
+		assert.deepStrictEqual({ configurationHidden, policyHidden, visible: service.sentiment.hidden }, {
+			configurationHidden: true,
+			policyHidden: true,
+			visible: false,
+		});
+	});
 
 	test('signals changed usage when only consumed credits move on an unlimited plan', () => {
 		const service = createService();

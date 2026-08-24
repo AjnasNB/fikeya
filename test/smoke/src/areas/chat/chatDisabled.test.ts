@@ -21,24 +21,14 @@ export function setup(logger: Logger) {
 			await app.code.waitForElements('.noauxiliarybar', true, elements => elements.length === 1);
 
 			// assert that AI related commands are not present
-			let expectedFound = false;
 			const unexpectedFound: Set<string> = new Set();
 			for (const term of ['chat', 'agent', 'copilot', 'mcp']) {
 				const commands = await app.workbench.quickaccess.getVisibleCommandNames(term);
 				for (const command of commands) {
-					if (command === 'Chat: Use AI Features with Copilot for free...') {
-						expectedFound = true;
-						continue;
-					}
-
 					if (command.includes('Chat') || command.includes('Agent') || command.includes('Copilot') || command.includes('MCP')) {
 						unexpectedFound.add(command);
 					}
 				}
-			}
-
-			if (!expectedFound) {
-				throw new Error(`Expected AI related command not found`);
 			}
 
 			if (unexpectedFound.size > 0) {

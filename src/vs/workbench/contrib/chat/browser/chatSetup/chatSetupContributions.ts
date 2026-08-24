@@ -785,39 +785,43 @@ export class ChatTeardownContribution extends Disposable implements IWorkbenchCo
 		super();
 
 		const context = chatEntitlementService.context?.value;
+		this.registerConfigurationListener(Boolean(context));
 		if (!context) {
-			return; // disabled
+			return; // no provider-specific entitlement context to manage
 		}
 
-		this.registerListeners();
+		this.registerExtensionListener();
 		this.registerActions();
 
-		this.handleChatDisabled(false);
+		this.handleChatDisabled(false, true);
 	}
 
-	private handleChatDisabled(fromEvent: boolean): void {
+	private handleChatDisabled(fromEvent: boolean, manageDefaultChatExtension: boolean): void {
 		const chatDisabled = this.configurationService.inspect(ChatAIDisabledSettingId);
 		if (chatDisabled.value === true) {
-			this.maybeEnableOrDisableExtension(typeof chatDisabled.workspaceValue === 'boolean' ? EnablementState.DisabledWorkspace : EnablementState.DisabledGlobally);
+			if (manageDefaultChatExtension) {
+				this.maybeEnableOrDisableExtension(typeof chatDisabled.workspaceValue === 'boolean' ? EnablementState.DisabledWorkspace : EnablementState.DisabledGlobally);
+			}
 			if (fromEvent) {
 				this.maybeHideAuxiliaryBar();
 			}
-		} else if (chatDisabled.value === false && fromEvent /* do not enable extensions unless its an explicit settings change */) {
+		} else if (chatDisabled.value === false && fromEvent && manageDefaultChatExtension /* do not enable extensions unless its an explicit settings change */) {
 			this.maybeEnableOrDisableExtension(typeof chatDisabled.workspaceValue === 'boolean' ? EnablementState.EnabledWorkspace : EnablementState.EnabledGlobally);
 		}
 	}
 
-	private async registerListeners(): Promise<void> {
-
+	private registerConfigurationListener(manageDefaultChatExtension: boolean): void {
 		// Configuration changes
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (!e.affectsConfiguration(ChatAIDisabledSettingId)) {
 				return;
 			}
 
-			this.handleChatDisabled(true);
+			this.handleChatDisabled(true, manageDefaultChatExtension);
 		}));
+	}
 
+	private async registerExtensionListener(): Promise<void> {
 		// Extension installation
 		await this.extensionsWorkbenchService.queryLocal();
 		this._register(this.extensionsWorkbenchService.onChange(e => {
