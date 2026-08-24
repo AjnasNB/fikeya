@@ -559,11 +559,14 @@ suite('getQuotaReset', () => {
 suite('ChatEntitlementService', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function createService(configurationService = new TestConfigurationService()): ChatEntitlementService {
+	function createService(
+		configurationService = new TestConfigurationService(),
+		environmentService: IWorkbenchEnvironmentService = new class extends mock<IWorkbenchEnvironmentService>() { },
+	): ChatEntitlementService {
 		return store.add(new ChatEntitlementService(
 			store.add(new TestInstantiationService()),
 			new class extends mock<IProductService>() { },
-			new class extends mock<IWorkbenchEnvironmentService>() { },
+			environmentService,
 			store.add(new MockContextKeyService()),
 			configurationService,
 			NullTelemetryService,
@@ -574,7 +577,10 @@ suite('ChatEntitlementService', () => {
 
 	test('tracks hidden state without a default chat provider', async () => {
 		const configurationService = new TestConfigurationService();
-		const service = createService(configurationService);
+		const environmentService = new class extends mock<IWorkbenchEnvironmentService>() {
+			override readonly remoteAuthority = 'test-remote';
+		};
+		const service = createService(configurationService, environmentService);
 		const fireDisabledSettingChange = () => configurationService.onDidChangeConfigurationEmitter.fire(new class extends mock<IConfigurationChangeEvent>() {
 			override affectsConfiguration(configuration: string): boolean {
 				return configuration === ChatAIDisabledSettingId;
