@@ -1,0 +1,51 @@
+name: Fikeya Desktop VSIX
+
+on:
+  pull_request:
+    paths:
+      - 'extensions/fikeya-desktop/**'
+      - 'fikeya-runtime/LICENSE'
+      - '.github/workflows/fikeya-desktop-vsix.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'extensions/fikeya-desktop/**'
+      - 'fikeya-runtime/LICENSE'
+      - '.github/workflows/fikeya-desktop-vsix.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Test and inspect unsigned VSIX
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: extensions/fikeya-desktop
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: extensions/fikeya-desktop/package-lock.json
+
+      - name: Install pinned dependencies
+        run: npm ci
+
+      - name: Build and inspect VSIX
+        run: npm run package:vsix
+
+      - name: Upload unsigned VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: fikeya-desktop-unsigned-vsix
+          path: extensions/fikeya-desktop/artifacts/fikeya-desktop-0.1.0.vsix
+          if-no-files-found: error
+          retention-days: 7

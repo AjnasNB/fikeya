@@ -45,3 +45,18 @@ The Agent surface reads configured profiles from `fikeya provider list --json` a
 The Studio layout also reads a compact, bounded graph from the pinned Qarinah package through a local JSON-RPC adapter. Search, type filters, node dragging, canvas pan and zoom are local. Node evidence hashes, graph manifest, and ledger head are displayed when present. If Qarinah is missing, uninitialized, invalid, too large, or times out, the graph says it is unavailable; it never substitutes sample data.
 
 The current alpha still uses VS Code's existing editor, terminal, and source-control views for Editor, Terminal, and Review modes. The approvals queue is an explicit empty-state preview because the extension does not yet subscribe to live approval events. Provider output is delivered after a completed turn; the UI does not simulate token streaming.
+
+## Standalone VSIX
+
+From this directory, build and inspect the extension with:
+
+```text
+npm ci
+npm run package:vsix
+```
+
+The reproducible build writes `artifacts/fikeya-desktop-0.1.0.vsix`. It compiles and runs the focused test suite, bundles only the reachable Qarinah 0.4.0 dashboard runtime, invokes the official pinned `@vscode/vsce` packager, and then reopens the archive to verify its allowlisted contents and hashes. A fixed `SOURCE_DATE_EPOCH` is used by default so identical inputs produce the same VSIX bytes; release automation may supply another valid epoch explicitly.
+
+The package includes the extension's full AGPL-3.0-or-later license, Qarinah's Apache-2.0 license and notice, and the MIT notice for the bundled ignore parser. It excludes TypeScript sources, tests, source maps, `node_modules`, development caches, local `.qarinah`/`.codex` state, SQLite files, event ledgers, and credential-shaped material. The Qarinah bundle carries a content hash and npm-lock integrity receipt.
+
+This artifact is the Fikeya Desktop VS Code extension. It is not a branded Fikeya desktop executable. Local and CI VSIX files are unsigned until the publisher completes marketplace identity, signing, and release-channel setup.
