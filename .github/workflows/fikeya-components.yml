@@ -1,0 +1,129 @@
+name: Fikeya components
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/fikeya-components.yml'
+      - 'extensions/fikeya-desktop/**'
+      - 'fikeya-runtime/**'
+      - 'integrations/qarinah-sidecar/**'
+      - 'packages/fikeya-protocol/**'
+      - 'site/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/fikeya-components.yml'
+      - 'extensions/fikeya-desktop/**'
+      - 'fikeya-runtime/**'
+      - 'integrations/qarinah-sidecar/**'
+      - 'packages/fikeya-protocol/**'
+      - 'site/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fikeya-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol:
+    name: Protocol / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: packages/fikeya-protocol
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: packages/fikeya-protocol/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+
+  memory-sidecar:
+    name: Qarinah sidecar / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: integrations/qarinah-sidecar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: integrations/qarinah-sidecar/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+
+  runtime:
+    name: Runtime / ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: '3.10'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: macos-latest
+            python: '3.13'
+    defaults:
+      run:
+        working-directory: fikeya-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: fikeya-runtime/pyproject.toml
+      - run: python -m pip install --disable-pip-version-check --upgrade pip
+      - run: python -m pip install -e ".[test,azure]"
+      - run: python -m pytest
+
+  desktop-extension:
+    name: Desktop extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/fikeya-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: extensions/fikeya-desktop/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+
+  public-site:
+    name: Public site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
