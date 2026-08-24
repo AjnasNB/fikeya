@@ -47,14 +47,23 @@ Fikeya is under active foundation development. The current milestone covers the 
 
 ## Development
 
-The editor shell follows the upstream Code OSS build process. Fikeya-specific work lives in the built-in desktop extension, protocol package, Python runtime, integrations, tests, and public site.
+Fikeya's developer-alpha bootstrap validates the checkout, creates a per-checkout Python environment in the current user's cache, installs the runtime with Azure identity support, and verifies the locked protocol and Qarinah sidecar components. It never requests provider credentials.
+
+```powershell
+pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1 --check-only
+pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1
+```
+
+On macOS or Linux, run the equivalent checked-in script with `sh scripts/fikeya/bootstrap.sh`. See the [bootstrap contract](docs/fikeya/BOOTSTRAP.md) for prerequisites, cache behavior, security boundaries, and current reproducibility limits.
+
+The editor shell follows the upstream Code OSS build process. Fikeya-specific work lives in the built-in desktop extension, protocol package, Python runtime, integrations, tests, and public site. Building the full desktop remains a separate step:
 
 ```powershell
 npm install
 npm run compile
 ```
 
-The Python runtime has its own setup and test commands in `fikeya-runtime/README.md` once that package is present.
+The Python runtime also has focused setup and test commands in [`fikeya-runtime/README.md`](fikeya-runtime/README.md).
 
 ## Licensing
 

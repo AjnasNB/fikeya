@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from fikeya_runtime.errors import StateError
 from fikeya_runtime.events import EventType
 from fikeya_runtime.state import StateStore

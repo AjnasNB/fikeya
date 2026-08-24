@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
+
 from fikeya_runtime.agent import AgentRunner
 from fikeya_runtime.credentials import CredentialResolver
 from fikeya_runtime.errors import CancellationError
@@ -17,6 +19,7 @@ from fikeya_runtime.inference import (
     ProviderExecutor,
 )
 from fikeya_runtime.providers import ProviderKind, ProviderStore, build_profile
+from fikeya_runtime.qarinah import QarinahAdapter
 from fikeya_runtime.workspace import initialize_workspace
 
 
@@ -34,6 +37,7 @@ class MemorySecrets:
 class AnswerTransport:
     def __init__(self) -> None:
         self.calls = 0
+        self.payloads: list[bytes] = []
 
     def post(
         self,
@@ -46,6 +50,7 @@ class AnswerTransport:
         cancellation: CancellationToken,
     ) -> JsonResponse:
         self.calls += 1
+        self.payloads.append(payload)
         body = {
             "choices": [{"message": {"content": "private live answer"}}],
             "usage": {
@@ -132,3 +137,70 @@ def test_agent_cancellation_leaves_a_terminal_audit_event(tmp_path: Path) -> Non
     assert row[1] == "cancelled"
     events = runner.state.resume_session(row[0], limit=20).events
     assert events[-1].event_type.value == "session.cancelled"
+
+
+def test_agent_uses_ephemeral_qarinah_context_and_keeps_only_receipts(
+    tmp_path: Path,
+) -> None:
+    runner, transport = _runner(tmp_path)
+    context = json.dumps(
+        {
+            "items": [
+                {
+                    "eventId": "evt_decision",
+                    "title": "Use SQLite for durable session state",
+                }
+            ],
+            "retrieval": {"coverage": {"status": "direct"}},
+        }
+    )
+
+    def qarinah_process(
+        argv: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, stdout=context, stderr="")
+
+    runner.memory = QarinahAdapter(
+        workspace_root=runner.workspace.root,
+        state=runner.state,
+        runner=qarinah_process,
+    )
+    result = runner.run(
+        provider_name="local",
+        prompt="How are sessions stored?",
+        allow_network=True,
+        timeout=10,
+        max_output_tokens=100,
+        cancellation=CancellationToken(),
+        memory_mode="required",
+    )
+
+    request = json.loads(transport.payloads[0])
+    assert request["messages"][0]["role"] == "system"
+    assert "Use SQLite for durable session state" in request["messages"][0]["content"]
+    assert result.memory.status == "used"
+    assert result.memory.coverage == "direct"
+    assert result.memory.evidence_count == 1
+    persisted = b"".join(
+        path.read_bytes()
+        for path in runner.workspace.metadata_directory.glob("state.sqlite3*")
+    )
+    assert context.encode("utf-8") not in persisted
+    assert b"How are sessions stored?" not in persisted
+
+
+def test_required_memory_fails_before_model_execution(tmp_path: Path) -> None:
+    runner, transport = _runner(tmp_path)
+
+    with pytest.raises(RuntimeError, match="required but unavailable"):
+        runner.run(
+            provider_name="local",
+            prompt="Use required memory",
+            allow_network=True,
+            timeout=10,
+            max_output_tokens=100,
+            cancellation=CancellationToken(),
+            memory_mode="required",
+        )
+
+    assert transport.calls == 0

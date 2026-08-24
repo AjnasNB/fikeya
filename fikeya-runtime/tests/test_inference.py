@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from fikeya_runtime.errors import CancellationError, ProviderError
 from fikeya_runtime.inference import (
     CancellationToken,

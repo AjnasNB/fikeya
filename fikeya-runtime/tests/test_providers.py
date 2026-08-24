@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from fikeya_runtime.credentials import (
     AZURE_COGNITIVE_SERVICES_SCOPE,
     CredentialResolver,

@@ -34,6 +34,7 @@ from .providers import (
     ProviderTester,
     build_profile,
 )
+from .qarinah import QarinahAdapter
 from .state import StateStore
 from .workspace import Workspace, initialize_workspace, runtime_home
 
@@ -129,6 +130,13 @@ def _parser() -> argparse.ArgumentParser:
     agent_run.add_argument("--allow-network", action="store_true")
     agent_run.add_argument("--timeout", type=float, default=60.0)
     agent_run.add_argument("--max-output-tokens", type=int, default=1_024)
+    agent_run.add_argument(
+        "--memory",
+        choices=("auto", "off", "required"),
+        default="auto",
+        help="Use Qarinah when available, disable it, or require cited context.",
+    )
+    agent_run.add_argument("--context-max-characters", type=int, default=12_000)
     agent_run.add_argument("--json", action="store_true")
 
     agent_cancel = agent_commands.add_parser(
@@ -383,6 +391,11 @@ def _run_agent(args: argparse.Namespace) -> int:
     store = ProviderStore(runtime_home(args.home))
     runner = AgentRunner(workspace, store)
     if args.agent_command == "run":
+        if args.memory != "off" and shutil.which("qarinah") is not None:
+            runner.memory = QarinahAdapter(
+                workspace_root=workspace.root,
+                state=runner.state,
+            )
         if not args.prompt_stdin:
             raise ProviderError(
                 "Agent prompts must use --prompt-stdin so they do not enter process arguments."
@@ -402,6 +415,8 @@ def _run_agent(args: argparse.Namespace) -> int:
                     timeout=args.timeout,
                     max_output_tokens=args.max_output_tokens,
                     cancellation=cancellation,
+                    memory_mode=args.memory,
+                    context_max_characters=args.context_max_characters,
                 )
         except CancellationError:
             _emit(
@@ -416,6 +431,13 @@ def _run_agent(args: argparse.Namespace) -> int:
                 "ok": True,
                 "output": result.output,
                 "sessionId": result.session_id,
+                "memory": {
+                    "coverage": result.memory.coverage,
+                    "evidenceCount": result.memory.evidence_count,
+                    "receiptId": result.memory.receipt_id,
+                    "responseSha256": result.memory.response_sha256,
+                    "status": result.memory.status,
+                },
                 "usage": {
                     "cachedInputTokens": usage.cached_input_tokens,
                     "inputTokens": usage.input_tokens,

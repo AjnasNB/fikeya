@@ -82,6 +82,23 @@ fikeya provider test work --allow-network
 The command reports status and latency without printing a response body or
 credential.
 
+## Run an agent turn with project memory
+
+Prompts are accepted only through standard input. When Qarinah is installed and
+the workspace has opted into retrieval, `auto` compiles a bounded cited project
+pack and supplies it as explicitly untrusted reference context. The prompt,
+context body, and answer remain ephemeral; SQLite retains hashes, byte counts,
+coverage, evidence counts, provider usage, and receipt identifiers.
+
+```console
+printf '%s' "Continue the current implementation" | fikeya agent run . \
+  --provider work --prompt-stdin --allow-network --memory auto --json
+```
+
+Use `--memory required` to stop before contacting the model when cited project
+context cannot be prepared. Use `--memory off` for a deliberately memory-free
+turn.
+
 ## Run one bounded agent turn
 
 Fikeya's first execution slice supports the Responses API and OpenAI-compatible
