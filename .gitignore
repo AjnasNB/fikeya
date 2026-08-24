@@ -54,3 +54,9 @@ dist
 .v[0-9]*/
 # Local agent validation evidence
 .agent-validation/
+
+# Python component build and test caches
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
