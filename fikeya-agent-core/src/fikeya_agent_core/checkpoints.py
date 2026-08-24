@@ -31,6 +31,30 @@ from .models import (
 )
 
 _SCHEMA_VERSION = 1
+_STATE_KEYS = {
+    "approvalGrant",
+    "candidateAnswer",
+    "createdAtMs",
+    "eventSequence",
+    "events",
+    "evidence",
+    "executionLeaseExpiresAtMs",
+    "executionLeaseId",
+    "failureCode",
+    "finalOutput",
+    "observations",
+    "pendingApproval",
+    "pendingCall",
+    "plan",
+    "prompt",
+    "reviewNotes",
+    "revision",
+    "schemaVersion",
+    "sessionId",
+    "stage",
+    "stepCount",
+    "updatedAtMs",
+}
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_checkpoints (
     session_id TEXT PRIMARY KEY,
@@ -59,6 +83,8 @@ class InMemoryCheckpointStore:
         self._max_checkpoint_bytes = _validate_maximum(max_checkpoint_bytes)
 
     def create(self, state: SessionState) -> SessionState:
+        if state.revision != 0:
+            raise StateConflictError("new agent checkpoint must start at revision zero")
         payload = encode_state(state, self._max_checkpoint_bytes)
         with self._lock:
             if state.session_id in self._payloads:
@@ -101,6 +127,8 @@ class SqliteCheckpointStore:
             connection.execute(_SCHEMA)
 
     def create(self, state: SessionState) -> SessionState:
+        if state.revision != 0:
+            raise StateConflictError("new agent checkpoint must start at revision zero")
         payload = encode_state(state, self._max_checkpoint_bytes)
         try:
             with self._connect() as connection:
@@ -115,12 +143,15 @@ class SqliteCheckpointStore:
     def load(self, session_id: str) -> SessionState:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT state_json FROM agent_checkpoints WHERE session_id = ?",
+                "SELECT revision, state_json FROM agent_checkpoints WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
         if row is None:
             raise SessionNotFoundError(f"session does not exist: {session_id}")
-        return decode_state(bytes(row[0]))
+        state = decode_state(bytes(row[1]))
+        if state.revision != int(row[0]):
+            raise ProtocolError("agent checkpoint row and JSON revisions do not match")
+        return state
 
     def save(self, state: SessionState, *, expected_revision: int) -> SessionState:
         saved = replace(state, revision=expected_revision + 1)
@@ -180,6 +211,7 @@ def decode_state(payload: bytes) -> SessionState:
         raise ProtocolError("agent checkpoint is not valid UTF-8 JSON") from error
     if not isinstance(value, dict) or value.get("schemaVersion") != _SCHEMA_VERSION:
         raise ProtocolError("agent checkpoint has an unsupported schema version")
+    _require_exact_keys(value, _STATE_KEYS, "agent checkpoint")
     try:
         evidence_value = value.get("evidence")
         evidence = _evidence_from_value(evidence_value) if evidence_value is not None else None
@@ -262,6 +294,7 @@ def _tool_call_to_value(call: ToolCall) -> dict[str, object]:
 def _tool_call_from_value(value: object) -> ToolCall:
     if not isinstance(value, dict) or not isinstance(value.get("arguments"), dict):
         raise ProtocolError("checkpoint tool call is invalid")
+    _require_exact_keys(value, {"arguments", "callId", "name"}, "checkpoint tool call")
     return ToolCall(_string(value, "callId"), _string(value, "name"), value["arguments"])
 
 
@@ -277,6 +310,7 @@ def _tool_result_to_value(result: ToolResult) -> dict[str, object]:
 def _tool_result_from_value(value: object) -> ToolResult:
     if not isinstance(value, dict):
         raise ProtocolError("checkpoint tool result is invalid")
+    _require_exact_keys(value, {"callId", "contentType", "output", "status"}, "checkpoint tool result")
     return ToolResult(
         _string(value, "callId"),
         _string(value, "status"),
@@ -300,6 +334,11 @@ def _approval_to_value(request: ApprovalRequest) -> dict[str, object]:
 def _approval_from_value(value: object) -> ApprovalRequest:
     if not isinstance(value, dict):
         raise ProtocolError("checkpoint approval is invalid")
+    _require_exact_keys(
+        value,
+        {"argumentsSha256", "callId", "expectedRevision", "requestId", "sessionId", "summary", "toolName"},
+        "checkpoint approval",
+    )
     return ApprovalRequest(
         _string(value, "requestId"),
         _string(value, "sessionId"),
@@ -325,6 +364,11 @@ def _grant_to_value(grant: ApprovalGrant) -> dict[str, str]:
 def _grant_from_value(value: object) -> ApprovalGrant:
     if not isinstance(value, dict):
         raise ProtocolError("checkpoint approval grant is invalid")
+    _require_exact_keys(
+        value,
+        {"argumentsSha256", "callId", "idempotencyKey", "requestId", "sessionId", "toolName"},
+        "checkpoint approval grant",
+    )
     return ApprovalGrant(
         _string(value, "requestId"),
         _string(value, "sessionId"),
@@ -349,6 +393,7 @@ def _event_to_value(event: AgentEvent) -> dict[str, object]:
 def _event_from_value(value: object) -> AgentEvent:
     if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
         raise ProtocolError("checkpoint event is invalid")
+    _require_exact_keys(value, {"createdAtMs", "data", "kind", "sequence", "sessionId", "stage"}, "checkpoint event")
     return AgentEvent(
         session_id=_string(value, "sessionId"),
         sequence=_integer(value, "sequence"),
@@ -373,12 +418,9 @@ def _evidence_to_value(evidence: EvidenceContext) -> dict[str, object]:
 def _evidence_from_value(value: object) -> EvidenceContext:
     if not isinstance(value, dict) or not isinstance(value.get("citations"), list):
         raise ProtocolError("checkpoint evidence is invalid")
+    _require_exact_keys(value, {"citations", "content", "contentSha256"}, "checkpoint evidence")
     citations = tuple(
-        EvidenceCitation(
-            _string(item, "citationId"),
-            _string(item, "sha256"),
-            _string(item, "source"),
-        )
+        _citation_from_value(item)
         for item in value["citations"]
         if isinstance(item, dict)
     )
@@ -388,6 +430,15 @@ def _evidence_from_value(value: object) -> EvidenceContext:
         _string(value, "content"),
         citations,
         _string(value, "contentSha256"),
+    )
+
+
+def _citation_from_value(value: dict[str, object]) -> EvidenceCitation:
+    _require_exact_keys(value, {"citationId", "sha256", "source"}, "checkpoint evidence citation")
+    return EvidenceCitation(
+        _string(value, "citationId"),
+        _string(value, "sha256"),
+        _string(value, "source"),
     )
 
 
@@ -419,6 +470,11 @@ def _optional_integer(value: dict[str, object], name: str) -> int | None:
     if isinstance(item, bool) or not isinstance(item, int) or item < 0:
         raise ProtocolError(f"checkpoint field must be null or a non-negative integer: {name}")
     return item
+
+
+def _require_exact_keys(value: dict[str, object], expected: set[str], label: str) -> None:
+    if set(value) != expected:
+        raise ProtocolError(f"{label} fields are not exact")
 
 
 def _validate_maximum(value: int) -> int:

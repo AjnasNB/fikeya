@@ -327,6 +327,7 @@ class AgentOrchestrator:
         except CancellationError:
             state.stage = Stage.CANCELLED
             state.failure_code = "cancelled"
+            state.final_output = None
             state.pending_call = None
             state.pending_approval = None
             state.approval_grant = None
@@ -337,6 +338,7 @@ class AgentOrchestrator:
         except Exception as error:
             state.stage = Stage.FAILED
             state.failure_code = type(error).__name__
+            state.final_output = None
             state.pending_call = None
             state.pending_approval = None
             state.approval_grant = None
@@ -360,8 +362,11 @@ class AgentOrchestrator:
         state = self.state(session_id)
         if state.terminal:
             raise ProtocolError("cannot cancel a terminal session")
+        if state.execution_lease_id is not None:
+            raise StateConflictError("cannot cancel a leased tool call from another stream; reconcile its outcome")
         state.stage = Stage.CANCELLED
         state.failure_code = "cancelled"
+        state.final_output = None
         state.pending_call = None
         state.pending_approval = None
         state.approval_grant = None
@@ -421,6 +426,7 @@ class AgentOrchestrator:
             state.pending_call = None
             state.pending_approval = None
             state.failure_code = "approval_cancelled"
+            state.final_output = None
         elif response.decision == ApprovalDecision.DENY_ONCE:
             state.observations.append(ToolResult(call.call_id, "denied", "Tool call denied by approval policy."))
             state.pending_call = None
@@ -433,14 +439,12 @@ class AgentOrchestrator:
                 call_id=request.call_id,
                 tool_name=request.tool_name,
                 arguments_sha256=request.arguments_sha256,
-                idempotency_key=sha256_value(
-                    {
-                        "argumentsSha256": request.arguments_sha256,
-                        "callId": request.call_id,
-                        "requestId": request.request_id,
-                        "sessionId": request.session_id,
-                        "toolName": request.tool_name,
-                    }
+                idempotency_key=_grant_idempotency_key(
+                    request.request_id,
+                    request.session_id,
+                    request.call_id,
+                    request.tool_name,
+                    request.arguments_sha256,
                 ),
             )
             state.pending_approval = None
@@ -566,6 +570,10 @@ class AgentOrchestrator:
                 self.broker.execute(call, token, idempotency_key=grant.idempotency_key),
                 timeout=self.limits.broker_timeout_seconds,
             )
+        except asyncio.CancelledError as error:
+            raise BrokerOutcomeUncertainError(
+                "broker task was cancelled after dispatch; reconcile by idempotency key"
+            ) from error
         except Exception as error:
             raise BrokerOutcomeUncertainError(
                 "broker outcome is uncertain; reconcile by idempotency key before any retry"
@@ -732,6 +740,14 @@ class AgentOrchestrator:
             or grant.call_id != call.call_id
             or grant.tool_name != call.name
             or grant.arguments_sha256 != sha256_value(call.arguments)
+            or grant.idempotency_key
+            != _grant_idempotency_key(
+                grant.request_id,
+                grant.session_id,
+                grant.call_id,
+                grant.tool_name,
+                grant.arguments_sha256,
+            )
         ):
             raise ProtocolError("durable approval grant does not match the pending call")
         return call, grant
@@ -739,6 +755,8 @@ class AgentOrchestrator:
     def _validate_state(self, state: SessionState) -> None:
         if state.events:
             sequences = [event.sequence for event in state.events]
+            if sequences[0] < 1:
+                raise ProtocolError("checkpoint event outbox sequences must start at one or later")
             if sequences != list(range(sequences[0], sequences[-1] + 1)):
                 raise ProtocolError("checkpoint event outbox sequence is not contiguous")
             if state.events[-1].sequence != state.event_sequence:
@@ -750,6 +768,17 @@ class AgentOrchestrator:
         lease_fields = (state.execution_lease_id, state.execution_lease_expires_at_ms)
         if (lease_fields[0] is None) != (lease_fields[1] is None):
             raise ProtocolError("execution lease fields must be present together")
+        if state.execution_lease_expires_at_ms is not None and state.execution_lease_expires_at_ms <= 0:
+            raise ProtocolError("execution lease expiry must be a positive epoch timestamp")
+        if state.stage == Stage.COMPLETED and state.final_output is None:
+            raise ProtocolError("completed checkpoint must retain its final output")
+        if state.stage != Stage.COMPLETED and state.final_output is not None:
+            raise ProtocolError("only a completed checkpoint may retain final output")
+        if state.stage in {Stage.FAILED, Stage.CANCELLED}:
+            if not state.failure_code:
+                raise ProtocolError("failed and cancelled checkpoints require a failure code")
+        elif state.failure_code is not None:
+            raise ProtocolError("active and completed checkpoints cannot retain a failure code")
         if state.stage == Stage.AWAITING_APPROVAL:
             self._validated_pending_approval(state)
             if state.approval_grant is not None or state.execution_lease_id is not None:
@@ -780,3 +809,21 @@ class AgentOrchestrator:
 
 def _tool_value(tool: ToolDefinition) -> dict[str, JsonValue]:
     return {"description": tool.description, "inputSchema": tool.input_schema, "name": tool.name}
+
+
+def _grant_idempotency_key(
+    request_id: str,
+    session_id: str,
+    call_id: str,
+    tool_name: str,
+    arguments_sha256: str,
+) -> str:
+    return sha256_value(
+        {
+            "argumentsSha256": arguments_sha256,
+            "callId": call_id,
+            "requestId": request_id,
+            "sessionId": session_id,
+            "toolName": tool_name,
+        }
+    )
