@@ -104,6 +104,11 @@ const redirectResponse = await worker.fetch(new Request('https://www.fikeya.com/
 });
 assert(redirectResponse.status === 301, 'www canonical redirect status is incorrect');
 assert(redirectResponse.headers.get('location') === 'https://fikeya.com/docs/?q=1', 'www canonical redirect target is incorrect');
+const insecureRedirectResponse = await worker.fetch(new Request('http://www.fikeya.com/docs/?q=1'), {
+	ASSETS: { fetch: async () => new Response('asset') }
+});
+assert(insecureRedirectResponse.status === 301, 'HTTP www canonical redirect status is incorrect');
+assert(insecureRedirectResponse.headers.get('location') === 'https://fikeya.com/docs/?q=1', 'HTTP www canonical redirect must enforce HTTPS');
 const assetResponse = await worker.fetch(new Request('https://fikeya.com/'), {
 	ASSETS: { fetch: async () => new Response('asset') }
 });

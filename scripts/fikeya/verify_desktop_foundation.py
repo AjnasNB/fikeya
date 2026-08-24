@@ -140,11 +140,20 @@ for relative_path, marker in (
     ("fikeya-agent-core/LICENSE", "GNU AFFERO GENERAL PUBLIC LICENSE"),
 ):
     expect(marker in read_text(relative_path), f"{relative_path} must contain the declared full license text.")
+for relative_path in (
+    "LICENSES/AGPL-3.0-or-later.txt",
+    "fikeya-runtime/LICENSE",
+    "fikeya-agent-core/LICENSE",
+):
+    text = read_text(relative_path)
+    expect("Fikeya" in text, f"{relative_path} must identify the Fikeya component it licenses.")
+    expect("Cockroach Browser" not in text, f"{relative_path} contains an unrelated product notice.")
 expect("Code OSS foundation" in license_map, "The distribution license map must identify the Code OSS foundation scope.")
 expect("Fikeya-owned runtime" in license_map, "The distribution license map must identify the Fikeya-owned scope.")
 packaging_source = read_text("build/gulpfile.vscode.ts")
 expect("'LICENSE.txt'" in packaging_source, "Desktop packaging must preserve the Code OSS MIT license text.")
 expect("'LICENSES/**'" in packaging_source, "Desktop packaging must include the Fikeya distribution license bundle.")
+expect("'fikeya-distribution.json'" in packaging_source, "Desktop packaging must include the Fikeya distribution manifest.")
 
 for relative_path, label in (
     ("resources/win32/code.ico", "Windows application icon source"),

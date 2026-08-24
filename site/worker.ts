@@ -11,6 +11,7 @@ export default {
 		const url = new URL(request.url);
 		if (url.hostname === `www.${CANONICAL_HOST}`) {
 			url.hostname = CANONICAL_HOST;
+			url.protocol = 'https:';
 			return Response.redirect(url.toString(), 301);
 		}
 
