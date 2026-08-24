@@ -70,7 +70,14 @@ expect_equal(
 )
 expect_equal(product.get("serverLicenseUrl"), product.get("licenseUrl"), "server license URL")
 expect("extensionsGallery" not in product, "product.json must not silently enable a proprietary extension gallery.")
-
+expect(
+    "defaultChatAgent" not in product,
+    "product.json must not hard-wire a provider-specific default chat agent.",
+)
+expect(
+    "trustedExtensionAuthAccess" not in product,
+    "product.json must not grant provider-specific extensions privileged authentication access.",
+)
 app_id_keys = (
     "win32x64AppId",
     "win32arm64AppId",

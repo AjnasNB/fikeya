@@ -74,7 +74,53 @@ if (util.inspect && util.inspect['defaultOptions']) {
 }
 
 // VSCODE_GLOBALS: package/product.json
-globalThis._VSCODE_PRODUCT_JSON = require('../../../product.json');
+const productJson = require('../../../product.json');
+globalThis._VSCODE_PRODUCT_JSON = {
+	...productJson,
+	// Fikeya intentionally ships without a provider-specific default chat
+	// agent. The inherited Code OSS unit suites still exercise the default
+	// agent branches, so give those tests the identifiers they assert without
+	// changing Fikeya's provider-neutral product metadata.
+	defaultChatAgent: productJson.defaultChatAgent ?? {
+		extensionId: 'GitHub.copilot',
+		chatExtensionId: 'GitHub.copilot-chat',
+		chatExtensionOutputId: 'GitHub.copilot-chat.GitHub Copilot Chat.log',
+		chatExtensionOutputExtensionStateCommand: 'github.copilot.debug.extensionState',
+		documentationUrl: 'https://example.invalid/copilot-overview',
+		skusDocumentationUrl: 'https://example.invalid/copilot-plans',
+		optimizeUsageDocumentationUrl: 'https://example.invalid/token-usage-tips',
+		publicCodeMatchesUrl: 'https://example.invalid/public-code',
+		managePlanUrl: 'https://example.invalid/manage-plan',
+		upgradePlanUrl: 'https://example.invalid/upgrade-plan',
+		signUpUrl: 'https://example.invalid/sign-up',
+		termsStatementUrl: 'https://example.invalid/terms',
+		privacyStatementUrl: 'https://example.invalid/privacy',
+		provider: {
+			default: { id: 'github', name: 'GitHub' },
+			enterprise: { id: 'github-enterprise', name: 'GHE' },
+			google: { id: 'google', name: 'Google' },
+			apple: { id: 'apple', name: 'Apple' },
+		},
+		providerExtensionId: 'vscode.github-authentication',
+		providerUriSetting: 'github-enterprise.uri',
+		providerScopes: [['read:user'], ['user:email']],
+		entitlementUrl: 'https://example.invalid/entitlement',
+		entitlementSignupLimitedUrl: 'https://example.invalid/subscribe',
+		tokenEntitlementUrl: 'https://example.invalid/token',
+		mcpRegistryDataUrl: 'https://example.invalid/mcp-registry',
+		managedSettingsUrl: 'https://example.invalid/managed-settings',
+		chatQuotaExceededContext: 'github.copilot.chat.quotaExceeded',
+		completionsQuotaExceededContext: 'github.copilot.completions.quotaExceeded',
+		walkthroughCommand: 'github.copilot.open.walkthrough',
+		completionsMenuCommand: 'github.copilot.toggleStatusMenu',
+		chatRefreshTokenCommand: 'github.copilot.refreshToken',
+		generateCommitMessageCommand: 'github.copilot.git.generateCommitMessage',
+		resolveMergeConflictsCommand: 'github.copilot.git.resolveMergeConflicts',
+		completionsAdvancedSetting: 'github.copilot.advanced',
+		completionsEnablementSetting: 'github.copilot.enable',
+		nextEditSuggestionsSetting: 'github.copilot.nextEditSuggestions.enabled',
+	},
+};
 globalThis._VSCODE_PACKAGE_JSON = require('../../../package.json');
 
 // Test file operations that are common across platforms. Used for test infra, namely snapshot tests

@@ -2864,7 +2864,8 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 		}
 
 		const extensionsToUninstall: UninstallExtensionInfo[] = [{ extension: extension.local }];
-		if (!areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
+		const defaultChatAgentExtensionId = this.productService.defaultChatAgent?.extensionId;
+		if (!defaultChatAgentExtensionId || !areSameExtensions(extension.identifier, { id: defaultChatAgentExtensionId })) {
 			for (const packExtension of this.getAllPackedExtensions(extension, this.local)) {
 				if (packExtension.local && !extensionsToUninstall.some(e => areSameExtensions(e.extension.identifier, packExtension.identifier))) {
 					extensionsToUninstall.push({ extension: packExtension.local });

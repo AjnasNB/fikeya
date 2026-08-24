@@ -158,11 +158,14 @@ export class ChatStatusDashboard extends DomWidget {
 			isAnonymousWithSentiment ||
 			isPooledQuotaDepleted;
 		const contributedEntries = [...this.chatStatusItemService.getEntries()];
+		const inlineCompletionsProviders = this.languageFeaturesService.inlineCompletionsProvider.allNoModel();
+		const hasModelSelection = !this.options?.disableModelSelection && inlineCompletionsProviders.some(provider => (provider.modelInfo?.models.length ?? 0) > 0);
+		const hasProviderOptions = !this.options?.disableProviderOptions && inlineCompletionsProviders.some(provider => (provider.providerOptions?.length ?? 0) > 0);
 		const hasQuickSettingsContent =
-			!this.options?.disableInlineSuggestionsSettings ||
-			!this.options?.disableModelSelection ||
-			!this.options?.disableProviderOptions ||
-			!this.options?.disableCompletionsSnooze;
+			(!!defaultChat && !this.options?.disableInlineSuggestionsSettings) ||
+			hasModelSelection ||
+			hasProviderOptions ||
+			(!!defaultChat && !this.options?.disableCompletionsSnooze);
 
 		// Title header with plan name, CTA buttons, and manage action
 		let headerAdditionalSpendButton: Button | undefined;
@@ -451,7 +454,9 @@ export class ChatStatusDashboard extends DomWidget {
 			chevron = disclosureHeader.appendChild($('span.collapsible-chevron'));
 			chevron.classList.add(...ThemeIcon.asClassNameArray(collapsed ? Codicon.chevronRightCompact : Codicon.chevronDownCompact));
 
-			statusEl = disclosureHeader.appendChild($('span.collapsible-status', undefined, getStatusText()));
+			if (defaultChat) {
+				statusEl = disclosureHeader.appendChild($('span.collapsible-status', undefined, getStatusText()));
+			}
 		}
 
 		const collapsibleContent = this.element.appendChild($('div.collapsible-content'));
@@ -462,12 +467,14 @@ export class ChatStatusDashboard extends DomWidget {
 		}
 
 		if (disclosureHeader && chevron) {
+			const header = disclosureHeader;
+			const headerChevron = chevron;
 			const toggle = () => {
 				const isCollapsed = collapsibleContent.classList.toggle('collapsed');
 				collapsibleInner.inert = isCollapsed;
-				disclosureHeader!.setAttribute('aria-expanded', String(!isCollapsed));
-				chevron!.className = 'collapsible-chevron';
-				chevron!.classList.add(...ThemeIcon.asClassNameArray(isCollapsed ? Codicon.chevronRightCompact : Codicon.chevronDownCompact));
+				header.setAttribute('aria-expanded', String(!isCollapsed));
+				headerChevron.className = 'collapsible-chevron';
+				headerChevron.classList.add(...ThemeIcon.asClassNameArray(isCollapsed ? Codicon.chevronRightCompact : Codicon.chevronDownCompact));
 				this.storageService.store(ChatStatusDashboard.QUICK_SETTINGS_COLLAPSED_KEY, isCollapsed, StorageScope.PROFILE, StorageTarget.USER);
 			};
 
@@ -475,10 +482,12 @@ export class ChatStatusDashboard extends DomWidget {
 		}
 
 		// Update status text when completions setting changes
-		if (statusEl) {
+		const completionsEnablementSetting = defaultChat?.completionsEnablementSetting;
+		if (statusEl && completionsEnablementSetting) {
+			const statusElement = statusEl;
 			this._store.add(this.configurationService.onDidChangeConfiguration(e => {
-				if (e.affectsConfiguration(defaultChat.completionsEnablementSetting)) {
-					statusEl!.textContent = getStatusText();
+				if (e.affectsConfiguration(completionsEnablementSetting)) {
+					statusElement.textContent = getStatusText();
 				}
 			}));
 		}
@@ -580,6 +589,10 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private renderSetupSection(): void {
+		if (!defaultChat) {
+			return;
+		}
+
 		const hasByokModels = this.chatEntitlementService.hasByokModels;
 		const newUser = isNewUser(this.chatEntitlementService) && !hasByokModels;
 		const anonymousUser = this.chatEntitlementService.anonymous;
@@ -639,7 +652,7 @@ export class ChatStatusDashboard extends DomWidget {
 
 	private renderInlineSuggestionsContent(container: HTMLElement): void {
 		// Settings (editor-specific)
-		if (!this.options?.disableInlineSuggestionsSettings) {
+		if (defaultChat && !this.options?.disableInlineSuggestionsSettings) {
 			this.createSettings(container);
 		}
 
@@ -702,7 +715,7 @@ export class ChatStatusDashboard extends DomWidget {
 		}
 
 		// Completions Snooze (editor-specific)
-		if (!this.options?.disableCompletionsSnooze && this.canUseChat()) {
+		if (defaultChat && !this.options?.disableCompletionsSnooze && this.canUseChat()) {
 			const snooze = append(container, $('div.snooze-completions'));
 			this.createCompletionsSnooze(snooze, localize('settings.snooze', "Snooze"));
 		}
@@ -969,6 +982,10 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private createSettings(container: HTMLElement): void {
+		if (!defaultChat) {
+			return;
+		}
+
 		const modeId = this.editorService.activeTextEditorLanguageId;
 		const settings = container.appendChild($('div.settings'));
 
@@ -1038,10 +1055,18 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private createInlineSuggestionsSetting(container: HTMLElement, label: string, modeId: string | undefined): void {
+		if (!defaultChat) {
+			return;
+		}
+
 		this.createSetting(container, [defaultChat.completionsEnablementSetting], label, this.getCompletionsSettingAccessor(modeId));
 	}
 
 	private createTriStateLanguageSetting(container: HTMLElement, label: string, modeId: string, onStateChange: () => void): void {
+		if (!defaultChat) {
+			return;
+		}
+
 		const settingId = defaultChat.completionsEnablementSetting;
 
 		const getState = (): boolean | 'mixed' => {
@@ -1144,6 +1169,10 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private findConfiguredCompletionsValues(modeId?: string): { target: ConfigurationTarget; value: Record<string, boolean> }[] {
+		if (!defaultChat) {
+			return [];
+		}
+
 		const inspected = this.configurationService.inspect<Record<string, boolean>>(defaultChat.completionsEnablementSetting);
 		const result: { target: ConfigurationTarget; value: Record<string, boolean> }[] = [];
 		for (const target of completionsConfigurationTargets) {
@@ -1156,6 +1185,13 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private getCompletionsSettingAccessor(modeId = '*'): ISettingsAccessor {
+		if (!defaultChat) {
+			return {
+				readSetting: () => false,
+				writeSetting: async () => { },
+			};
+		}
+
 		const settingId = defaultChat.completionsEnablementSetting;
 
 		return {
@@ -1178,6 +1214,10 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private createNextEditSuggestionsSetting(container: HTMLElement, label: string, completionsSettingAccessor: ISettingsAccessor): void {
+		if (!defaultChat) {
+			return;
+		}
+
 		const nesSettingId = defaultChat.nextEditSuggestionsSetting;
 		const completionsSettingId = defaultChat.completionsEnablementSetting;
 		const resource = EditorResourceAccessor.getOriginalUri(this.editorService.activeEditor, { supportSideBySide: SideBySideEditor.PRIMARY });
@@ -1215,6 +1255,10 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private createCompletionsSnooze(container: HTMLElement, label: string): void {
+		if (!defaultChat) {
+			return;
+		}
+
 		const isEnabled = () => {
 			const completionsEnabled = isCompletionsEnabled(this.configurationService);
 			const completionsEnabledActiveLanguage = isCompletionsEnabled(this.configurationService, this.editorService.activeTextEditorLanguageId);
