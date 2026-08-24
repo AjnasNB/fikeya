@@ -132,7 +132,13 @@ class ToolPolicy:
 
     allowlist: tuple[str, ...]
 
+    def allows(self, server_id: str, tool_name: str) -> bool:
+        """Return whether a qualified tool name matches the allowlist."""
+
+        qualified = f"{server_id}/{tool_name}"
+        return any(fnmatch.fnmatchcase(qualified, pattern) for pattern in self.allowlist)
+
     def require(self, server_id: str, tool_name: str) -> None:
         qualified = f"{server_id}/{tool_name}"
-        if not any(fnmatch.fnmatchcase(qualified, pattern) for pattern in self.allowlist):
+        if not self.allows(server_id, tool_name):
             raise PermissionDeniedError(f"MCP tool is not allowlisted: {qualified}")
