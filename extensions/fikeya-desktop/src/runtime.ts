@@ -3,6 +3,8 @@
  *  Copyright (C) 2026 Fikeya contributors
  *--------------------------------------------------------------------------------------------*/
 
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'child_process';
 
 const maximumOutputBytes = 1024 * 1024;
@@ -99,9 +101,31 @@ export interface FikeyaAgentRunHandle {
 	cancel(): void;
 }
 
+export interface FikeyaCliInvocation {
+	readonly executable: string;
+	readonly source: 'bundled' | 'path';
+}
+
+/**
+ * Resolves the extension-owned runtime before considering PATH. Packaged builds always include
+ * this platform-specific executable, while the PATH fallback keeps source checkouts usable.
+ */
+export function resolveFikeyaCli(extensionPath = path.resolve(__dirname, '..'), platform = process.platform): FikeyaCliInvocation {
+	const executable = path.resolve(extensionPath, 'runtime', platform === 'win32' ? 'fikeya-runtime.exe' : 'fikeya-runtime');
+	if (existsSync(executable)) {
+		return { executable, source: 'bundled' };
+	}
+	return { executable: 'fikeya', source: 'path' };
+}
+
 /** Runs a bounded Fikeya workspace command with no shell interpolation. */
-export async function runFikeyaRuntime(command: FikeyaRuntimeCommand, workspacePath: string): Promise<FikeyaRuntimeResult> {
-	return runFikeyaCli([command, '--json'], workspacePath, value => parseRuntimeReport(value, command));
+export async function runFikeyaRuntime(
+	command: FikeyaRuntimeCommand,
+	workspacePath: string,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = process.env
+): Promise<FikeyaRuntimeResult> {
+	return runFikeyaCli([command, '--json'], workspacePath, value => parseRuntimeReport(value, command), undefined, invocation, environment);
 }
 
 /**
@@ -408,11 +432,14 @@ function runFikeyaCli(
 	args: readonly string[],
 	workspacePath: string,
 	parseReport: (value: unknown) => FikeyaRuntimeReport,
-	stdinSecret?: string
+	stdinSecret?: string,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = process.env
 ): Promise<FikeyaRuntimeResult> {
 	return new Promise(resolve => {
-		const child = spawn('fikeya', args, {
+		const child = spawn(invocation.executable, args, {
 			cwd: workspacePath,
+			env: environment,
 			shell: false,
 			stdio: [stdinSecret === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
 			windowsHide: true
@@ -504,7 +531,8 @@ function startBoundedJsonCli<T>(
 ): { readonly result: Promise<FikeyaCliResult<T>>; cancel(): void } {
 	let cancelOperation = (): void => undefined;
 	const result = new Promise<FikeyaCliResult<T>>(resolve => {
-		const child = spawn('fikeya', args, {
+		const invocation = resolveFikeyaCli();
+		const child = spawn(invocation.executable, args, {
 			cwd: workspacePath,
 			shell: false,
 			stdio: [stdinPayload === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],

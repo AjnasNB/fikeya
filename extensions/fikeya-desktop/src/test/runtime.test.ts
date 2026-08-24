@@ -4,6 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, test } from 'node:test';
 import {
 	buildAgentRunArguments,
@@ -12,10 +15,27 @@ import {
 	parseAgentTurn,
 	parseProviderList,
 	parseProviderProbe,
-	parseRuntimeReport
+	parseRuntimeReport,
+	resolveFikeyaCli
 } from '../runtime';
 
 describe('Fikeya runtime protocol', () => {
+	test('prefers the absolute extension-owned runtime over PATH', async () => {
+		const extensionPath = path.join(tmpdir(), `fikeya-desktop-runtime-${process.pid}-${Date.now()}`);
+		const runtimeDirectory = path.join(extensionPath, 'runtime');
+		await mkdir(runtimeDirectory, { recursive: true });
+		await writeFile(path.join(runtimeDirectory, 'fikeya-runtime.exe'), 'fixture', 'utf8');
+
+		assert.deepStrictEqual(resolveFikeyaCli(extensionPath, 'win32'), {
+			executable: path.join(runtimeDirectory, 'fikeya-runtime.exe'),
+			source: 'bundled'
+		});
+		assert.deepStrictEqual(resolveFikeyaCli(extensionPath, 'linux'), {
+			executable: 'fikeya',
+			source: 'path'
+		});
+	});
+
 	test('parses the actual init response shape', () => {
 		assert.deepStrictEqual(parseRuntimeReport({
 			created: true,
