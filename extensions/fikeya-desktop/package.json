@@ -112,8 +112,9 @@
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
 		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
-		"check:vsix": "node ./scripts/inspect-vsix.mjs ./artifacts/fikeya-desktop-0.1.0.vsix",
-		"package:vsix": "npm run build:vsix && npm run check:vsix"
+		"check:vsix": "node ./scripts/inspect-vsix.mjs",
+		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",
+		"package:vsix": "npm run build:vsix && npm run check:vsix && npm run test:isolated-vsix"
 	},
 	"devDependencies": {
 		"@types/node": "24.x",
