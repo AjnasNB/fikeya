@@ -299,12 +299,13 @@ class AgentOrchestrator:
             if self._active_tokens.get(session_id) is token:
                 self._active_tokens.pop(session_id, None)
 
-    def cancel(self, session_id: str) -> AgentEvent:
-        """Persist cancellation and signal an active cooperative operation."""
+    def cancel(self, session_id: str) -> AgentEvent | None:
+        """Signal an active operation, or persist cancellation while idle."""
 
         token = self._active_tokens.get(session_id)
         if token is not None:
             token.cancel()
+            return None
         state = self.checkpoints.load(session_id)
         if state.terminal:
             raise ProtocolError("cannot cancel a terminal session")
