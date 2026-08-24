@@ -1,0 +1,114 @@
+{
+	"name": "fikeya-desktop",
+	"displayName": "%displayName%",
+	"description": "%description%",
+	"version": "0.1.0",
+	"publisher": "fikeya",
+	"license": "AGPL-3.0-or-later",
+	"engines": {
+		"vscode": "^1.110.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false,
+			"description": "%capabilities.untrustedWorkspaces%"
+		}
+	},
+	"activationEvents": [
+		"onView:fikeya.dashboard",
+		"onCommand:fikeya.open",
+		"onCommand:fikeya.switchLayout",
+		"onCommand:fikeya.selectMode",
+		"onCommand:fikeya.configureProvider",
+		"onCommand:fikeya.initializeWorkspace",
+		"onCommand:fikeya.runDoctor"
+	],
+	"main": "./out/extension",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "fikeya",
+					"icon": "media/fikeya.svg",
+					"title": "%container.title%"
+				}
+			]
+		},
+		"views": {
+			"fikeya": [
+				{
+					"id": "fikeya.dashboard",
+					"name": "%view.dashboard.name%",
+					"type": "webview",
+					"contextualTitle": "%view.dashboard.contextualTitle%"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "fikeya.open",
+				"title": "%command.open.title%",
+				"category": "%command.category%",
+				"icon": "$(sparkle)"
+			},
+			{
+				"command": "fikeya.switchLayout",
+				"title": "%command.switchLayout.title%",
+				"category": "%command.category%",
+				"icon": "$(layout)"
+			},
+			{
+				"command": "fikeya.selectMode",
+				"title": "%command.selectMode.title%",
+				"category": "%command.category%",
+				"icon": "$(list-selection)"
+			},
+			{
+				"command": "fikeya.configureProvider",
+				"title": "%command.configureProvider.title%",
+				"category": "%command.category%",
+				"icon": "$(key)"
+			},
+			{
+				"command": "fikeya.initializeWorkspace",
+				"title": "%command.initializeWorkspace.title%",
+				"category": "%command.category%",
+				"icon": "$(database)"
+			},
+			{
+				"command": "fikeya.runDoctor",
+				"title": "%command.runDoctor.title%",
+				"category": "%command.category%",
+				"icon": "$(pulse)"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "fikeya.switchLayout",
+					"when": "view == fikeya.dashboard",
+					"group": "navigation@1"
+				},
+				{
+					"command": "fikeya.runDoctor",
+					"when": "view == fikeya.dashboard",
+					"group": "navigation@2"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"compile": "npx gulp compile-extension:fikeya-desktop",
+		"watch": "npx gulp watch-extension:fikeya-desktop",
+		"typecheck": "tsc --project ./tsconfig.json --noEmit",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js"
+	},
+	"devDependencies": {
+		"@types/node": "24.x",
+		"typescript": "^5.9.3"
+	}
+}

@@ -1,0 +1,15 @@
+{
+	"displayName": "Fikeya Desktop",
+	"description": "A local-first coding agent workbench with provider choice, Qarinah memory, approvals, and verified context receipts.",
+	"capabilities.untrustedWorkspaces": "Fikeya can run local tools, so initialize it only in a workspace you trust.",
+	"container.title": "Fikeya",
+	"view.dashboard.name": "Fikeya",
+	"view.dashboard.contextualTitle": "Fikeya Workspace",
+	"command.category": "Fikeya",
+	"command.open.title": "Open Fikeya",
+	"command.switchLayout.title": "Switch Layout",
+	"command.selectMode.title": "Select Mode",
+	"command.configureProvider.title": "Configure Provider",
+	"command.initializeWorkspace.title": "Initialize Workspace",
+	"command.runDoctor.title": "Run Doctor"
+}
