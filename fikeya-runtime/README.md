@@ -150,6 +150,41 @@ dry-run mode. Real execution additionally requires all of the following:
 
 Changing an argument, directory, or environment key invalidates the approval.
 
+### Reviewed external tool presets
+
+Fikeya Runtime ships configuration-only presets for separately installed
+Cockroach Browser and Cockroach Crawler CLIs. Both start disabled. Listing a
+preset only checks whether its executable name is discoverable; it does not
+run the executable, contact a network service, or claim that the installed
+package or version is authentic.
+
+```console
+fikeya tool list --json
+fikeya tool enable cockroach-browser --workspace . --confirm-workspace
+fikeya tool status --workspace . --json
+fikeya tool disable cockroach-browser --workspace .
+```
+
+Enablement is local to the initialized workspace and bound to the SHA-256
+digest of the exact reviewed manifest. A changed manifest becomes disabled
+until it is confirmed again. SQLite stores only the preset identifier, digest,
+and enablement timestamp. Configuration values and credentials are never
+stored in the enablement record, and enabling a preset does not start it.
+
+The runtime loader resolves a fixed executable without a shell, constructs a
+minimal child environment, and rejects filesystem-root workspaces, escaped
+metadata paths, shell-script shims, unknown configuration fields, URL
+credentials, private literal crawler IPs, and non-finite or widened limits.
+Request bytes, response bytes, request count, concurrency, request timeout,
+and total session duration are guarded by the loader. The caller remains
+responsible for MCP message framing, cancellation, and terminating the child
+on a protocol failure.
+
+External executable provenance and version verification is intentionally an
+explicit diagnostic warning in this alpha. On Windows, `.cmd`, `.bat`, and
+PowerShell shims are rejected because the no-shell boundary requires a native
+executable entry point.
+
 ## Qarinah boundary
 
 `QarinahAdapter` invokes a separately installed `qarinah` executable with an

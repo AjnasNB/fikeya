@@ -46,7 +46,9 @@ The preset schema records process and response limits, but a JSON document canno
 6. Stop the process on cancellation, timeout, protocol violation, limit exhaustion, or workspace revocation.
 7. Preserve the external package name, version, source, and license in execution receipts.
 
-The current files and validator establish this contract. They do not by themselves prove executable provenance, enforce sandbox isolation, or add an end-user enable/disable command to Fikeya Desktop or CLI. Those are loader and release-integration gates, not claims made by these presets.
+The Fikeya Runtime CLI now provides workspace-scoped `tool list`, `tool enable`, `tool disable`, and `tool status` commands. Enablement stores only the exact manifest digest and timestamp, and a digest change requires confirmation again. The runtime loader validates finite limits, resolves an executable without a shell, builds a minimal environment, and exposes request/response budget guards. Enabling a preset never launches it.
+
+This remains an alpha integration. It does not prove executable provenance or installed-version compatibility, provide sandbox isolation, implement a complete MCP JSON-RPC session manager, or add the enable/disable flow to Fikeya Desktop. The runtime reports the provenance/version gap as a diagnostic warning instead of claiming enforcement. Windows shell shims such as `.cmd`, `.bat`, and `.ps1` are rejected; a native executable entry point is required for shell-free launch.
 
 ## Validation
 
