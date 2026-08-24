@@ -44,21 +44,22 @@ export interface QarinahReference {
 }
 
 export interface UsageReceipt {
-	readonly measurement: 'provider' | 'tokenizer' | 'estimate';
+	readonly usageMeasurement: 'provider-reported' | 'unavailable';
 	readonly provider: string;
 	readonly model: string;
+	readonly apiMode: 'responses' | 'chat-completions';
+	readonly callId: string;
 	readonly requestId?: string;
-	readonly inputTokens: number;
-	readonly cachedInputTokens?: number;
-	readonly outputTokens: number;
-	readonly reasoningTokens?: number;
-	readonly cost?: {
-		readonly amount: number;
-		readonly currency: string;
-	};
-	readonly pricingRevision?: string;
-	readonly startedAt: string;
-	readonly completedAt: string;
+	readonly inputTokens: number | null;
+	readonly cachedInputTokens: number | null;
+	readonly outputTokens: number | null;
+	readonly requestBytes: number;
+	readonly responseBytes: number;
+	readonly requestSha256: string;
+	readonly responseSha256: string;
+	readonly statusCode: number;
+	readonly durationMs: number;
+	readonly createdAt: string;
 }
 
 export interface LifecycleEvent {
@@ -176,6 +177,35 @@ export function isLifecycleEvent(value: unknown): value is LifecycleEvent {
 		&& isRecord(value.payload);
 }
 
+export function isUsageReceipt(value: unknown): value is UsageReceipt {
+	if (!isRecord(value)
+		|| (value.usageMeasurement !== 'provider-reported' && value.usageMeasurement !== 'unavailable')
+		|| typeof value.provider !== 'string'
+		|| typeof value.model !== 'string'
+		|| (value.apiMode !== 'responses' && value.apiMode !== 'chat-completions')
+		|| typeof value.callId !== 'string'
+		|| !isOptionalString(value.requestId)
+		|| !isNullableNonNegativeInteger(value.inputTokens)
+		|| !isNullableNonNegativeInteger(value.cachedInputTokens)
+		|| !isNullableNonNegativeInteger(value.outputTokens)
+		|| !isNonNegativeInteger(value.requestBytes)
+		|| !isNonNegativeInteger(value.responseBytes)
+		|| !isSha256(value.requestSha256)
+		|| !isSha256(value.responseSha256)
+		|| !Number.isInteger(value.statusCode)
+		|| (value.statusCode as number) < 100
+		|| (value.statusCode as number) > 599
+		|| !isNonNegativeInteger(value.durationMs)
+		|| typeof value.createdAt !== 'string') {
+		return false;
+	}
+
+	const tokens = [value.inputTokens, value.cachedInputTokens, value.outputTokens];
+	return value.usageMeasurement === 'provider-reported'
+		? tokens.every(token => token !== null)
+		: tokens.every(token => token === null);
+}
+
 const lifecycleEventTypes: ReadonlySet<string> = new Set<LifecycleEventType>([
 	'session.started',
 	'prompt.submitted',
@@ -199,5 +229,21 @@ const lifecycleEventTypes: ReadonlySet<string> = new Set<LifecycleEventType>([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isOptionalString(value: unknown): boolean {
+	return value === undefined || typeof value === 'string';
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+	return Number.isInteger(value) && (value as number) >= 0;
+}
+
+function isNullableNonNegativeInteger(value: unknown): value is number | null {
+	return value === null || isNonNegativeInteger(value);
+}
+
+function isSha256(value: unknown): value is string {
+	return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 

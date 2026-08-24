@@ -1,7 +1,7 @@
 {
   "name": "@fikeya/protocol",
   "version": "0.1.0",
-  "description": "Typed local protocol shared by Fikeya Desktop, CLI, runtime, and memory adapters.",
+  "description": "Canonical typed interoperability contract for Fikeya component adapters.",
   "type": "module",
   "license": "Apache-2.0",
   "private": true,

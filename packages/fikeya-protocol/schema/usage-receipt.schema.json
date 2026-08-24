@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fikeya.dev/schema/usage-receipt.v1.json",
+  "title": "Fikeya provider usage receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "usageMeasurement",
+    "provider",
+    "model",
+    "apiMode",
+    "callId",
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "requestBytes",
+    "responseBytes",
+    "requestSha256",
+    "responseSha256",
+    "statusCode",
+    "durationMs",
+    "createdAt"
+  ],
+  "properties": {
+    "usageMeasurement": {
+      "enum": ["provider-reported", "unavailable"]
+    },
+    "provider": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "apiMode": { "enum": ["responses", "chat-completions"] },
+    "callId": { "type": "string", "minLength": 1 },
+    "requestId": { "type": "string" },
+    "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
+    "cachedInputTokens": { "type": ["integer", "null"], "minimum": 0 },
+    "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+    "requestBytes": { "type": "integer", "minimum": 0 },
+    "responseBytes": { "type": "integer", "minimum": 0 },
+    "requestSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "responseSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "statusCode": { "type": "integer", "minimum": 100, "maximum": 599 },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "usageMeasurement": { "const": "unavailable" } },
+        "required": ["usageMeasurement"]
+      },
+      "then": {
+        "properties": {
+          "inputTokens": { "type": "null" },
+          "cachedInputTokens": { "type": "null" },
+          "outputTokens": { "type": "null" }
+        }
+      },
+      "else": {
+        "properties": {
+          "inputTokens": { "type": "integer", "minimum": 0 },
+          "cachedInputTokens": { "type": "integer", "minimum": 0 },
+          "outputTokens": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  ]
+}
