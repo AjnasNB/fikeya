@@ -17,7 +17,6 @@ import sys
 
 PINNED_DISTRIBUTIONS = {
     "azure-identity": "1.25.3",
-    "backports.tarfile": "1.2.0",
     "jaraco.classes": "3.4.0",
     "jaraco.context": "6.1.2",
     "jaraco.functools": "4.6.0",
@@ -25,6 +24,7 @@ PINNED_DISTRIBUTIONS = {
     "more-itertools": "11.1.0",
     "pyinstaller": "6.22.2",
 }
+LEGACY_PYTHON_DISTRIBUTIONS = {"backports.tarfile": "1.2.0"}
 WINDOWS_DISTRIBUTIONS = {"pywin32-ctypes": "0.2.3"}
 
 
@@ -141,6 +141,8 @@ def main() -> int:
         raise RuntimeError("PyInstaller did not produce the expected standalone runtime executable.")
 
     distributions = dict(PINNED_DISTRIBUTIONS)
+    if sys.version_info < (3, 12):
+        distributions.update(LEGACY_PYTHON_DISTRIBUTIONS)
     if sys.platform == "win32":
         distributions.update(WINDOWS_DISTRIBUTIONS)
     package_receipts = []
@@ -159,8 +161,15 @@ def main() -> int:
             "metadataName": distribution.metadata.get("Name", name),
         })
 
-    python_license = Path(sys.prefix) / "LICENSE.txt"
-    if not python_license.is_file():
+    python_license = next((
+        candidate
+        for candidate in (
+            Path(sys.prefix) / "LICENSE.txt",
+            Path(sys.base_prefix) / "LICENSE.txt",
+        )
+        if candidate.is_file()
+    ), None)
+    if python_license is None:
         raise RuntimeError("The embedded Python distribution license was not found.")
     python_license_destination = license_root / "python" / "LICENSE.txt"
     python_license_destination.parent.mkdir(parents=True, exist_ok=True)
