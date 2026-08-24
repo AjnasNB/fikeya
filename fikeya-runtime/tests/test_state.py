@@ -176,4 +176,4 @@ def test_provider_call_receipt_is_content_free_and_migrates_schema(
     )
 
     with store._connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3

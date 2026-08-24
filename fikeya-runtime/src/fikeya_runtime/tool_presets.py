@@ -245,11 +245,17 @@ class PresetCatalog:
         if directory is None:
             root = resources.files("fikeya_runtime").joinpath("presets")
             entries = sorted(
-                (entry for entry in root.iterdir() if entry.name.endswith(".preset.json")),
+                (
+                    entry
+                    for entry in root.iterdir()
+                    if entry.name.endswith(".preset.json")
+                ),
                 key=lambda entry: entry.name,
             )
             for entry in entries:
-                documents.append((entry.name, _read_document(entry.read_text("utf-8"), entry.name)))
+                documents.append(
+                    (entry.name, _read_document(entry.read_text("utf-8"), entry.name))
+                )
         else:
             root_path = _safe_catalog_directory(directory)
             for candidate in sorted(root_path.glob("*.preset.json")):
@@ -261,7 +267,9 @@ class PresetCatalog:
                         f"Preset path escapes its catalog: {candidate.name}"
                     ) from error
                 if candidate.is_symlink():
-                    raise ToolPresetError("Preset catalogs may not contain symbolic links.")
+                    raise ToolPresetError(
+                        "Preset catalogs may not contain symbolic links."
+                    )
                 documents.append(
                     (
                         candidate.name,
@@ -270,7 +278,9 @@ class PresetCatalog:
                 )
         if not documents:
             raise ToolPresetError("No external tool presets were found.")
-        presets = tuple(_validate_preset(document, label) for label, document in documents)
+        presets = tuple(
+            _validate_preset(document, label) for label, document in documents
+        )
         identifiers = [preset.preset_id for preset in presets]
         if len(set(identifiers)) != len(identifiers):
             raise ToolPresetError("External tool preset identifiers must be unique.")
@@ -368,8 +378,12 @@ class ToolBudget:
                 raise ToolPresetError("Tool concurrent-request limit has been reached.")
             self._requests += 1
             self._active += 1
+        request_started = self._monotonic()
         try:
             yield
+            elapsed_ms = (self._monotonic() - request_started) * 1_000
+            if elapsed_ms > self.limits.request_timeout_ms:
+                raise ToolPresetError("Tool request timeout has expired.")
         finally:
             with self._lock:
                 self._active -= 1
@@ -379,7 +393,9 @@ class ToolBudget:
             raise ToolPresetError("Tool response payload must be bytes.")
         self._assert_session_live()
         if len(payload) > self.limits.max_response_bytes:
-            raise ToolPresetError("Tool response exceeds the preset response-byte limit.")
+            raise ToolPresetError(
+                "Tool response exceeds the preset response-byte limit."
+            )
 
     def _assert_session_live(self) -> None:
         elapsed_ms = (self._monotonic() - self._started_at) * 1_000
@@ -399,7 +415,9 @@ class ToolPresetLoader:
         *,
         executable_resolver: Callable[[str], str | None] = shutil.which,
     ) -> ToolDiagnostic:
-        return ToolDiagnostic(executable_found=executable_resolver(preset.command) is not None)
+        return ToolDiagnostic(
+            executable_found=executable_resolver(preset.command) is not None
+        )
 
     def prepare_launch(
         self,
@@ -414,8 +432,14 @@ class ToolPresetLoader:
         preset = self.catalog.get(preset_id)
         status = ToolEnablementStore(workspace).status(preset)
         if not status.enabled:
-            suffix = " Reconfirm the changed manifest." if status.requires_confirmation else ""
-            raise ToolPresetError(f"Tool preset is disabled for this workspace.{suffix}")
+            suffix = (
+                " Reconfirm the changed manifest."
+                if status.requires_confirmation
+                else ""
+            )
+            raise ToolPresetError(
+                f"Tool preset is disabled for this workspace.{suffix}"
+            )
         supplied = dict(configuration or {})
         _validate_configuration(preset, supplied)
         environment = _minimal_process_environment()
@@ -456,7 +480,10 @@ class ToolPresetLoader:
         """Spawn a prepared stdio process; callers must frame MCP within ToolBudget."""
 
         _validate_limits(plan.limits)
-        _require_safe_root(plan.cwd)
+        workspace = Workspace.load(plan.cwd)
+        _require_safe_workspace(workspace)
+        if workspace.root != plan.cwd:
+            raise ToolPresetError("Launch workspace changed after plan validation.")
         if not plan.argv or any("\x00" in argument for argument in plan.argv):
             raise ToolPresetError("Launch arguments contain invalid bytes.")
         executable = _validate_resolved_executable(plan.argv[0])
@@ -506,7 +533,9 @@ def _validate_preset(value: dict[str, object], label: str) -> ToolPreset:
     _exact_keys(transport, {"type", "command", "args", "shell"}, f"{label}.transport")
     _require_exact(transport["type"], "stdio", f"{label}.transport.type")
     _require_exact(transport["shell"], False, f"{label}.transport.shell")
-    _require_exact(transport["command"], contract["command"], f"{label}.transport.command")
+    _require_exact(
+        transport["command"], contract["command"], f"{label}.transport.command"
+    )
     _require_exact(transport["args"], contract["args"], f"{label}.transport.args")
     command = str(transport["command"])
     if not _EXECUTABLE_NAME.fullmatch(command) or command.casefold() in _SHELL_NAMES:
@@ -529,10 +558,20 @@ def _validate_preset(value: dict[str, object], label: str) -> ToolPreset:
         {"effect", "allowedTools", "deniedCapabilities"},
         f"{label}.capabilities",
     )
-    _require_exact(capabilities["effect"], contract["effect"], f"{label}.capabilities.effect")
-    _require_exact(capabilities["allowedTools"], contract["tools"], f"{label}.capabilities.allowedTools")
+    _require_exact(
+        capabilities["effect"], contract["effect"], f"{label}.capabilities.effect"
+    )
+    _require_exact(
+        capabilities["allowedTools"],
+        contract["tools"],
+        f"{label}.capabilities.allowedTools",
+    )
     denied = capabilities["deniedCapabilities"]
-    if not isinstance(denied, list) or not denied or any(not isinstance(item, str) for item in denied):
+    if (
+        not isinstance(denied, list)
+        or not denied
+        or any(not isinstance(item, str) for item in denied)
+    ):
         raise ToolPresetError(f"{label} must declare denied capabilities.")
 
     environment = _object(value["environment"], f"{label}.environment")
@@ -541,7 +580,9 @@ def _validate_preset(value: dict[str, object], label: str) -> ToolPreset:
         {"fixed", "configuration", "secretReferences"},
         f"{label}.environment",
     )
-    _require_exact(environment["fixed"], contract["fixed"], f"{label}.environment.fixed")
+    _require_exact(
+        environment["fixed"], contract["fixed"], f"{label}.environment.fixed"
+    )
     _require_exact(
         environment["configuration"],
         contract["configuration"],
@@ -554,19 +595,27 @@ def _validate_preset(value: dict[str, object], label: str) -> ToolPreset:
     )
     for name, item in _object(environment["fixed"], "fixed environment").items():
         if not _ENVIRONMENT_NAME.fullmatch(name) or not isinstance(item, str):
-            raise ToolPresetError(f"{label} contains an invalid fixed environment entry.")
+            raise ToolPresetError(
+                f"{label} contains an invalid fixed environment entry."
+            )
 
     limits_value = _object(value["limits"], f"{label}.limits")
     _exact_keys(limits_value, set(_LIMIT_BOUNDS), f"{label}.limits")
     for name, (minimum, maximum) in _LIMIT_BOUNDS.items():
         item = limits_value[name]
-        if isinstance(item, bool) or not isinstance(item, int) or not minimum <= item <= maximum:
+        if (
+            isinstance(item, bool)
+            or not isinstance(item, int)
+            or not minimum <= item <= maximum
+        ):
             raise ToolPresetError(
                 f"{label}.{name} must be an integer from {minimum} to {maximum}."
             )
     policies = value["upstreamPolicyRequirements"]
-    if not isinstance(policies, list) or not policies or any(
-        not isinstance(policy, str) or not policy for policy in policies
+    if (
+        not isinstance(policies, list)
+        or not policies
+        or any(not isinstance(policy, str) or not policy for policy in policies)
     ):
         raise ToolPresetError(f"{label} must declare upstream policy requirements.")
     display_name = value["displayName"]
@@ -597,10 +646,16 @@ def _validate_preset(value: dict[str, object], label: str) -> ToolPreset:
         allowed_tools=tuple(str(tool) for tool in capabilities["allowedTools"]),
         fixed_environment=dict(_object(environment["fixed"], "fixed environment")),
         configuration=tuple(
-            dict(entry) for entry in _array_of_objects(environment["configuration"], "configuration")
+            dict(entry)
+            for entry in _array_of_objects(
+                environment["configuration"], "configuration"
+            )
         ),
         secret_references=tuple(
-            dict(entry) for entry in _array_of_objects(environment["secretReferences"], "secret references")
+            dict(entry)
+            for entry in _array_of_objects(
+                environment["secretReferences"], "secret references"
+            )
         ),
         dependency={key: str(item) for key, item in dependency.items()},
         limits=limits,
@@ -623,7 +678,9 @@ def _require_safe_workspace(workspace: Workspace) -> None:
     try:
         expected_metadata.relative_to(root)
     except ValueError as error:
-        raise ToolPresetError("Workspace metadata escapes the workspace root.") from error
+        raise ToolPresetError(
+            "Workspace metadata escapes the workspace root."
+        ) from error
 
 
 def _require_safe_root(root: str | Path) -> None:
@@ -645,16 +702,26 @@ def _validate_configuration(preset: ToolPreset, values: Mapping[str, str]) -> No
             raise ToolPresetError(f"Required tool configuration is missing: {name}")
         if value is None:
             continue
-        if not isinstance(value, str) or "\x00" in value or "\r" in value or "\n" in value:
+        if (
+            not isinstance(value, str)
+            or "\x00" in value
+            or "\r" in value
+            or "\n" in value
+        ):
             raise ToolPresetError(f"Tool configuration is invalid: {name}")
         if len(value.encode("utf-8")) > 16_384:
             raise ToolPresetError(f"Tool configuration is too large: {name}")
         if entry["format"] == "http-or-https-url-without-credentials":
             _validate_http_url(value, origin_only=False)
-        elif entry["format"] == "comma-separated-http-origins-without-credentials-or-paths":
+        elif (
+            entry["format"]
+            == "comma-separated-http-origins-without-credentials-or-paths"
+        ):
             origins = value.split(",")
             if not origins or any(not origin.strip() for origin in origins):
-                raise ToolPresetError("Crawler origins must be a non-empty comma-separated list.")
+                raise ToolPresetError(
+                    "Crawler origins must be a non-empty comma-separated list."
+                )
             for origin in origins:
                 _validate_http_url(origin.strip(), origin_only=True)
 
@@ -665,8 +732,12 @@ def _validate_http_url(value: str, *, origin_only: bool) -> None:
         raise ToolPresetError("Tool URLs must use HTTP or HTTPS and include a host.")
     if parsed.username or parsed.password:
         raise ToolPresetError("Tool URLs may not embed credentials.")
-    if parsed.fragment or (origin_only and (parsed.query or parsed.path not in {"", "/"})):
-        raise ToolPresetError("Crawler allowlist entries must be origins without paths or queries.")
+    if parsed.fragment or (
+        origin_only and (parsed.query or parsed.path not in {"", "/"})
+    ):
+        raise ToolPresetError(
+            "Crawler allowlist entries must be origins without paths or queries."
+        )
     hostname = parsed.hostname.casefold()
     if origin_only and hostname in {"localhost", "localhost.localdomain"}:
         raise ToolPresetError("Crawler origins may not target localhost.")
@@ -677,14 +748,18 @@ def _validate_http_url(value: str, *, origin_only: bool) -> None:
             pass
         else:
             if not address.is_global:
-                raise ToolPresetError("Crawler origins may not target non-public IP addresses.")
+                raise ToolPresetError(
+                    "Crawler origins may not target non-public IP addresses."
+                )
 
 
 def _validate_ephemeral_secret(value: str) -> None:
     if not isinstance(value, str) or not value or len(value) > 16_384:
         raise ToolPresetError("Resolved tool credential has an invalid length.")
     if "\x00" in value or "\r" in value or "\n" in value:
-        raise ToolPresetError("Resolved tool credential contains invalid control characters.")
+        raise ToolPresetError(
+            "Resolved tool credential contains invalid control characters."
+        )
 
 
 def _minimal_process_environment() -> dict[str, str]:
@@ -723,7 +798,11 @@ def _validate_limits(limits: ToolLimits) -> None:
     for name, (minimum, maximum) in _LIMIT_BOUNDS.items():
         python_name = _camel_to_snake(name)
         value = getattr(limits, python_name)
-        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not minimum <= value <= maximum
+        ):
             raise ToolPresetError(f"Unsafe process limit: {name}")
 
 
