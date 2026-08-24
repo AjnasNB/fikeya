@@ -34,3 +34,7 @@ class StateError(FikeyaError):
 
 class ApprovalError(FikeyaError):
     """Raised when tool execution lacks a matching live approval."""
+
+
+class ToolPresetError(FikeyaError):
+    """Raised when an external-tool preset or launch violates its boundary."""

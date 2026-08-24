@@ -97,12 +97,18 @@ CREATE TABLE IF NOT EXISTS approvals (
     decision TEXT NOT NULL CHECK (decision IN ('approved', 'consumed'))
 );
 
+CREATE TABLE IF NOT EXISTS tool_enablements (
+    preset_id TEXT PRIMARY KEY,
+    preset_sha256 TEXT NOT NULL,
+    enabled_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS events_by_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS usage_by_session ON usage_records(session_id, created_at);
 CREATE INDEX IF NOT EXISTS receipts_by_session ON context_receipts(session_id, created_at);
 CREATE INDEX IF NOT EXISTS provider_calls_by_session
     ON provider_call_receipts(session_id, created_at);
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 """
 
 
@@ -126,7 +132,7 @@ class StateStore:
 
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise StateError(f"Unsupported state schema version: {version}")
             connection.executescript(_SCHEMA)
         try:
