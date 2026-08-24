@@ -241,6 +241,7 @@
         "maxConcurrentRequests",
         "maxRequestsPerSession",
         "maxSessionDurationMs",
+        "maxRequestBytes",
         "maxResponseBytes"
       ],
       "properties": {
@@ -273,6 +274,11 @@
           "type": "integer",
           "minimum": 1000,
           "maximum": 3600000
+        },
+        "maxRequestBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 8388608
         },
         "maxResponseBytes": {
           "type": "integer",

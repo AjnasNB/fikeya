@@ -28,6 +28,7 @@ const LIMIT_BOUNDS = {
   maxConcurrentRequests: [1, 4],
   maxRequestsPerSession: [1, 500],
   maxSessionDurationMs: [1_000, 3_600_000],
+  maxRequestBytes: [1_024, 8 * 1_024 * 1_024],
   maxResponseBytes: [1_024, 8 * 1_024 * 1_024]
 };
 const SECRET_VALUE_PATTERN = /(?:sk-(?:or-)?[A-Za-z0-9_-]{16,}|nvapi-[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]+PRIVATE KEY-----)/;

@@ -49,7 +49,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-fikeya_runtime = ["py.typed"]
+fikeya_runtime = ["py.typed", "presets/*.preset.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
