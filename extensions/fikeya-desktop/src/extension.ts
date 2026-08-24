@@ -266,6 +266,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		await this.context.globalState.update(modeStorageKey, mode);
 		this.state = { ...this.state, mode };
 		this.refresh();
+		await vscode.commands.executeCommand(modeWorkbenchCommand(mode));
 	}
 
 	private applyRuntimeResult(result: FikeyaRuntimeResult, command: 'doctor' | 'init'): void {
@@ -690,5 +691,18 @@ function modeLabel(mode: FikeyaMode, strings: WebviewStrings): string {
 			return strings.review;
 		default:
 			return strings.agent;
+	}
+}
+
+function modeWorkbenchCommand(mode: FikeyaMode): string {
+	switch (mode) {
+		case 'editor':
+			return 'workbench.action.focusActiveEditorGroup';
+		case 'terminal':
+			return 'workbench.action.terminal.focus';
+		case 'review':
+			return 'workbench.view.scm';
+		default:
+			return 'workbench.view.extension.fikeya';
 	}
 }
