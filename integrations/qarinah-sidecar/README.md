@@ -1,8 +1,8 @@
 # Fikeya Qarinah sidecar
 
-This package is Fikeya's root-bound memory port. It runs over standard input and output, pins the stable Qarinah JavaScript API, and never opens a network listener.
+This package is Fikeya's root-bound context-engine port. It runs over standard input and output, pins the stable Qarinah JavaScript API, and never opens a network listener.
 
-It owns no model credentials and executes no shell commands. The desktop and runtime send typed lifecycle events; the sidecar maps them into Qarinah's append-only project ledger and returns cited context packs, receipts, worktree information, and developer-memory views.
+It owns no model credentials and executes no shell commands. The desktop and runtime send typed lifecycle events; the sidecar maps them into Qarinah's append-only project ledger and returns budgeted cited context packs, receipts, worktree information, symbol results, and developer context-graph views.
 
 ## Protocol
 

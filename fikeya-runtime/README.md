@@ -1,6 +1,6 @@
 # Fikeya Runtime
 
-Fikeya Runtime is the local-first execution and protocol foundation for Fikeya.
+Fikeya Runtime is the provider-neutral execution, bounded-context, and protocol foundation for the Fikeya AI code editor.
 It provides a typed session event stream, resumable and forkable sessions,
 provider configuration backed by the operating system credential store,
 bounded OpenAI-compatible model execution, exact provider-usage receipts,
@@ -82,11 +82,12 @@ fikeya provider test work --allow-network
 The command reports status and latency without printing a response body or
 credential.
 
-## Run an agent turn with project memory
+## Run an agent turn with bounded project context
 
 Prompts are accepted only through standard input. When Qarinah is installed and
 the workspace has opted into retrieval, `auto` compiles a bounded cited project
-pack and supplies it as explicitly untrusted reference context. The prompt,
+pack and supplies it as explicitly untrusted reference context. This is context
+selection for the active coding task, not a requirement to replay prior sessions. The prompt,
 context body, and answer remain ephemeral; SQLite retains hashes, byte counts,
 coverage, evidence counts, provider usage, and receipt identifiers.
 
@@ -101,9 +102,10 @@ turn.
 
 ## Run one bounded agent turn
 
-Fikeya's first execution slice supports the Responses API and OpenAI-compatible
-chat completions. The prompt enters through standard input so it is not exposed
-in the process list. Network use always requires an explicit opt-in.
+Fikeya's first execution slice supports the Responses API, Anthropic Messages,
+and OpenAI-compatible chat completions. The prompt enters through standard input
+so it is not exposed in the process list. Network use always requires an explicit
+opt-in.
 
 ```console
 printf '%s' "Explain the failing test." | fikeya agent run . \
@@ -121,8 +123,12 @@ fikeya agent cancel ses_example --workspace .
 
 The live output is returned to the caller but is not written to SQLite. Fikeya
 stores request and response hashes, byte counts, latency, status, and exact
-provider-reported input, output, and cache tokens. If a provider omits usage,
-the receipt says `unavailable`; Fikeya does not invent an estimate.
+provider-reported input, output, and cache tokens. Anthropic reports base input,
+cache creation, and cache reads separately; Fikeya normalizes their sum into
+`inputTokens` and preserves cache reads in `cachedInputTokens`. Cache creation is
+therefore included in total input until the versioned receipt adds a separate
+field. If a provider omits usage, the receipt says `unavailable`; Fikeya does not
+invent an estimate.
 
 ```console
 fikeya agent receipts ses_example --workspace . --json
@@ -133,8 +139,7 @@ Current execution support is deliberately scoped:
 - Azure OpenAI and OpenAI default to the Responses API.
 - OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible profiles default
   to chat completions. Compatible profiles may opt into Responses explicitly.
-- Anthropic profiles can be stored and probed, but native Anthropic execution is
-  not claimed by this runtime slice.
+- Anthropic profiles execute through the native Messages API.
 - Cancellation is cooperative at request and response-stream boundaries. The
   configured timeout remains the hard bound while a socket operation is active.
 
@@ -185,7 +190,7 @@ explicit diagnostic warning in this alpha. On Windows, `.cmd`, `.bat`, and
 PowerShell shims are rejected because the no-shell boundary requires a native
 executable entry point.
 
-## Qarinah boundary
+## Qarinah context-engine boundary
 
 `QarinahAdapter` invokes a separately installed `qarinah` executable with an
 argument vector and `shell=False`. Fikeya may return the live CLI response to its

@@ -56,19 +56,20 @@ The public-alpha provider adapter contract covers profile discovery, bounded tex
   "outputTokens": 220,
   "requestBytes": 1820,
   "responseBytes": 760,
-  "requestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "responseSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "requestSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "responseSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "statusCode": 200,
   "durationMs": 480,
   "createdAt": "2026-08-24T00:00:00.000Z"
 }
 ```
 
-`usageMeasurement` is `provider-reported` only when the provider response contains all three token fields. Otherwise it is `unavailable` and all three token fields are `null`. Local tokenizer and character estimates are kept outside this receipt so the UI cannot confuse them with provider billing. The public alpha does not calculate currency cost inside provider receipts.
+`usageMeasurement` is `provider-reported` only when the provider response contains the required token fields. Otherwise it is `unavailable` and all three token fields are `null`. For Anthropic Messages, `inputTokens` is normalized to base input plus cache-creation input plus cache-read input, while `cachedInputTokens` is the cache-read subset. This preserves total billed input in the shared v1 receipt; a separate cache-write field is reserved for a later protocol version. Local tokenizer and character estimates are kept outside this receipt so the UI cannot confuse them with provider billing. The public alpha does not calculate currency cost inside provider receipts.
 
 ## Default Endpoints
 
 - OpenRouter: `https://openrouter.ai/api/v1`
+- Anthropic Messages: `https://api.anthropic.com/v1/messages`
 - NVIDIA hosted NIM: user-configured OpenAI-compatible endpoint
 - Ollama: `http://127.0.0.1:11434/v1`
 

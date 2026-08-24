@@ -1,5 +1,7 @@
 # Fikeya Architecture
 
+Fikeya is an AI code editor and coding-agent runtime first. Durable sessions and Qarinah-backed context are supporting mechanisms, not the product definition. The architecture is optimized around bounded context selection, provider choice, visible tool control, external task verification, and exact usage receipts so efficiency can be measured as verified work per dollar.
+
 ## Status and reading guide
 
 Fikeya is a developer alpha. This document separates three different kinds of behavior:
@@ -39,11 +41,11 @@ The current runtime provides:
 - content-free provider and Qarinah receipts; and
 - a process-only `ToolBroker` that accepts an executable and argument vector, starts disabled, and requires an exact one-use approval before real execution.
 
-Azure OpenAI and OpenAI use the Responses API by default. OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Anthropic profiles can currently be stored and probed, but native Anthropic model execution is not integrated.
+Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral Entra ID token.
 
-### Qarinah boundary
+### Qarinah context-engine boundary
 
-The runtime can invoke a separately installed `qarinah` executable with an argument vector and `shell=False` to prepare opt-in cited context. Durable runtime state retains content-free metadata rather than prompt or context bodies.
+The runtime can invoke a separately installed `qarinah` executable with an argument vector and `shell=False` to compile opt-in cited context under a selected budget. Durable runtime state retains content-free metadata rather than prompt or context bodies.
 
 The pinned Node.js sidecar provides a root-bound `MemoryPort` for status, record, prepare, compact, inspect, receipts, worktrees, cancellation, and close operations. It executes no tools and manages no provider credentials.
 
@@ -103,7 +105,7 @@ No unauthenticated local HTTP listener should be part of the default architectur
 
 ### Target runtime orchestration
 
-The integrated runtime should own model routing, planning, sessions, context budgets, tool orchestration, usage accounting, and adapter lifecycles. Desktop and CLI should consume the same events and receipts.
+The integrated runtime should own model routing, planning, sessions, bounded context compilation, tool orchestration, usage accounting, and adapter lifecycles. Desktop and CLI should consume the same events and receipts.
 
 The standalone native core can become the default planner. Optional LangGraph or Deep Agents integrations must remain behind Fikeya-owned interfaces. Complete external agents should connect through ACP; Codex through its local app-server; Claude through an official SDK with user-provided API credentials; and individual tools and resources through MCP.
 

@@ -1,17 +1,18 @@
 # Fikeya
 
-Fikeya is an open coding-agent workbench with one runtime and two interfaces: a desktop editor for visual work and a CLI for headless automation. It is designed to plan, edit, run, review, and resume software work without locking the project to one model provider.
+Fikeya is an open, provider-neutral AI code editor and coding-agent runtime with two interfaces: a desktop editor for visual work and a CLI for headless automation. It is designed to plan, edit, run, and review software work while compiling only the bounded project context a turn needs.
 
-Its goal is simple: let developers use the model and agent they prefer without losing project memory, control of tools, or a verifiable record of what changed.
+Its optimization goal is **verified work per dollar**: preserve task quality and external verification while reducing unnecessary context, recording exact provider usage when available, and avoiding lock-in to one model or agent. That is a product target measured by matched evaluations, not a claim that every Fikeya run is already cheaper than another system.
 
 ## What Fikeya Includes
 
-- **Four working modes:** Editor, Agent, Terminal, and Review.
+- **Four working modes:** Editor, Agent, Terminal, and Review, each focused on a distinct development workflow.
 - **Two desktop layouts:** Studio for code-first work and Agent Focus for plan-first work.
 - **Provider-neutral configuration:** Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints.
-- **One runtime for Desktop and CLI:** the same session, approval, tool, usage, and evidence contracts in both interfaces.
-- **Qarinah project memory:** compact, evidence-linked project context, decisions, tool outcomes, worktrees, and context receipts.
+- **One runtime for Desktop and CLI:** shared provider, approval, tool, usage, context, and evidence contracts across both interfaces.
+- **Qarinah context engine:** compact, evidence-linked project context assembled from decisions, tool outcomes, worktrees, symbols, and cited receipts.
 - **Bounded provider execution:** workspace-root validation, explicit network consent, cancellation, and content-free request and response hashes.
+- **Measurable efficiency:** provider-reported input, cached-input, and output usage stays distinct from local estimates, and matched benchmark receipts fail closed when conditions differ.
 - **Open protocols:** ACP for complete agents and MCP for tools and resources.
 - **Reviewed browser and crawler presets:** validated, digest-bound connector configuration that stays disabled until the developer explicitly enables it; the connector process and MCP session are separate integrations.
 - **Standalone native-agent core:** typed plan, act, observe, and review stages with checkpoints, cancellation, bounded retries, exact-call approvals, and execution receipts. Wiring this package into the Desktop turn is a remaining alpha integration task.
@@ -28,12 +29,23 @@ ACP | MCP | typed events | approvals | cancellation | resume
                     │
                     ▼
               Fikeya Runtime
-provider calls | connector presets | usage receipts
+provider calls | context budgets | connector presets | usage receipts
                     │
           ┌─────────┼──────────┐
           ▼                    ▼
        Qarinah          ACP and MCP adapters
-        memory          plus reviewed presets
+   context engine       plus reviewed presets
+```
+
+## Efficiency Evidence
+
+Fikeya evaluates efficiency as cost per externally verified successful task, not as raw token reduction in isolation. Comparisons must use the same repository state, task, model and API version, pricing snapshot, tool contract, network policy, limits, and grader. Failed attempts remain in total cost.
+
+The dependency-free comparator in [`bench/fikeya-efficiency`](bench/fikeya-efficiency/README.md) validates those conditions and computes solve rate, billed tokens, total cost, cost per verified task, and latency percentiles from completed receipts. Its checked-in fixtures are synthetic contract tests, not product-performance evidence and not a marketing claim.
+
+```powershell
+npm --prefix bench/fikeya-efficiency test
+npm --prefix bench/fikeya-efficiency run compare:fixtures
 ```
 
 ## Security Model

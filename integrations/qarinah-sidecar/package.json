@@ -1,7 +1,7 @@
 {
   "name": "@fikeya/qarinah-sidecar",
   "version": "0.1.0",
-  "description": "Root-bound stdio memory adapter between Fikeya and Qarinah.",
+  "description": "Root-bound stdio context-engine adapter between the Fikeya AI code editor and Qarinah.",
   "type": "module",
   "private": true,
   "license": "Apache-2.0",
