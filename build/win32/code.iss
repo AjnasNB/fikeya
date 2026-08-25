@@ -8,7 +8,7 @@
 AppId={#AppId}
 AppName={#NameLong}
 AppVerName={#NameVersion}
-AppPublisher=Fikeya contributors
+AppPublisher=Ajnas N B
 AppPublisherURL=https://fikeya.com/
 AppSupportURL=https://github.com/AjnasNB/fikeya/issues
 AppUpdatesURL=https://fikeya.com/#install
@@ -30,6 +30,8 @@ MinVersion=10.0
 SourceDir={#SourceDir}
 AppVersion={#Version}
 VersionInfoVersion={#RawVersion}
+VersionInfoCompany=Ajnas N B
+VersionInfoDescription=Fikeya AI code editor
 ShowLanguageDialog=auto
 ArchitecturesAllowed={#ArchitecturesAllowed}
 ArchitecturesInstallIn64BitMode={#ArchitecturesInstallIn64BitMode}

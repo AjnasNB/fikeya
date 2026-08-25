@@ -111,7 +111,7 @@ class PathTests(unittest.TestCase):
                 {
                     "root": root.resolve(),
                     "stable": True,
-                    "parent": cache_base.resolve() / "developer-alpha",
+                    "parent": cache_base.resolve() / "public-beta",
                     "created": False,
                 },
             )
@@ -189,7 +189,7 @@ class PathTests(unittest.TestCase):
         )
         manifest = {
             "schemaVersion": 1,
-            "channel": "developer-alpha",
+            "channel": "public-beta",
             "requirements": {
                 "node": {"allowedMajors": [22, 24, 26], "minimumByMajor": {"22": "22.13.0"}},
                 "python": {"minimum": "3.10.0", "maximumExclusive": "4.0.0"},
@@ -199,7 +199,7 @@ class PathTests(unittest.TestCase):
                     "id": "runtime",
                     "kind": "python",
                     "path": "fikeya-runtime",
-                    "version": "0.1.0a1",
+                    "version": "0.1.0b1",
                     "constraints": "scripts/fikeya/runtime-constraints.txt",
                 }
             ],

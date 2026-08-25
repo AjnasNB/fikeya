@@ -142,8 +142,8 @@ const electronAssetResolver = electronFeed
 export const config = {
 	version: electronVersion,
 	productAppName: product.nameLong,
-	companyName: 'Fikeya contributors',
-	copyright: 'Copyright (C) 2026 Fikeya contributors',
+	companyName: 'Ajnas N B',
+	copyright: 'Copyright (C) 2026 Ajnas N B and Fikeya contributors',
 	darwinExecutable: product.nameShort,
 	darwinIcon: 'resources/darwin/code.icns',
 	darwinBundleIdentifier: product.darwinBundleIdentifier,

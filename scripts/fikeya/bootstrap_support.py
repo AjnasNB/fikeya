@@ -174,7 +174,7 @@ def resolve_cache_path(root: Path, cache_base: str | None) -> Path:
     if base == Path(base.anchor):
         raise BootstrapError("cache root cannot be a filesystem root")
 
-    target = base / "developer-alpha" / project_fingerprint(root)
+    target = base / "public-beta" / project_fingerprint(root)
     if target == root or target == Path(target.anchor):
         raise BootstrapError("cache target is too broad")
     return target
@@ -253,7 +253,7 @@ def _common_parser(parser: argparse.ArgumentParser) -> None:
 
 
 def _parse_arguments(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate a Fikeya developer-alpha bundle")
+    parser = argparse.ArgumentParser(description="Validate a Fikeya public-beta bundle")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate_parser = subparsers.add_parser("validate")

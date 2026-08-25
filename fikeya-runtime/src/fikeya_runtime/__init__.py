@@ -6,4 +6,4 @@
 from .events import EventEnvelope, EventType
 
 __all__ = ["EventEnvelope", "EventType"]
-__version__ = "0.1.0a1"
+__version__ = "0.1.0b1"

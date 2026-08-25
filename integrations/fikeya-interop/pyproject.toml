@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fikeya-interop"
-version = "0.1.0a1"
+version = "0.1.0b1"
 description = "Bounded ACP, Codex app-server, and MCP interoperability for Fikeya."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
 authors = [
-  { name = "Fikeya contributors" },
+  { name = "Ajnas N B" },
 ]
 dependencies = [
   "agent-client-protocol==0.12.1",
