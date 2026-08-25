@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
 	<title id="title">Fikeya</title>
-	<rect width="64" height="64" rx="13" fill="#111716"/>
-	<path d="M17 15 7 32l10 17h8L15 32l10-17h-8Z" fill="#65e6b4"/>
-	<path d="m47 15 10 17-10 17h-8l10-17-10-17h8Z" fill="#65e6b4"/>
-	<path d="M25 12h23v8H34v8h12v8H34v16h-9V12Z" fill="#f1f3ee"/>
+	<desc id="description">A white F framed by mint code chevrons.</desc>
+	<rect width="64" height="64" rx="13" fill="#0b100f"/>
+	<path d="M15.5 19 8 32l7.5 13M48.5 19 56 32l-7.5 13" fill="none" stroke="#65e6b4" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+	<path d="M26.5 12h21l-5.5 8h-9.5c-3 0-4.5 1.5-5 5l-.5 3h13.5l-5 7.5H26l-2 14-9 5.5 5-33.5c1-6.5 3-9.5 6.5-9.5Z" fill="#f5f1e8"/>
 </svg>
