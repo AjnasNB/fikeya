@@ -8,6 +8,8 @@ const requiredFiles = [
 	'_headers',
 	'app.js',
 	'favicon.svg',
+	'fikeya-live-chat.png',
+	'fikeya-live-context-graph.png',
 	'index.html',
 	'robots.txt',
 	'sitemap.xml',
@@ -71,6 +73,11 @@ assert(html.includes('src="/fikeya-desktop-beta-editor.jpg"'), 'Real editor capt
 assert(html.includes('src="/fikeya-desktop-beta-agent.jpg"'), 'Real agent capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-terminal.jpg"'), 'Real terminal capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-review.jpg"'), 'Real review capture is missing');
+assert(html.includes('src="/fikeya-live-chat.png"'), 'Real right-side chat capture is missing');
+assert(html.includes('src="/fikeya-live-context-graph.png"'), 'Real Context graph capture is missing');
+assert(html.includes('76 bounded nodes and 201 visible links'), 'Measured live graph scope is missing');
+assert(html.includes('fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health'), 'Live CLI to Wrangler proof is missing');
+assert(html.includes('2026-08-25-cli-wrangler.md'), 'CLI to Wrangler verification receipt is missing');
 assert(html.includes('fikeya provider list --json'), 'Provider discovery command is missing');
 assert(!html.includes('Keep the work between coding-agent sessions'), 'Stale session-handoff positioning found');
 assert(!html.includes('Keep the work. Change the session.'), 'Stale session-handoff closing copy found');
@@ -149,6 +156,8 @@ const allowedExternalLinks = new Set([
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/FikeyaSetup-0.1.0-beta.1-win32-x64.exe',
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-desktop-0.1.0-win32-x64.vsix',
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-cli-0.1.0-beta.1.zip',
+	'https://github.com/AjnasNB/fikeya/blob/main/docs/fikeya/verification/2026-08-25-cli-wrangler.md',
+	'https://fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health',
 	'https://qarinah.io/docs/benchmarks/'
 ]);
 for (const href of hrefs) {

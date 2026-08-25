@@ -22,6 +22,8 @@ const publicFiles = [
 	'fikeya-live-editor-graph.png',
 	'fikeya-live-editor.png',
 	'fikeya-live-graph.png',
+	'fikeya-live-chat.png',
+	'fikeya-live-context-graph.png',
 	'fikeya-live-site.png',
 	'index.html',
 	'qarinah-standalone-graph.png',

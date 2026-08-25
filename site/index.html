@@ -36,6 +36,7 @@
 						<li><a href="#top">Home</a></li>
 						<li><a href="#product">Product</a></li>
 						<li><a href="#surfaces">Surfaces</a></li>
+						<li><a href="#proof">Live proof</a></li>
 						<li><a href="#models">Models</a></li>
 						<li><a href="#context">Context</a></li>
 						<li><a href="#evidence">Evidence</a></li>
@@ -120,6 +121,31 @@
 								<figure class="mode-shot"><img src="/fikeya-desktop-beta-graph.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Lab mode showing measured local usage and the verified Qarinah project graph"></figure>
 							</article>
 						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="section live-proof-section" id="proof">
+				<div class="shell">
+					<div class="section-intro proof-intro">
+						<p class="eyebrow">Tested in the real workbench</p>
+						<h2>Chat, project memory, and measured usage in one run.</h2>
+						<p>These captures come from an initialized Windows workspace running the Fikeya extension and bundled runtime. A deterministic local provider answered inside the right editor group; Qarinah supplied six cited project items, and the runtime retained provider-reported usage without contacting a paid model.</p>
+					</div>
+					<div class="proof-grid">
+						<article class="proof-card">
+							<div><span>01 / Right-side chat</span><h3>A real conversation beside the code.</h3><p>Choose a configured model, set the context boundary, send a turn, cancel it, start a new chat, or inspect the resulting receipts without replacing the editor.</p></div>
+							<figure><img src="/fikeya-live-chat.png" width="1800" height="1050" loading="lazy" alt="Fikeya running a successful right-side coding conversation beside a real local project"></figure>
+						</article>
+						<article class="proof-card">
+							<div><span>02 / Qarinah graph</span><h3>Evidence you can search and inspect.</h3><p>The Context tab rendered 76 bounded nodes and 201 visible links from the same initialized project, with type and relationship filters, pan, zoom, drag, manifest hash, and ledger identity.</p></div>
+							<figure><img src="/fikeya-live-context-graph.png" width="1800" height="1050" loading="lazy" alt="Fikeya Context tab rendering a real interactive Qarinah project-memory graph"></figure>
+						</article>
+					</div>
+					<div class="deploy-proof" aria-label="Verified Fikeya CLI deployment">
+						<div><span>03 / CLI to Cloudflare</span><strong>Four exact approvals, a Wrangler dry-run, a live deployment, and a 200 health check.</strong></div>
+						<p>The installed Fikeya CLI created and deployed a test Worker through Wrangler. The proof used a local deterministic provider, retained content-free receipts, and did not use a paid model or committed credential.</p>
+						<div><a href="https://fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health" rel="noopener noreferrer">Open the live health check</a><a href="https://github.com/AjnasNB/fikeya/blob/main/docs/fikeya/verification/2026-08-25-cli-wrangler.md" rel="noopener noreferrer">Read the verification receipt</a></div>
 					</div>
 				</div>
 			</section>
