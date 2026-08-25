@@ -3,14 +3,14 @@
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<meta name="description" content="Fikeya is an open AI code editor and coding agent that uses measured, task-relevant context so your model can spend fewer tokens without hiding the evidence.">
+		<meta name="description" content="Fikeya is an open AI code editor and coding agent that selects task-relevant project evidence within explicit budgets and records provider-reported usage.">
 		<meta name="robots" content="index, follow, max-image-preview:large">
 		<meta name="theme-color" content="#0b0f0e">
 		<meta name="color-scheme" content="dark">
 		<meta property="og:type" content="website">
 		<meta property="og:site_name" content="Fikeya">
 		<meta property="og:title" content="Fikeya | The open AI code editor for supported providers">
-		<meta property="og:description" content="Bring your model, use fewer tokens, and inspect every provider, context, tool, and verification receipt in one open coding workbench.">
+		<meta property="og:description" content="Bring your model, use task-relevant project evidence, and inspect provider, context, tool, and verification receipts in one open coding workbench.">
 		<meta property="og:url" content="https://fikeya.com/">
 		<meta property="og:image" content="https://fikeya.com/fikeya-desktop-beta-editor.jpg">
 		<meta property="og:image:alt" content="Fikeya Desktop editing a real source repository in the complete Fikeya workbench.">
@@ -45,7 +45,7 @@
 			</div>
 		</header>
 		<aside class="free-banner" aria-label="Fikeya pricing">
-			<div class="shell free-banner-layout"><strong>A completely free code editor.</strong><span>Bring your own API key or local model. Fikeya charges no editor subscription; provider usage remains between you and the provider you choose.</span><a href="/download/">Download the beta</a></div>
+			<div class="shell free-banner-layout"><strong>No Fikeya editor subscription.</strong><span>Bring your own API key or local model. Provider usage remains between you and the provider you choose.</span><a href="/download/">Download the beta</a></div>
 		</aside>
 
 		<main id="main">
@@ -53,7 +53,7 @@
 				<div class="shell hero-layout">
 					<div class="hero-copy">
 						<p class="release-line"><span aria-hidden="true"></span>Fikeya 0.1.0-beta.1 · Desktop, VS Code extension, and CLI</p>
-						<h1>Build with your model.<span>Spend fewer tokens.</span></h1>
+						<h1>Build with your model.<span>Use task-relevant context.</span></h1>
 						<p class="hero-summary">Fikeya is an AI code editor and coding agent that selects task-relevant project evidence instead of replaying the whole repository on every turn. Bring your own provider, approve tools, run code, and inspect measured token and verification receipts from one local workbench.</p>
 						<div class="hero-actions">
 							<a class="button button-primary" href="/download/">Download the public beta</a>
@@ -116,7 +116,7 @@
 								<figure class="mode-shot"><img src="/fikeya-desktop-beta-review.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Review mode showing real Git changes and command evidence"></figure>
 							</article>
 							<article id="lab-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="lab-tab" data-layout-panel="lab" hidden>
-								<div><span class="mode-number">05</span><h3>Lab Mode</h3><p>Compare configured models on the same bounded task, inspect usage and verification receipts, and keep experiments separate from normal coding work.</p></div>
+								<div><span class="mode-number">05</span><h3>Lab Mode</h3><p>Run controlled experiments one provider profile at a time, inspect usage and verification receipts, and keep experiments separate from normal coding work.</p></div>
 								<figure class="mode-shot"><img src="/fikeya-desktop-beta-graph.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Lab mode showing measured local usage and the verified Qarinah project graph"></figure>
 							</article>
 						</div>
@@ -278,7 +278,7 @@ fikeya provider list --json</code></pre>
 					<div class="install-copy">
 						<p class="eyebrow">Choose your surface</p>
 					<h2>Choose the focused extension or the full Desktop.</h2>
-						<p>The VS Code extension adds the focused Agent workspace without duplicating your editor. Fikeya Desktop adds the branded editor, five native work modes, screenshot and recording commands, and first-run workspace selection. Every beta artifact ships with a SHA-256 verification file and GitHub build provenance.</p>
+						<p>The VS Code extension adds the focused Agent workspace without duplicating your editor. Fikeya Desktop adds the branded editor, five native work modes, screenshot and recording commands, and first-run workspace selection. Published release assets include checksums and a machine-readable verification manifest.</p>
 						<div class="download-grid">
 							<a class="download-card" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/FikeyaSetup-0.1.0-beta.1-win32-x64.exe"><span>Windows x64</span><strong>Download Desktop</strong><small>EXE user installer</small></a>
 							<a class="download-card" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-desktop-0.1.0-win32-x64.vsix"><span>VS Code</span><strong>Download extension</strong><small>Focused Agent workspace</small></a>
