@@ -60,3 +60,6 @@ dist
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+
+# Generated packaged runtime used by local VSIX verification
+/extensions/fikeya-desktop/runtime/

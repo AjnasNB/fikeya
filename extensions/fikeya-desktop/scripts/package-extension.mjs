@@ -77,7 +77,7 @@ await writeJson(path.join(stagingRoot, 'package.json'), packagedManifest);
 await copyRequired('package.nls.json');
 await copyRequired('README.md');
 await copyRequired(path.join('media', 'fikeya.svg'));
-for (const file of ['extension.js', 'memory.js', 'messageValidation.js', 'runtime.js']) {
+for (const file of ['extension.js', 'memory.js', 'messageValidation.js', 'runtime.js', 'sessionCapture.js']) {
 	await copyRequired(path.join('out', file));
 }
 await copyInto(path.join(repositoryRoot, 'fikeya-runtime', 'LICENSE'), path.join(stagingRoot, 'LICENSE'));
@@ -122,6 +122,7 @@ const buildResult = await build({
 	alias: {
 		'fikeya-qarinah-dashboard': path.join(qarinahPackagePath, 'src', 'dashboard.js'),
 		'fikeya-qarinah-compiler': path.join(qarinahPackagePath, 'src', 'compiler.js'),
+		'fikeya-qarinah-redact': path.join(qarinahPackagePath, 'src', 'redact.js'),
 		'fikeya-qarinah-store': path.join(qarinahPackagePath, 'src', 'store.js'),
 		'fikeya-qarinah-workspace': path.join(qarinahPackagePath, 'src', 'workspace.js')
 	},
@@ -146,6 +147,9 @@ if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/compil
 }
 if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/store.js'))) {
 	throw new Error('The bundled sidecar does not contain the pinned Qarinah event store.');
+}
+if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/redact.js'))) {
+	throw new Error('The bundled sidecar does not contain the pinned Qarinah redactor.');
 }
 if (!bundledInputs.some(input => input.endsWith('node_modules/qarinah/src/workspace.js'))) {
 	throw new Error('The bundled sidecar does not contain the pinned Qarinah workspace runtime.');

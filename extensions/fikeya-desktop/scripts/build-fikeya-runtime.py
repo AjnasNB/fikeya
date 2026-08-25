@@ -106,6 +106,7 @@ def main() -> int:
         raise RuntimeError(f"Requested VSIX target {args.target} does not match this builder ({target}).")
 
     runtime_source = repository_root / "fikeya-runtime" / "src"
+    agent_core_source = repository_root / "fikeya-agent-core" / "src"
     preset_source = runtime_source / "fikeya_runtime" / "presets"
     entrypoint = extension_root / "scripts" / "fikeya-runtime-entry.py"
     build_root = extension_root / ".runtime-build"
@@ -139,6 +140,8 @@ def main() -> int:
         str(spec_root),
         "--paths",
         str(runtime_source),
+        "--paths",
+        str(agent_core_source),
         "--collect-all",
         "azure.identity",
         "--collect-all",
@@ -201,6 +204,7 @@ def main() -> int:
         "executable": executable_name,
         "pythonVersion": platform.python_version(),
         "fikeyaRuntimeSourceSha256": tree_hash(runtime_source),
+        "fikeyaAgentCoreSourceSha256": tree_hash(agent_core_source),
         "packages": package_receipts,
         "pythonLicenseFile": python_license_destination.relative_to(build_root).as_posix(),
     }
