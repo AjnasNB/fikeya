@@ -10,6 +10,8 @@ import { TextDecoder } from 'node:util';
 
 const maximumOutputBytes = 1024 * 1024;
 const maximumAgentOutputBytes = 5 * 1024 * 1024;
+const maximumPlanOutputBytes = 3 * 1024 * 1024;
+const maximumPlanSpecificationBytes = 1024 * 1024;
 const runtimeTimeoutMilliseconds = 30_000;
 const agentTimeoutMilliseconds = 15 * 60_000;
 const maximumProtocolLineBytes = 1024 * 1024;
@@ -172,6 +174,109 @@ export interface FikeyaStatistics {
 	readonly breakdown: readonly FikeyaStatisticsBreakdown[];
 }
 
+export type FikeyaPlanStatus = 'draft' | 'reviewed' | 'awaiting_approval' | 'executing' | 'verifying' | 'succeeded' | 'failed' | 'cancelled';
+export type FikeyaPlanStepStatus = 'pending' | 'awaiting_approval' | 'approved' | 'executing' | 'verifying' | 'succeeded' | 'failed' | 'cancelled';
+
+export interface FikeyaPlanApprovalReference {
+	readonly referenceId: string;
+	readonly toolCallSha256: string;
+	readonly issuedAt: string;
+	readonly consumedAt: string | null;
+}
+
+export interface FikeyaPlanExecutionOutcome {
+	readonly toolCallSha256: string;
+	readonly resultSha256: string;
+	readonly executionSha256: string;
+	readonly status: string;
+	readonly startedAt: string;
+	readonly finishedAt: string;
+	readonly durationMs: number | null;
+	readonly exitCode: number | null;
+}
+
+export interface FikeyaPlanVerificationCheck {
+	readonly kind: string;
+	readonly subject: string;
+	readonly expected: string;
+	readonly actual: string;
+	readonly passed: boolean;
+}
+
+export interface FikeyaPlanVerificationOutcome {
+	readonly status: 'passed' | 'failed';
+	readonly checks: readonly FikeyaPlanVerificationCheck[];
+	readonly verifiedAt: string;
+	readonly outcomeSha256: string;
+}
+
+export interface FikeyaPlanFileExpectation {
+	readonly path: string;
+	readonly sha256: string;
+}
+
+export interface FikeyaPlanVerificationSpec {
+	readonly expectedStatus: 'ok' | 'denied' | 'error';
+	readonly expectedExitCode: number | null;
+	readonly expectedOutputSha256: string | null;
+	readonly files: readonly FikeyaPlanFileExpectation[];
+}
+
+export interface FikeyaPlanStep {
+	readonly stepId: string;
+	readonly order: number;
+	readonly title: string;
+	readonly dependsOn: readonly string[];
+	readonly status: FikeyaPlanStepStatus;
+	readonly toolCall: {
+		readonly callId: string;
+		readonly name: string;
+		readonly arguments: Readonly<Record<string, unknown>>;
+	};
+	readonly toolCallSha256: string;
+	readonly verificationSpec: FikeyaPlanVerificationSpec;
+	readonly approval: FikeyaPlanApprovalReference | null;
+	readonly execution: FikeyaPlanExecutionOutcome | null;
+	readonly verification: FikeyaPlanVerificationOutcome | null;
+}
+
+export interface FikeyaPlanRecord {
+	readonly schemaVersion: 1;
+	readonly planId: string;
+	readonly workspaceId: string;
+	readonly title: string;
+	readonly status: FikeyaPlanStatus;
+	readonly revision: number;
+	readonly specSha256: string;
+	readonly createdAt: string;
+	readonly updatedAt: string;
+	readonly steps: readonly FikeyaPlanStep[];
+	readonly failureReason: string | null;
+}
+
+export interface FikeyaPlanView {
+	readonly plan: FikeyaPlanRecord;
+	readonly recordSha256: string;
+}
+
+export interface FikeyaPlanProposalMetadata {
+	readonly protocol: 'fikeya.plan-proposal.v1';
+	readonly sessionId: string;
+	readonly callId: string;
+	readonly usage: FikeyaAgentUsage;
+	readonly memory: FikeyaAgentMemory;
+}
+
+export interface FikeyaPlanProposalView extends FikeyaPlanView {
+	readonly proposal: FikeyaPlanProposalMetadata;
+}
+
+export interface FikeyaPlanSpecification {
+	readonly schemaVersion?: 1;
+	readonly title: string;
+	readonly steps: readonly Readonly<Record<string, unknown>>[];
+}
+
 export interface FikeyaCliResult<T> {
 	readonly ok: boolean;
 	readonly exitCode: number | null;
@@ -181,6 +286,16 @@ export interface FikeyaCliResult<T> {
 
 export interface FikeyaAgentRunHandle {
 	readonly result: Promise<FikeyaCliResult<FikeyaAgentTurn>>;
+	cancel(): void;
+}
+
+export interface FikeyaPlanRunHandle {
+	readonly result: Promise<FikeyaCliResult<FikeyaPlanView>>;
+	cancel(): void;
+}
+
+export interface FikeyaPlanProposalRunHandle {
+	readonly result: Promise<FikeyaCliResult<FikeyaPlanProposalView>>;
 	cancel(): void;
 }
 
@@ -333,6 +448,169 @@ export async function loadFikeyaAgentReceipts(sessionId: string, workspacePath: 
 /** Reads content-free, measured-only aggregate statistics from the local runtime database. */
 export async function loadFikeyaStatistics(workspacePath: string): Promise<FikeyaCliResult<FikeyaStatistics>> {
 	return runBoundedJsonCli(buildStatisticsArguments(workspacePath), workspacePath, parseStatistics);
+}
+
+/** Creates one immutable plan specification. All titles, tool arguments, and file content use stdin. */
+export async function createFikeyaPlan(
+	specification: FikeyaPlanSpecification,
+	workspacePath: string
+): Promise<FikeyaCliResult<FikeyaPlanView>> {
+	let payload: string;
+	try {
+		payload = JSON.stringify(specification);
+	} catch {
+		return invalidLocalRequest();
+	}
+	if (!payload || Buffer.byteLength(payload, 'utf8') > maximumPlanSpecificationBytes) {
+		return invalidLocalRequest();
+	}
+	return startBoundedJsonCli(
+		buildPlanCreateArguments(),
+		workspacePath,
+		parsePlanView,
+		payload,
+		runtimeTimeoutMilliseconds,
+		maximumPlanOutputBytes
+	).result;
+}
+
+/**
+ * Starts one planning-only model call. The task crosses stdin, the response must satisfy the
+ * versioned plan protocol, and the Python runtime persists only a draft without invoking tools.
+ */
+export function startFikeyaPlanProposal(
+	providerName: string,
+	prompt: string,
+	maxOutputTokens: number,
+	contextMaxCharacters: number,
+	memoryMode: FikeyaMemoryMode,
+	workspacePath: string,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+): FikeyaPlanProposalRunHandle {
+	if (!identifierPattern.test(providerName)
+		|| !prompt.trim()
+		|| Buffer.byteLength(prompt, 'utf8') > 262_144
+		|| !Number.isSafeInteger(maxOutputTokens)
+		|| maxOutputTokens < 1
+		|| maxOutputTokens > 32_768
+		|| !Number.isSafeInteger(contextMaxCharacters)
+		|| contextMaxCharacters < 512
+		|| contextMaxCharacters > 64_000
+		|| !['auto', 'off', 'required'].includes(memoryMode)) {
+		return { result: Promise.resolve(invalidLocalRequest()), cancel: () => undefined };
+	}
+	return startBoundedJsonCli(
+		buildPlanProposalArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
+		workspacePath,
+		parsePlanProposalView,
+		JSON.stringify({ protocol: 'fikeya.plan-request.v1', prompt }),
+		agentTimeoutMilliseconds,
+		maximumPlanOutputBytes,
+		invocation,
+		environment
+	);
+}
+
+/** Reloads the current integrity-checked plan and its proof-record hash. */
+export async function loadFikeyaPlan(planId: string, workspacePath: string): Promise<FikeyaCliResult<FikeyaPlanView>> {
+	if (!identifierPattern.test(planId)) {
+		return invalidLocalRequest();
+	}
+	return runBoundedJsonCli(buildPlanActionArguments('show', planId), workspacePath, parsePlanView, maximumPlanOutputBytes);
+}
+
+/** Applies a non-executing durable plan transition. */
+export async function changeFikeyaPlan(
+	action: 'review' | 'cancel',
+	planId: string,
+	workspacePath: string
+): Promise<FikeyaCliResult<FikeyaPlanView>> {
+	if (!identifierPattern.test(planId)) {
+		return invalidLocalRequest();
+	}
+	return runBoundedJsonCli(buildPlanActionArguments(action, planId), workspacePath, parsePlanView, maximumPlanOutputBytes);
+}
+
+/** Issues single-use references for either exact selected steps or every pending step. */
+export async function approveFikeyaPlan(
+	planId: string,
+	stepIds: readonly string[] | 'all',
+	workspacePath: string
+): Promise<FikeyaCliResult<FikeyaPlanView>> {
+	if (!identifierPattern.test(planId)
+		|| (stepIds !== 'all' && (stepIds.length < 1 || stepIds.length > 64 || stepIds.some(stepId => !identifierPattern.test(stepId)) || new Set(stepIds).size !== stepIds.length))) {
+		return invalidLocalRequest();
+	}
+	return runBoundedJsonCli(buildPlanApproveArguments(planId, stepIds), workspacePath, parsePlanView, maximumPlanOutputBytes);
+}
+
+/** Runs or resumes an approved durable plan. The caller can stop the child at any time. */
+export function startFikeyaPlan(
+	action: 'run' | 'resume',
+	planId: string,
+	workspacePath: string
+): FikeyaPlanRunHandle {
+	if (!identifierPattern.test(planId)) {
+		return { result: Promise.resolve(invalidLocalRequest()), cancel: () => undefined };
+	}
+	return startBoundedJsonCli(
+		buildPlanActionArguments(action, planId),
+		workspacePath,
+		parsePlanView,
+		undefined,
+		agentTimeoutMilliseconds,
+		maximumPlanOutputBytes,
+		resolveFikeyaCli(),
+		buildFikeyaRuntimeEnvironment(),
+		[0, 2]
+	);
+}
+
+export function buildPlanCreateArguments(): readonly string[] {
+	return ['plan', 'create', '.', '--spec-stdin', '--json'];
+}
+
+/** Builds a content-free argument vector; the planning request itself is stdin-only. */
+export function buildPlanProposalArguments(
+	providerName: string,
+	maxOutputTokens: number,
+	contextMaxCharacters: number,
+	memoryMode: FikeyaMemoryMode
+): readonly string[] {
+	return [
+		'plan',
+		'propose',
+		'.',
+		'--provider',
+		providerName,
+		'--request-stdin',
+		'--allow-network',
+		'--max-output-tokens',
+		String(maxOutputTokens),
+		'--context-max-characters',
+		String(contextMaxCharacters),
+		'--memory',
+		memoryMode,
+		'--json'
+	];
+}
+
+export function buildPlanActionArguments(action: 'show' | 'review' | 'run' | 'resume' | 'cancel', planId: string): readonly string[] {
+	return ['plan', action, planId, '--workspace', '.', '--json'];
+}
+
+export function buildPlanApproveArguments(planId: string, stepIds: readonly string[] | 'all'): readonly string[] {
+	const args = ['plan', 'approve', planId, '--workspace', '.'];
+	if (stepIds === 'all') {
+		args.push('--all');
+	} else {
+		for (const stepId of stepIds) {
+			args.push('--step', stepId);
+		}
+	}
+	args.push('--json');
+	return args;
 }
 
 export function buildStatisticsArguments(workspacePath: string): readonly string[] {
@@ -605,6 +883,328 @@ export function parseAgentReceipts(value: unknown): readonly FikeyaProviderRecei
 	return receipts;
 }
 
+/** Parses the exact durable plan document returned by create/show/action commands. */
+export function parsePlanView(value: unknown): FikeyaPlanView | undefined {
+	const record = asRecord(value);
+	const recordSha256 = strictBoundedString(record?.recordSha256, 71);
+	const plan = parsePlanRecord(record?.plan);
+	if (!record || typeof record.ok !== 'boolean' || !recordSha256 || !/^sha256:[0-9a-f]{64}$/.test(recordSha256) || !plan) {
+		return undefined;
+	}
+	return { plan, recordSha256 };
+}
+
+/** Parses a persisted draft together with the content-free planning call receipt. */
+export function parsePlanProposalView(value: unknown): FikeyaPlanProposalView | undefined {
+	const record = asRecord(value);
+	const view = parsePlanView(value);
+	const proposal = asRecord(record?.proposal);
+	const sessionId = strictBoundedString(proposal?.sessionId, 128);
+	const callId = strictBoundedString(proposal?.callId, 128);
+	const usage = parsePlanProposalUsage(proposal?.usage);
+	const memory = parsePlanProposalMemory(proposal?.memory);
+	if (!record || record.ok !== true || !view || !proposal
+		|| !hasExactRecordKeys(proposal, ['callId', 'memory', 'protocol', 'sessionId', 'usage'])
+		|| proposal.protocol !== 'fikeya.plan-proposal.v1'
+		|| !sessionId || !identifierPattern.test(sessionId)
+		|| !callId || !identifierPattern.test(callId)
+		|| !usage || !memory) {
+		return undefined;
+	}
+	return { ...view, proposal: { protocol: 'fikeya.plan-proposal.v1', sessionId, callId, usage, memory } };
+}
+
+function parsePlanProposalUsage(value: unknown): FikeyaAgentUsage | undefined {
+	const record = asRecord(value);
+	const measurement = record?.measurement;
+	const inputTokens = nullableBoundedInteger(record?.inputTokens);
+	const outputTokens = nullableBoundedInteger(record?.outputTokens);
+	const cachedInputTokens = nullableBoundedInteger(record?.cachedInputTokens);
+	if (!record || !hasExactRecordKeys(record, ['cachedInputTokens', 'inputTokens', 'measurement', 'outputTokens'])
+		|| (measurement !== 'provider-reported' && measurement !== 'unavailable')
+		|| inputTokens === undefined || outputTokens === undefined || cachedInputTokens === undefined
+		|| (measurement === 'provider-reported' && (inputTokens === null || outputTokens === null || cachedInputTokens === null))
+		|| (measurement === 'unavailable' && (inputTokens !== null || outputTokens !== null || cachedInputTokens !== null))) {
+		return undefined;
+	}
+	return { measurement, inputTokens, outputTokens, cachedInputTokens };
+}
+
+function parsePlanProposalMemory(value: unknown): FikeyaAgentMemory | undefined {
+	const record = asRecord(value);
+	const status = record?.status;
+	const coverage = nullableBoundedString(record?.coverage, 40);
+	const evidenceCount = nullableBoundedInteger(record?.evidenceCount);
+	const receiptId = nullableBoundedString(record?.receiptId, 128);
+	const responseSha256 = nullableBoundedString(record?.responseSha256, 71);
+	if (!record || !hasExactRecordKeys(record, ['coverage', 'evidenceCount', 'receiptId', 'responseSha256', 'status'])
+		|| (status !== 'off' && status !== 'unavailable' && status !== 'used')
+		|| coverage === undefined || evidenceCount === undefined || receiptId === undefined || responseSha256 === undefined) {
+		return undefined;
+	}
+	if (status === 'used') {
+		if (!coverage || evidenceCount === null || !receiptId || !contextReceiptPattern.test(receiptId)
+			|| !responseSha256 || !/^sha256:[0-9a-f]{64}$/.test(responseSha256)) {
+			return undefined;
+		}
+	} else if (coverage !== null || evidenceCount !== null || receiptId !== null || responseSha256 !== null) {
+		return undefined;
+	}
+	return { status, coverage, evidenceCount, receiptId, responseSha256 };
+}
+
+function parsePlanRecord(value: unknown): FikeyaPlanRecord | undefined {
+	const record = asRecord(value);
+	const planId = strictBoundedString(record?.planId, 128);
+	const workspaceId = strictBoundedString(record?.workspaceId, 128);
+	const title = strictBoundedUtf8String(record?.title, 4_096);
+	const specSha256 = strictBoundedString(record?.specSha256, 71);
+	const createdAt = parseTimestamp(record?.createdAt);
+	const updatedAt = parseTimestamp(record?.updatedAt);
+	const status = record?.status;
+	const failureReason = nullableBoundedString(record?.failureReason, 512);
+	if (!record || !hasExactRecordKeys(record, ['createdAt', 'failureReason', 'planId', 'revision', 'schemaVersion', 'specSha256', 'status', 'steps', 'title', 'updatedAt', 'workspaceId'])
+		|| record.schemaVersion !== 1
+		|| !planId || !identifierPattern.test(planId)
+		|| !workspaceId || !identifierPattern.test(workspaceId)
+		|| !title || !title.trim() || !specSha256 || !/^sha256:[0-9a-f]{64}$/.test(specSha256)
+		|| !createdAt || !updatedAt
+		|| !isPlanStatus(status)
+		|| !isBoundedInteger(record.revision, 1, 1_000_000_000)
+		|| failureReason === undefined
+		|| !Array.isArray(record.steps) || record.steps.length < 1 || record.steps.length > 64) {
+		return undefined;
+	}
+	const steps = record.steps.map(parsePlanStep);
+	if (steps.some(step => step === undefined)) {
+		return undefined;
+	}
+	const typedSteps = steps as FikeyaPlanStep[];
+	const stepIds = new Set(typedSteps.map(step => step.stepId));
+	const callIds = new Set(typedSteps.map(step => step.toolCall.callId));
+	const seen = new Set<string>();
+	if (stepIds.size !== typedSteps.length
+		|| callIds.size !== typedSteps.length
+		|| typedSteps.some((step, index) => {
+			const invalid = step.order !== index + 1
+				|| new Set(step.dependsOn).size !== step.dependsOn.length
+				|| step.dependsOn.some(dependency => !seen.has(dependency));
+			seen.add(step.stepId);
+			return invalid;
+		})) {
+		return undefined;
+	}
+	return {
+		schemaVersion: 1,
+		planId,
+		workspaceId,
+		title,
+		status,
+		revision: record.revision,
+		specSha256,
+		createdAt,
+		updatedAt,
+		steps: typedSteps,
+		failureReason
+	};
+}
+
+function parsePlanStep(value: unknown): FikeyaPlanStep | undefined {
+	const record = asRecord(value);
+	const stepId = strictBoundedString(record?.stepId, 128);
+	const title = strictBoundedUtf8String(record?.title, 4_096);
+	const status = record?.status;
+	const toolCall = asRecord(record?.toolCall);
+	const callId = strictBoundedString(toolCall?.callId, 128);
+	const name = strictBoundedString(toolCall?.name, 128);
+	const args = asRecord(toolCall?.arguments);
+	const toolCallSha256 = strictBoundedString(record?.toolCallSha256, 71);
+	if (!record || !hasExactRecordKeys(record, ['approval', 'dependsOn', 'execution', 'order', 'status', 'stepId', 'title', 'toolCall', 'toolCallSha256', 'verification', 'verificationSpec'])
+		|| !stepId || !identifierPattern.test(stepId) || !title || !title.trim()
+		|| !isBoundedInteger(record.order, 1, 64) || !isPlanStepStatus(status)
+		|| !Array.isArray(record.dependsOn) || record.dependsOn.length > 64
+		|| record.dependsOn.some(dependency => typeof dependency !== 'string' || !identifierPattern.test(dependency))
+		|| !toolCall || !hasExactRecordKeys(toolCall, ['arguments', 'callId', 'name'])
+		|| !callId || !identifierPattern.test(callId)
+		|| !name || !isSupportedPlanTool(name) || !args || !hasBoundedFiniteJsonEncoding(args, 65_536)
+		|| !toolCallSha256 || !/^sha256:[0-9a-f]{64}$/.test(toolCallSha256)) {
+		return undefined;
+	}
+	const approval = record.approval === null ? null : parsePlanApproval(record.approval);
+	const execution = record.execution === null ? null : parsePlanExecution(record.execution);
+	const verification = record.verification === null ? null : parsePlanVerification(record.verification);
+	const verificationSpec = parsePlanVerificationSpec(record.verificationSpec);
+	if (approval === undefined || execution === undefined || verification === undefined || !verificationSpec
+		|| (approval !== null && approval.toolCallSha256 !== toolCallSha256)
+		|| (execution !== null && execution.toolCallSha256 !== toolCallSha256)) {
+		return undefined;
+	}
+	return {
+		stepId,
+		order: record.order,
+		title,
+		dependsOn: record.dependsOn as string[],
+		status,
+		toolCall: { callId, name, arguments: args },
+		toolCallSha256,
+		verificationSpec,
+		approval,
+		execution,
+		verification
+	};
+}
+
+function parsePlanVerificationSpec(value: unknown): FikeyaPlanVerificationSpec | undefined {
+	const record = asRecord(value);
+	const expectedStatus = record?.expectedStatus;
+	const expectedExitCode = nullableSignedInteger(record?.expectedExitCode, -65_535, 2_147_483_647);
+	const expectedOutputSha256 = nullableBoundedString(record?.expectedOutputSha256, 71);
+	if (!record || !hasExactRecordKeys(record, ['expectedExitCode', 'expectedOutputSha256', 'expectedStatus', 'files'])
+		|| (expectedStatus !== 'ok' && expectedStatus !== 'denied' && expectedStatus !== 'error')
+		|| expectedExitCode === undefined || expectedOutputSha256 === undefined
+		|| (expectedOutputSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(expectedOutputSha256))
+		|| !Array.isArray(record.files) || record.files.length > 64) {
+		return undefined;
+	}
+	const files = record.files.map(candidate => {
+		const file = asRecord(candidate);
+		const filePath = strictBoundedString(file?.path, 4_096);
+		const sha256 = strictBoundedString(file?.sha256, 71);
+		const parts = filePath?.split('/') ?? [];
+		return file && hasExactRecordKeys(file, ['path', 'sha256'])
+			&& filePath && !filePath.includes('\\') && !filePath.startsWith('/') && !/^[a-zA-Z]:/.test(filePath)
+			&& filePath !== '.' && !parts.includes('..') && !parts.some(part => part.toLowerCase() === '.fikeya')
+			&& sha256 && /^sha256:[0-9a-f]{64}$/.test(sha256)
+			? { path: filePath, sha256 }
+			: undefined;
+	});
+	if (files.some(file => file === undefined)) {
+		return undefined;
+	}
+	const typedFiles = files as FikeyaPlanFileExpectation[];
+	if (new Set(typedFiles.map(file => file.path)).size !== typedFiles.length) {
+		return undefined;
+	}
+	return { expectedStatus, expectedExitCode, expectedOutputSha256, files: typedFiles };
+}
+
+function parsePlanApproval(value: unknown): FikeyaPlanApprovalReference | undefined {
+	const record = asRecord(value);
+	const referenceId = strictBoundedString(record?.referenceId, 128);
+	const toolCallSha256 = strictBoundedString(record?.toolCallSha256, 71);
+	const issuedAt = parseTimestamp(record?.issuedAt);
+	const consumedAt = parseNullableTimestamp(record?.consumedAt);
+	if (!record || !hasExactRecordKeys(record, ['consumedAt', 'issuedAt', 'referenceId', 'toolCallSha256'])
+		|| !referenceId || !identifierPattern.test(referenceId)
+		|| !toolCallSha256 || !/^sha256:[0-9a-f]{64}$/.test(toolCallSha256)
+		|| !issuedAt || consumedAt === undefined) {
+		return undefined;
+	}
+	return { referenceId, toolCallSha256, issuedAt, consumedAt };
+}
+
+function parsePlanExecution(value: unknown): FikeyaPlanExecutionOutcome | undefined {
+	const record = asRecord(value);
+	const toolCallSha256 = strictBoundedString(record?.toolCallSha256, 71);
+	const resultSha256 = strictBoundedString(record?.resultSha256, 71);
+	const executionSha256 = strictBoundedString(record?.executionSha256, 71);
+	const status = strictBoundedString(record?.status, 40);
+	const startedAt = parseTimestamp(record?.startedAt);
+	const finishedAt = parseTimestamp(record?.finishedAt);
+	const durationMs = nullableBoundedInteger(record?.durationMs);
+	const exitCode = nullableSignedInteger(record?.exitCode, -65_535, 2_147_483_647);
+	if (!record || !hasExactRecordKeys(record, ['durationMs', 'executionSha256', 'exitCode', 'finishedAt', 'resultSha256', 'startedAt', 'status', 'toolCallSha256'])
+		|| !toolCallSha256 || !resultSha256 || !executionSha256
+		|| ![toolCallSha256, resultSha256, executionSha256].every(hash => /^sha256:[0-9a-f]{64}$/.test(hash))
+		|| !status || !startedAt || !finishedAt || durationMs === undefined || exitCode === undefined) {
+		return undefined;
+	}
+	return { toolCallSha256, resultSha256, executionSha256, status, startedAt, finishedAt, durationMs, exitCode };
+}
+
+function parsePlanVerification(value: unknown): FikeyaPlanVerificationOutcome | undefined {
+	const record = asRecord(value);
+	const status = record?.status;
+	const verifiedAt = parseTimestamp(record?.verifiedAt);
+	const outcomeSha256 = strictBoundedString(record?.outcomeSha256, 71);
+	if (!record || !hasExactRecordKeys(record, ['checks', 'outcomeSha256', 'status', 'verifiedAt'])
+		|| (status !== 'passed' && status !== 'failed') || !verifiedAt
+		|| !outcomeSha256 || !/^sha256:[0-9a-f]{64}$/.test(outcomeSha256)
+		|| !Array.isArray(record.checks) || record.checks.length > 128) {
+		return undefined;
+	}
+	const checks = record.checks.map(candidate => {
+		const check = asRecord(candidate);
+		const kind = strictBoundedString(check?.kind, 128);
+		const subject = strictBoundedString(check?.subject, 4_096);
+		const expected = strictBoundedString(check?.expected, 4_096);
+		const actual = strictBoundedString(check?.actual, 4_096);
+		return check && hasExactRecordKeys(check, ['actual', 'expected', 'kind', 'passed', 'subject'])
+			&& kind && subject !== undefined && expected !== undefined && actual !== undefined && typeof check.passed === 'boolean'
+			? { kind, subject, expected, actual, passed: check.passed }
+			: undefined;
+	});
+	if (checks.some(check => check === undefined)) {
+		return undefined;
+	}
+	return { status, checks: checks as FikeyaPlanVerificationCheck[], verifiedAt, outcomeSha256 };
+}
+
+function isPlanStatus(value: unknown): value is FikeyaPlanStatus {
+	return typeof value === 'string' && ['draft', 'reviewed', 'awaiting_approval', 'executing', 'verifying', 'succeeded', 'failed', 'cancelled'].includes(value);
+}
+
+function isPlanStepStatus(value: unknown): value is FikeyaPlanStepStatus {
+	return typeof value === 'string' && ['pending', 'awaiting_approval', 'approved', 'executing', 'verifying', 'succeeded', 'failed', 'cancelled'].includes(value);
+}
+
+function isSupportedPlanTool(value: string): boolean {
+	return ['process.run', 'workspace.list_files', 'workspace.read_file', 'workspace.replace_text', 'workspace.search_text', 'workspace.write_file'].includes(value);
+}
+
+function hasBoundedFiniteJsonEncoding(value: unknown, maximumBytes: number): boolean {
+	const pending: { readonly value: unknown; readonly depth: number }[] = [{ value, depth: 0 }];
+	let visited = 0;
+	while (pending.length > 0) {
+		const current = pending.pop()!;
+		visited += 1;
+		if (visited > 32_768 || current.depth > 64) {
+			return false;
+		}
+		if (current.value === null || typeof current.value === 'string' || typeof current.value === 'boolean') {
+			continue;
+		}
+		if (typeof current.value === 'number') {
+			if (!Number.isFinite(current.value)) {
+				return false;
+			}
+			continue;
+		}
+		if (Array.isArray(current.value)) {
+			for (const item of current.value) {
+				pending.push({ value: item, depth: current.depth + 1 });
+			}
+			continue;
+		}
+		const record = asRecord(current.value);
+		if (!record) {
+			return false;
+		}
+		for (const item of Object.values(record)) {
+			pending.push({ value: item, depth: current.depth + 1 });
+		}
+	}
+	try {
+		return Buffer.byteLength(JSON.stringify(value), 'utf8') <= maximumBytes;
+	} catch {
+		return false;
+	}
+}
+
+function hasExactRecordKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+	return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+}
+
 function parseProviderReceipt(value: unknown): FikeyaProviderReceipt | undefined {
 	const record = asRecord(value);
 	if (!record) {
@@ -793,9 +1393,10 @@ function runFikeyaCli(
 function runBoundedJsonCli<T>(
 	args: readonly string[],
 	workspacePath: string,
-	parser: (value: unknown) => T | undefined
+	parser: (value: unknown) => T | undefined,
+	outputLimitBytes = maximumOutputBytes
 ): Promise<FikeyaCliResult<T>> {
-	return startBoundedJsonCli(args, workspacePath, parser).result;
+	return startBoundedJsonCli(args, workspacePath, parser, undefined, runtimeTimeoutMilliseconds, outputLimitBytes).result;
 }
 
 function startBoundedJsonCli<T>(
@@ -806,7 +1407,8 @@ function startBoundedJsonCli<T>(
 	timeoutMilliseconds = runtimeTimeoutMilliseconds,
 	outputLimitBytes = maximumOutputBytes,
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment(),
+	acceptedExitCodes: readonly number[] = [0]
 ): { readonly result: Promise<FikeyaCliResult<T>>; cancel(): void } {
 	let cancelOperation = (): void => undefined;
 	const result = new Promise<FikeyaCliResult<T>>(resolve => {
@@ -820,7 +1422,9 @@ function startBoundedJsonCli<T>(
 		let output = '';
 		let outputBytes = 0;
 		let settled = false;
+		let cancellationRequested = false;
 		let timeout: NodeJS.Timeout | undefined;
+		const outputDecoder = new TextDecoder('utf-8', { fatal: true });
 
 		const finish = (operationResult: FikeyaCliResult<T>): void => {
 			if (settled) {
@@ -837,8 +1441,10 @@ function startBoundedJsonCli<T>(
 			if (settled) {
 				return;
 			}
-			child.kill();
-			finish({ ok: false, exitCode: null, failure: 'cancelled' });
+			cancellationRequested = true;
+			if (!child.kill()) {
+				finish({ ok: false, exitCode: null, failure: 'cancelled' });
+			}
 		};
 
 		const capture = (chunk: Buffer, retain: boolean): void => {
@@ -849,7 +1455,12 @@ function startBoundedJsonCli<T>(
 				return;
 			}
 			if (retain) {
-				output += chunk.toString('utf8');
+				try {
+					output += outputDecoder.decode(chunk, { stream: true });
+				} catch {
+					child.kill();
+					finish({ ok: false, exitCode: null, failure: 'invalid-json' });
+				}
 			}
 		};
 
@@ -861,6 +1472,10 @@ function startBoundedJsonCli<T>(
 		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
 		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
 		child.on('error', error => {
+			if (cancellationRequested) {
+				finish({ ok: false, exitCode: null, failure: 'cancelled' });
+				return;
+			}
 			finish({
 				ok: false,
 				exitCode: null,
@@ -868,11 +1483,16 @@ function startBoundedJsonCli<T>(
 			});
 		});
 		child.on('close', exitCode => {
-			if (exitCode !== 0) {
+			if (cancellationRequested) {
+				finish({ ok: false, exitCode, failure: 'cancelled' });
+				return;
+			}
+			if (exitCode === null || !acceptedExitCodes.includes(exitCode)) {
 				finish({ ok: false, exitCode, failure: 'runtime-error' });
 				return;
 			}
 			try {
+				output += outputDecoder.decode();
 				const parsed = parser(JSON.parse(output));
 				if (parsed === undefined) {
 					throw new Error('Fikeya CLI response did not match the expected schema.');
@@ -884,6 +1504,13 @@ function startBoundedJsonCli<T>(
 		});
 
 		if (stdinPayload !== undefined && child.stdin) {
+			child.stdin.on('error', () => {
+				if (cancellationRequested) {
+					return;
+				}
+				child.kill();
+				finish({ ok: false, exitCode: null, failure: 'runtime-error' });
+			});
 			child.stdin.end(stdinPayload, 'utf8');
 		}
 
@@ -1210,6 +1837,10 @@ function boundedString(value: unknown, maximumLength: number): string | undefine
 
 function strictBoundedString(value: unknown, maximumLength: number): string | undefined {
 	return typeof value === 'string' && value.length <= maximumLength ? value : undefined;
+}
+
+function strictBoundedUtf8String(value: unknown, maximumBytes: number): string | undefined {
+	return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= maximumBytes ? value : undefined;
 }
 
 function isBoundedInteger(value: unknown, minimum: number, maximum: number): value is number {

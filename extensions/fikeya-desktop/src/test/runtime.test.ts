@@ -11,6 +11,10 @@ import { describe, test } from 'node:test';
 import {
 	buildAgentRunArguments,
 	buildFikeyaRuntimeEnvironment,
+	buildPlanActionArguments,
+	buildPlanApproveArguments,
+	buildPlanCreateArguments,
+	buildPlanProposalArguments,
 	buildProviderConfigureArguments,
 	buildStatisticsArguments,
 	parseAgentApproval,
@@ -19,6 +23,8 @@ import {
 	parseProviderList,
 	parseProviderProbe,
 	parseProtocolFailure,
+	parsePlanProposalView,
+	parsePlanView,
 	parseRuntimeReport,
 	parseStatistics,
 	resolveFikeyaCli
@@ -189,6 +195,129 @@ describe('Fikeya runtime protocol', () => {
 			FIKEYA_QARINAH_SIDECAR: path.join(sidecarDirectory, 'qarinah-memory-view.mjs')
 		});
 		assert.deepStrictEqual(parentEnvironment, { PATH: 'fixed-path' });
+	});
+
+	test('keeps exact plan specifications out of process arguments', () => {
+		const privateContent = 'private file content';
+		assert.deepStrictEqual(buildPlanCreateArguments(), ['plan', 'create', '.', '--spec-stdin', '--json']);
+		assert.ok(!buildPlanCreateArguments().includes(privateContent));
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--json']);
+		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', ['inspect', 'verify']), ['plan', 'approve', 'pln_example', '--workspace', '.', '--step', 'inspect', '--step', 'verify', '--json']);
+		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', 'all'), ['plan', 'approve', 'pln_example', '--workspace', '.', '--all', '--json']);
+		const proposalArgs = buildPlanProposalArguments('azure-primary', 2048, 12_000, 'required');
+		assert.deepStrictEqual(proposalArgs.slice(0, 7), ['plan', 'propose', '.', '--provider', 'azure-primary', '--request-stdin', '--allow-network']);
+		assert.deepStrictEqual(proposalArgs.slice(-5), ['--context-max-characters', '12000', '--memory', 'required', '--json']);
+		assert.ok(!proposalArgs.includes(privateContent));
+	});
+
+	test('parses a durable plan with exact approval, execution, and verification evidence', () => {
+		const hash = (character: string) => `sha256:${character.repeat(64)}`;
+		const plan = {
+			createdAt: '2026-08-26T10:00:00.000Z',
+			failureReason: null,
+			planId: 'pln_example',
+			revision: 5,
+			schemaVersion: 1,
+			specSha256: hash('a'),
+			status: 'succeeded',
+			steps: [{
+				approval: { consumedAt: '2026-08-26T10:01:00.000Z', issuedAt: '2026-08-26T10:00:30.000Z', referenceId: 'apr_example', toolCallSha256: hash('b') },
+				dependsOn: [],
+				execution: { durationMs: 4, executionSha256: hash('d'), exitCode: null, finishedAt: '2026-08-26T10:01:00.004Z', resultSha256: hash('c'), startedAt: '2026-08-26T10:01:00.000Z', status: 'ok', toolCallSha256: hash('b') },
+				order: 1,
+				status: 'succeeded',
+				stepId: 'inspect',
+				title: 'Inspect the project',
+				toolCall: { arguments: { path: '.' }, callId: 'plan:list', name: 'workspace.list_files' },
+				toolCallSha256: hash('b'),
+				verification: { checks: [{ actual: 'ok', expected: 'ok', kind: 'status', passed: true, subject: 'workspace.list_files' }], outcomeSha256: hash('e'), status: 'passed', verifiedAt: '2026-08-26T10:01:00.005Z' },
+				verificationSpec: { expectedExitCode: null, expectedOutputSha256: null, expectedStatus: 'ok', files: [] }
+			}],
+			title: 'Inspect this project safely',
+			updatedAt: '2026-08-26T10:01:00.005Z',
+			workspaceId: 'ws_example'
+		};
+		const parsed = parsePlanView({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		assert.strictEqual(parsed?.recordSha256, hash('f'));
+		assert.strictEqual(parsed?.plan.status, 'succeeded');
+		assert.strictEqual(parsed?.plan.steps[0].approval?.referenceId, 'apr_example');
+		assert.strictEqual(parsed?.plan.steps[0].execution?.executionSha256, hash('d'));
+		assert.strictEqual(parsed?.plan.steps[0].verification?.checks[0].passed, true);
+		assert.deepStrictEqual(parsed?.plan.steps[0].toolCall.arguments, { path: '.' });
+		assert.deepStrictEqual(parsed?.plan.steps[0].verificationSpec, { expectedExitCode: null, expectedOutputSha256: null, expectedStatus: 'ok', files: [] });
+		const mismatchedApproval = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		mismatchedApproval.plan.steps[0].approval.toolCallSha256 = hash('9');
+		assert.strictEqual(parsePlanView(mismatchedApproval), undefined);
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: {
+				...plan,
+				steps: [
+					plan.steps[0],
+					{ ...plan.steps[0], approval: null, dependsOn: ['inspect'], execution: null, order: 2, status: 'pending', stepId: 'second', verification: null }
+				]
+			},
+			recordSha256: hash('f')
+		}), undefined, 'duplicate tool-call identifiers must be rejected');
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: {
+				...plan,
+				steps: [
+					plan.steps[0],
+					{ ...plan.steps[0], approval: null, dependsOn: ['inspect', 'inspect'], execution: null, order: 2, status: 'pending', stepId: 'second', toolCall: { ...plan.steps[0].toolCall, callId: 'plan:second' }, verification: null }
+				]
+			},
+			recordSha256: hash('f')
+		}), undefined, 'duplicate dependency identifiers must be rejected');
+		assert.strictEqual(parsePlanView({ ok: true, plan: { ...plan, title: '🧠'.repeat(1_025) }, recordSha256: hash('f') }), undefined, 'title limits use UTF-8 bytes');
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: { ...plan, steps: [{ ...plan.steps[0], verificationSpec: { ...plan.steps[0].verificationSpec, unexpected: true } }] },
+			recordSha256: hash('f')
+		}), undefined, 'verification specifications reject unknown fields');
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: { ...plan, steps: [{ ...plan.steps[0], toolCall: { ...plan.steps[0].toolCall, arguments: { limit: Number.NaN } } }] },
+			recordSha256: hash('f')
+		}), undefined, 'tool arguments reject non-finite values');
+
+		const proposalValue = {
+			ok: true,
+			plan,
+			recordSha256: hash('f'),
+			proposal: {
+				protocol: 'fikeya.plan-proposal.v1',
+				sessionId: 'ses_plan_example',
+				callId: 'call_plan_example',
+				usage: { measurement: 'provider-reported', inputTokens: 120, outputTokens: 80, cachedInputTokens: 20 },
+				memory: { status: 'off', coverage: null, evidenceCount: null, receiptId: null, responseSha256: null }
+			}
+		};
+		const proposal = parsePlanProposalView(proposalValue);
+		assert.strictEqual(proposal?.proposal.protocol, 'fikeya.plan-proposal.v1');
+		assert.strictEqual(proposal?.proposal.sessionId, 'ses_plan_example');
+		assert.strictEqual(proposal?.plan.planId, 'pln_example');
+		assert.strictEqual(parsePlanProposalView({
+			...proposalValue,
+			proposal: { ...proposalValue.proposal, protocol: 'fikeya.plan-proposal.v2' }
+		}), undefined);
+	});
+
+	test('accepts a failed plan document while rejecting unsupported tool records', () => {
+		const hash = `sha256:${'a'.repeat(64)}`;
+		const value = {
+			ok: false,
+			recordSha256: hash,
+			plan: {
+				createdAt: '2026-08-26T10:00:00.000Z', failureReason: 'Verification failed.', planId: 'pln_failed', revision: 2, schemaVersion: 1,
+				specSha256: hash, status: 'failed', title: 'Fail safely', updatedAt: '2026-08-26T10:01:00.000Z', workspaceId: 'ws_example',
+				steps: [{ approval: null, dependsOn: [], execution: null, order: 1, status: 'failed', stepId: 'unsafe', title: 'Unsafe tool', toolCall: { arguments: {}, callId: 'call_unsafe', name: 'network.fetch' }, toolCallSha256: hash, verification: null, verificationSpec: { expectedExitCode: null, expectedOutputSha256: null, expectedStatus: 'ok', files: [] } }]
+			}
+		};
+		assert.strictEqual(parsePlanView(value), undefined);
+		value.plan.steps[0].toolCall.name = 'workspace.list_files';
+		assert.strictEqual(parsePlanView(value)?.plan.status, 'failed');
 	});
 
 	test('does not force Electron Node mode for a standalone Node executable', async () => {
