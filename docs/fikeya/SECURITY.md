@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Fikeya is a developer alpha. This document distinguishes:
+Fikeya is a public beta candidate. This document distinguishes:
 
 - **Current enforcement:** behavior enforced in the integrated Desktop/runtime path today.
 - **Standalone enforcement:** behavior implemented and tested in a component that is not yet wired into the product path.

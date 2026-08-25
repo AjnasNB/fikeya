@@ -64,7 +64,7 @@ The public-alpha provider adapter contract covers profile discovery, bounded tex
 }
 ```
 
-`usageMeasurement` is `provider-reported` only when the provider response contains the required token fields. Otherwise it is `unavailable` and all three token fields are `null`. For Anthropic Messages, `inputTokens` is normalized to base input plus cache-creation input plus cache-read input, while `cachedInputTokens` is the cache-read subset. This preserves total billed input in the shared v1 receipt; a separate cache-write field is reserved for a later protocol version. Local tokenizer and character estimates are kept outside this receipt so the UI cannot confuse them with provider billing. The public alpha does not calculate currency cost inside provider receipts.
+`usageMeasurement` is `provider-reported` only when the provider response contains the required token fields. Otherwise it is `unavailable` and all three token fields are `null`. For Anthropic Messages, `inputTokens` is normalized to base input plus cache-creation input plus cache-read input, while `cachedInputTokens` is the cache-read subset. This preserves total billed input in the shared v1 receipt; a separate cache-write field is reserved for a later protocol version. Local tokenizer and character estimates are kept outside this receipt so the UI cannot confuse them with provider billing. The public beta candidate does not calculate currency cost inside provider receipts.
 
 ## Default Endpoints
 
