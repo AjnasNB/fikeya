@@ -4,14 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { FikeyaPlanSpecification } from './runtime';
+import { agentComposerConstraints, FikeyaAgentMemoryMode, isAgentComposerNumberValid } from './agentComposer';
 
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: 'auto' | 'off' | 'required'; readonly allowNetwork: true }
-	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: 'auto' | 'off' | 'required'; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
@@ -93,13 +94,9 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| Buffer.byteLength(value.prompt, 'utf8') > maximumPromptBytes
 				|| value.allowNetwork !== true
 				|| typeof value.maxOutputTokens !== 'number'
-				|| !Number.isSafeInteger(value.maxOutputTokens)
-				|| value.maxOutputTokens < 1
-				|| value.maxOutputTokens > 32_768
+				|| !isAgentComposerNumberValid(value.maxOutputTokens, agentComposerConstraints.maxOutputTokens)
 				|| typeof value.contextMaxCharacters !== 'number'
-				|| !Number.isSafeInteger(value.contextMaxCharacters)
-				|| value.contextMaxCharacters < 512
-				|| value.contextMaxCharacters > 64_000
+				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
 				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')) {
 				return undefined;
 			}

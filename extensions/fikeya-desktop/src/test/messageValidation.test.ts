@@ -5,6 +5,7 @@
 
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { agentComposerConstraints, agentComposerDefaults, invokeAgentRunRequest, isAgentComposerNumberValid } from '../agentComposer';
 import { escapeHtml, parseWebviewMessage } from '../messageValidation';
 
 describe('Fikeya webview message validation', () => {
@@ -92,6 +93,34 @@ describe('Fikeya webview message validation', () => {
 			memoryMode: 'required',
 			allowNetwork: false
 		}), undefined);
+	});
+
+	test('submits untouched Chat defaults and invokes the selected provider', async () => {
+		assert.deepStrictEqual({
+			context: isAgentComposerNumberValid(agentComposerDefaults.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters),
+			output: isAgentComposerNumberValid(agentComposerDefaults.maxOutputTokens, agentComposerConstraints.maxOutputTokens)
+		}, { context: true, output: true });
+
+		const request = parseWebviewMessage({
+			type: 'runAgent',
+			providerName: 'local-default',
+			prompt: 'Inspect the current project.',
+			...agentComposerDefaults,
+			allowNetwork: true
+		});
+		assert.ok(request && request.type === 'runAgent');
+
+		let invocation: readonly [string, string, number, number, string] | undefined;
+		await invokeAgentRunRequest(request, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode) => {
+			invocation = [providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode];
+		});
+		assert.deepStrictEqual(invocation, [
+			'local-default',
+			'Inspect the current project.',
+			agentComposerDefaults.maxOutputTokens,
+			agentComposerDefaults.contextMaxCharacters,
+			agentComposerDefaults.memoryMode
+		]);
 	});
 
 	test('accepts an exact bounded plan specification and declared lifecycle actions', () => {
