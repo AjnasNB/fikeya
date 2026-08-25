@@ -420,22 +420,26 @@ class _ProcessTree:
     ) -> None:
         self.process = process
         self.windows_job = windows_job
+        self.terminated = False
         self.closed = False
 
     def terminate(self) -> None:
-        if self.closed:
+        if self.closed or self.terminated:
             return
         if os.name == "nt" and self.windows_job is not None:
             _terminate_windows_job(self.windows_job)
+            self.terminated = True
             return
         if os.name != "nt":
             try:
                 os.killpg(self.process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            self.terminated = True
             return
         if self.process.poll() is None:
             self.process.kill()
+        self.terminated = True
 
     def close(self) -> None:
         if self.closed:
