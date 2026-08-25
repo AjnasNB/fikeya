@@ -14,5 +14,6 @@
 	"command.mode.agent.title": "Open Agent Mode",
 	"command.mode.terminal.title": "Open Terminal Mode",
 	"command.mode.review.title": "Open Review Mode",
+	"command.mode.research.title": "Open Research Mode",
 	"command.mode.lab.title": "Open Lab Mode"
 }

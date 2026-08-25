@@ -28,7 +28,8 @@
 		"onCommand:fikeya.open",
 		"onCommand:fikeya.configureProvider",
 		"onCommand:fikeya.initializeWorkspace",
-		"onCommand:fikeya.runDoctor"
+		"onCommand:fikeya.runDoctor",
+		"onCommand:fikeya.mode.research"
 	],
 	"main": "./out/extension",
 	"contributes": {
@@ -105,6 +106,24 @@
 				"title": "%command.mode.lab.title%",
 				"category": "%command.category%",
 				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.research",
+				"title": "%command.mode.research.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "fikeya.open",
+				"key": "ctrl+alt+l",
+				"mac": "cmd+alt+l"
+			},
+			{
+				"command": "fikeya.mode.lab",
+				"key": "ctrl+alt+g",
+				"mac": "cmd+alt+g"
 			}
 		],
 		"themes": [

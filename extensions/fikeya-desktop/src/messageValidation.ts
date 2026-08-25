@@ -22,6 +22,7 @@ export type FikeyaCommand =
 	| 'fikeya.mode.agent'
 	| 'fikeya.mode.terminal'
 	| 'fikeya.mode.review'
+	| 'fikeya.mode.research'
 	| 'fikeya.mode.lab';
 
 const allowedCommands: readonly FikeyaCommand[] = [
@@ -32,6 +33,7 @@ const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.mode.agent',
 	'fikeya.mode.terminal',
 	'fikeya.mode.review',
+	'fikeya.mode.research',
 	'fikeya.mode.lab'
 ];
 
