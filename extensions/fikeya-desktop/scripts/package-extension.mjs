@@ -102,14 +102,24 @@ for (const item of pythonRuntimeBuildReceipt.packages) {
 }
 const pythonLicensePath = path.join('third_party', 'python-runtime', 'python', 'LICENSE.txt');
 await copyInto(path.join(runtimeBuildRoot, pythonRuntimeBuildReceipt.pythonLicenseFile), path.join(stagingRoot, pythonLicensePath));
-await writeJson(path.join(stagingRoot, 'runtime', 'fikeya-runtime.json'), {
+const bundledPythonRuntimeReceipt = {
 	...pythonRuntimeBuildReceipt,
 	schemaVersion: 'fikeya.desktop-bundled-python-runtime.v1',
 	executable: `runtime/${pythonRuntimeBuildReceipt.executable}`,
 	executableSha256: await sha256File(runtimeExecutableTarget),
 	packages: packagedRuntimeLicenses,
 	pythonLicenseFile: pythonLicensePath.replaceAll('\\', '/')
-});
+};
+await writeJson(path.join(stagingRoot, 'runtime', 'fikeya-runtime.json'), bundledPythonRuntimeReceipt);
+
+// The VSIX and the Code OSS desktop build consume different extension trees. Keep the
+// generated, ignored desktop runtime in sync with the exact executable inspected below.
+// This prevents a successful VSIX build from leaving an older runtime in a subsequent
+// native desktop installer.
+const desktopRuntimeRoot = path.join(extensionRoot, 'runtime');
+await mkdir(desktopRuntimeRoot, { recursive: true });
+await copyInto(runtimeExecutableSource, path.join(desktopRuntimeRoot, pythonRuntimeBuildReceipt.executable));
+await writeJson(path.join(desktopRuntimeRoot, 'fikeya-runtime.json'), bundledPythonRuntimeReceipt);
 
 const bundledSidecar = path.join(stagingRoot, 'sidecar', 'qarinah-memory-view.mjs');
 await mkdir(path.dirname(bundledSidecar), { recursive: true });

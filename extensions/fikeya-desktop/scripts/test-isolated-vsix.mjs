@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -40,6 +41,31 @@ const isolatedEnvironment = {
 	FIKEYA_HOME: profileRoot
 };
 const packagedEnvironment = runtime.buildFikeyaRuntimeEnvironment(extractedRoot, process.execPath, isolatedEnvironment);
+const providerCatalogResult = spawnSync(invocation.executable, ['provider', 'list', '--available', '--json'], {
+	cwd: workspaceRoot,
+	env: packagedEnvironment,
+	encoding: 'utf8',
+	stdio: ['ignore', 'pipe', 'pipe'],
+	windowsHide: true
+});
+assert.equal(providerCatalogResult.status, 0, `Bundled provider catalog failed: ${providerCatalogResult.stderr}`);
+const providerCatalog = JSON.parse(providerCatalogResult.stdout);
+assert.deepEqual(
+	providerCatalog.providers.map(provider => provider.kind),
+	[
+		'azure-openai',
+		'openai',
+		'anthropic',
+		'openrouter',
+		'nvidia-nim',
+		'google-gemini',
+		'hugging-face',
+		'groq',
+		'ollama',
+		'openai-compatible'
+	],
+	'Bundled runtime provider catalog must match the reviewed Desktop and CLI contract.'
+);
 const initialized = await runtime.runFikeyaRuntime('init', workspaceRoot, invocation, packagedEnvironment);
 assert.equal(initialized.ok, true, `Bundled Fikeya init failed: ${initialized.failure}`);
 assert.equal(initialized.report?.initialized, true);
