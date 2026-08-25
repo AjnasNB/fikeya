@@ -9,6 +9,7 @@ import { appendConversationMessage, FikeyaConversationMessage } from './conversa
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import { captureCompletedFikeyaRun } from './sessionCapture';
+import { buildPlanTimeline, extractPlanSteps, FikeyaPlanStageId, FikeyaPlanTimelineStage } from './surface';
 import {
 	configureFikeyaProvider,
 	FikeyaAgentApproval,
@@ -830,6 +831,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const strings = getWebviewStrings();
 		const providerCards = renderProviderCards(this.state, strings);
 		const agentSurface = renderAgentSurface(this.state, strings, this.state.activeMode === 'research');
+		const planSurface = renderPlanSurface(this.state, strings);
 		const statisticsSurface = renderStatistics(this.state.statistics, strings);
 		const memoryGraph = renderMemoryGraph(this.state, strings);
 		const memoryGraphData = serializeForHtml(this.state.memory.snapshot ?? { nodes: [], edges: [] });
@@ -839,13 +841,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const usageBasis = this.state.agent.usage?.measurement ?? strings.noUsageRecorded;
 		const contextStatus = formatContextStatus(this.state.agent.memory, strings);
 		const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'fikeya.svg'));
-		const desktopNavigation = `<div class="workspace-navigation"><nav class="mode-switcher" aria-label="${escapeHtml(strings.workspaceModes)}">
-			<button data-command="fikeya.mode.agent" data-active="${this.state.activeMode === 'chat'}" type="button">${escapeHtml(vscode.l10n.t('Chat'))}</button>
-			<button data-command="fikeya.mode.research" data-active="${this.state.activeMode === 'research'}" type="button">${escapeHtml(vscode.l10n.t('Research'))}</button>
-			<button data-command="fikeya.mode.lab" data-active="${this.state.activeMode === 'context'}" type="button">${escapeHtml(vscode.l10n.t('Context'))}</button>
-			<button data-command="fikeya.view.usage" data-active="${this.state.activeMode === 'usage'}" type="button">${escapeHtml(vscode.l10n.t('Usage'))}</button>
-			<button data-command="fikeya.view.setup" data-active="${this.state.activeMode === 'setup'}" type="button">${escapeHtml(vscode.l10n.t('Setup'))}</button>
-		</nav><nav class="native-actions" aria-label="${escapeHtml(vscode.l10n.t('Workbench destinations'))}"><button class="quiet" data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Code'))}</button><button class="quiet" data-command="fikeya.mode.terminal" type="button">${escapeHtml(strings.terminalMode)}</button><button class="quiet" data-command="fikeya.mode.review" type="button">${escapeHtml(strings.reviewMode)}</button></nav></div>`;
+		const initialSurface = this.state.activeMode === 'context' || this.state.activeMode === 'usage' || this.state.activeMode === 'setup'
+			? this.state.activeMode
+			: 'chat';
+		const desktopNavigation = `<div class="workspace-navigation"><nav class="mode-switcher" role="tablist" aria-label="${escapeHtml(strings.workspaceModes)}">
+			<button id="surface-tab-chat" role="tab" aria-controls="surface-panel-chat" aria-selected="${initialSurface === 'chat'}" tabindex="${initialSurface === 'chat' ? '0' : '-1'}" data-surface-tab="chat" data-surface-target="chat" data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Chat'))}</button>
+			<button id="surface-tab-plan" role="tab" aria-controls="surface-panel-plan" aria-selected="false" tabindex="-1" data-surface-tab="plan" data-surface-target="plan" data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Plan'))}</button>
+			<button id="surface-tab-context" role="tab" aria-controls="surface-panel-context" aria-selected="${initialSurface === 'context'}" tabindex="${initialSurface === 'context' ? '0' : '-1'}" data-surface-tab="context" data-surface-target="context" data-command="fikeya.mode.lab" type="button">${escapeHtml(vscode.l10n.t('Context'))}</button>
+			<button id="surface-tab-usage" role="tab" aria-controls="surface-panel-usage" aria-selected="${initialSurface === 'usage'}" tabindex="${initialSurface === 'usage' ? '0' : '-1'}" data-surface-tab="usage" data-surface-target="usage" data-command="fikeya.view.usage" type="button">${escapeHtml(vscode.l10n.t('Usage'))}</button>
+		</nav><nav class="native-actions" aria-label="${escapeHtml(vscode.l10n.t('Workbench destinations'))}"><button class="quiet" data-command="fikeya.mode.research" type="button">${escapeHtml(vscode.l10n.t('Research'))}</button><button class="quiet" id="surface-action-setup" data-surface-target="setup" data-command="fikeya.view.setup" type="button">${escapeHtml(vscode.l10n.t('Setup'))}</button><button class="quiet" data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Code'))}</button><button class="quiet" data-command="fikeya.mode.terminal" type="button">${escapeHtml(strings.terminalMode)}</button><button class="quiet" data-command="fikeya.mode.review" type="button">${escapeHtml(strings.reviewMode)}</button></nav></div>`;
 		const setupCards = `<section class="grid two compact-grid">
 			<article class="card">
 				<div class="card-heading"><h2>${escapeHtml(strings.getStarted)}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
@@ -858,13 +862,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				<div class="actions"><button data-command="fikeya.configureProvider" type="button">${escapeHtml(strings.configureProvider)}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
 			</article>
 		</section>`;
-		const activeContent = this.state.activeMode === 'context'
-			? memoryGraph
-			: this.state.activeMode === 'usage'
-				? `${statisticsSurface}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`
-				: this.state.activeMode === 'setup'
-					? setupCards
-					: agentSurface;
+		const usageSurface = `${statisticsSurface}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
+		const surfacePanels = `<div class="active-surface" data-initial-surface="${initialSurface}">
+			<section id="surface-panel-chat" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-chat" data-surface-panel="chat"${initialSurface === 'chat' ? '' : ' hidden'}>${agentSurface}</section>
+			<section id="surface-panel-plan" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-plan" data-surface-panel="plan" hidden>${planSurface}</section>
+			<section id="surface-panel-context" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-context" data-surface-panel="context"${initialSurface === 'context' ? '' : ' hidden'}>${memoryGraph}</section>
+			<section id="surface-panel-usage" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-usage" data-surface-panel="usage"${initialSurface === 'usage' ? '' : ' hidden'}>${usageSurface}</section>
+			<section id="surface-panel-setup" class="surface-panel" role="region" aria-labelledby="surface-action-setup" data-surface-panel="setup"${initialSurface === 'setup' ? '' : ' hidden'}>${setupCards}</section>
+		</div>`;
 		const sidebarContent = `<section class="sidebar-launch card">
 			<h2>${escapeHtml(vscode.l10n.t('Chat beside your code'))}</h2>
 			<p>${escapeHtml(vscode.l10n.t('Open the conversation in a right editor group, or jump directly to the verified Qarinah graph and local usage.'))}</p>
@@ -881,7 +886,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			<div class="run-metric"><span>${escapeHtml(strings.context)}</span><strong>${escapeHtml(contextStatus)}</strong></div>
 		</section>
 		<p class="usage-basis">${escapeHtml(strings.usageSource)} ${escapeHtml(usageBasis)}. ${escapeHtml(strings.metricsDisclaimer)}</p>
-		<div class="active-surface">${activeContent}</div>`;
+		${surfacePanels}`;
 
 		return `<!DOCTYPE html>
 <html lang="en">
@@ -893,6 +898,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	<style nonce="${nonce}">
 		:root { color-scheme: light dark; }
 		* { box-sizing: border-box; }
+		html, body { min-width: 0; max-width: 100%; overflow-x: hidden; }
 		body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
 		body[data-surface="editor"] { background: var(--vscode-editor-background); }
 		button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--vscode-button-border, transparent); color: var(--vscode-button-foreground); background: var(--vscode-button-background); font: inherit; cursor: pointer; }
@@ -901,8 +907,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
 		button:disabled { cursor: not-allowed; opacity: .58; }
 		button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
-		.shell { display: grid; max-width: 960px; gap: 12px; margin: 0 auto; padding: 12px; }
-		body[data-surface="editor"] .shell { max-width: 1080px; gap: 10px; padding: 12px 16px 28px; }
+		.shell { display: grid; width: min(100%, 960px); min-width: 0; gap: 12px; margin: 0 auto; padding: 12px; }
+		body[data-surface="editor"] .shell { width: 100%; max-width: 1480px; gap: 10px; padding: 12px 16px 28px; }
 		body[data-surface="editor"] .masthead { padding: 10px 12px; }
 		body[data-surface="editor"] .masthead .subtitle { display: none; }
 		body[data-surface="editor"] h1 { font-size: 18px; }
@@ -921,14 +927,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.run-metric strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 12px; font-variant-numeric: tabular-nums; }
 		.usage-basis { color: var(--vscode-descriptionForeground); font-size: 10px; }
 		.workspace-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-		.mode-switcher { display: grid; min-width: min(100%, 520px); grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--vscode-widget-border); background: var(--vscode-widget-border); gap: 1px; }
-		.mode-switcher button { min-width: 0; border: 0; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background); font-size: 11px; }
+		.mode-switcher { display: grid; min-width: min(100%, 480px); max-width: 100%; grid-template-columns: repeat(4, minmax(82px, 1fr)); overflow-x: auto; border: 1px solid var(--vscode-widget-border); background: var(--vscode-widget-border); gap: 1px; }
+		.mode-switcher button { min-width: 82px; border: 0; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background); font-size: 11px; }
 		.mode-switcher button:hover { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-		.mode-switcher button[data-active="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); }
-		.native-actions { display: flex; flex: 0 0 auto; gap: 3px; }
+		.mode-switcher button[aria-selected="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); }
+		.native-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; justify-content: end; gap: 3px; }
 		button.quiet { min-height: 28px; border-color: var(--vscode-widget-border); color: var(--vscode-foreground); background: transparent; }
 		button.quiet:hover { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-		.active-surface { display: grid; min-width: 0; gap: 10px; }
+		.active-surface, .surface-panel { display: grid; min-width: 0; max-width: 100%; gap: 10px; }
+		.surface-panel[hidden] { display: none; }
 		.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 		.sidebar-launch { border-top: 2px solid var(--vscode-focusBorder); }
 		.sidebar-destinations { display: grid; gap: 6px; }
@@ -963,13 +970,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.receipt { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0; }
 		.receipt dt { color: var(--vscode-descriptionForeground); }
 		.receipt dd { margin: 0; overflow-wrap: anywhere; }
-		.agent-surface { display: grid; gap: 10px; padding: 0; overflow: hidden; }
+		.agent-surface { display: grid; min-width: 0; gap: 10px; padding: 0; overflow: visible; }
 		.agent-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 		.agent-heading-actions { display: flex; align-items: center; gap: 6px; }
 		.agent-heading { padding: 12px 14px 0; }
 		.agent-heading h2 { margin: 0; font-size: 16px; }
 		.agent-heading p { margin-top: 3px; font-size: 11px; }
-		.chat-thread { display: flex; min-height: 340px; max-height: min(62vh, 720px); flex-direction: column; gap: 16px; overflow: auto; padding: 20px 16px; border-block: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); scroll-behavior: smooth; }
+		.chat-thread { display: flex; min-height: clamp(300px, 48vh, 540px); max-height: min(64vh, 760px); flex-direction: column; gap: 16px; overflow: auto; padding: 20px 16px; border-block: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); scroll-behavior: smooth; }
 		.chat-empty { display: grid; place-content: center; max-width: 54ch; min-height: 290px; margin: auto; text-align: left; }
 		.chat-empty strong { font-size: 18px; }
 		.chat-empty p { margin-top: 7px; }
@@ -990,11 +997,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.agent-form .composer textarea { min-height: 88px; border-color: var(--vscode-focusBorder); }
 		.composer-bar { display: grid; grid-template-columns: minmax(180px, .8fr) auto auto; align-items: start; gap: 8px; }
 		.inline-field select { max-width: 340px; }
-		.run-controls { position: relative; }
+		.run-controls { min-width: 0; }
 		.run-controls summary { min-height: 30px; padding: 6px 9px; border: 1px solid var(--vscode-widget-border); cursor: pointer; list-style: none; }
 		.run-controls summary::-webkit-details-marker { display: none; }
 		.run-controls[open] .control-grid { display: grid; }
-		.control-grid { position: absolute; z-index: 2; right: 0; display: none; width: min(480px, 78vw); grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 5px; padding: 12px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-menu-background); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
+		.control-grid { display: none; width: min(100%, 640px); grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 5px; padding: 12px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-menu-background); }
 		.control-grid .field:first-child { grid-column: 1 / -1; }
 		.composer-actions { justify-content: end; }
 		.field { display: grid; gap: 4px; }
@@ -1013,12 +1020,41 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.run-details-body { display: grid; gap: 12px; padding: 10px; border-top: 1px solid var(--vscode-widget-border); }
 		.agent-output { max-height: 360px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--vscode-widget-border); color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 		.agent-receipt { display: grid; gap: 8px; }
+		.plan-surface { min-width: 0; }
+		.plan-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+		.plan-heading h2 { margin: 0; font-size: 16px; }
+		.plan-heading p { max-width: 70ch; margin-top: 4px; }
+		.plan-workspace { display: grid; min-width: 0; grid-template-columns: minmax(220px, .62fr) minmax(0, 1.38fr); gap: 10px; }
+		.plan-timeline { display: grid; align-content: start; gap: 1px; min-width: 0; padding: 1px; background: var(--vscode-widget-border); }
+		.plan-step { display: grid; min-width: 0; min-height: 58px; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 0; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background); text-align: left; }
+		.plan-step:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground); }
+		.plan-step[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
+		.plan-step-index { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-family: var(--vscode-editor-font-family); font-size: 10px; }
+		.plan-step-copy { min-width: 0; }
+		.plan-step-copy strong, .plan-step-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.plan-step-copy span { margin-top: 2px; opacity: .78; font-size: 10px; }
+		.plan-step-status { color: var(--vscode-descriptionForeground); font-size: 10px; text-transform: capitalize; }
+		.plan-step[data-status="complete"] .plan-step-index { border-color: var(--vscode-testing-iconPassed); color: var(--vscode-testing-iconPassed); }
+		.plan-step[data-status="active"] .plan-step-index { border-color: var(--vscode-progressBar-background); background: var(--vscode-progressBar-background); color: var(--vscode-button-foreground); }
+		.plan-step[data-status="attention"] .plan-step-index { border-color: var(--vscode-testing-iconFailed); color: var(--vscode-testing-iconFailed); }
+		.plan-details { display: grid; min-width: 0; align-content: start; gap: 12px; padding: 14px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
+		.plan-detail[hidden] { display: none; }
+		.plan-detail h3 { margin: 0; font-size: 15px; }
+		.plan-detail-copy { margin-top: 6px; }
+		.plan-evidence { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 12px; background: var(--vscode-widget-border); }
+		.plan-evidence div { min-width: 0; padding: 9px; background: var(--vscode-editorWidget-background); }
+		.plan-evidence span, .plan-evidence strong { display: block; }
+		.plan-evidence span { color: var(--vscode-descriptionForeground); font-size: 10px; }
+		.plan-evidence strong { margin-top: 3px; overflow-wrap: anywhere; }
+		.plan-lines { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 20px; }
+		.plan-lines li { padding-left: 3px; line-height: 1.45; }
+		.plan-boundary { margin-top: 10px; padding-left: 9px; border-left: 2px solid var(--vscode-focusBorder); }
 		.memory-graph { min-width: 0; }
 		.graph-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(105px, .4fr) minmax(120px, .48fr) auto; gap: 6px; }
 		.graph-controls input { min-height: 30px; padding: 4px 7px; }
-		.graph-workspace { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(180px, .55fr); gap: 8px; }
-		.graph-viewport { position: relative; min-height: 360px; overflow: hidden; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
-		.graph-canvas { display: block; width: 100%; min-height: 360px; touch-action: none; user-select: none; }
+		.graph-workspace { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(240px, 340px); gap: 8px; }
+		.graph-viewport { position: relative; min-width: 0; min-height: clamp(420px, 58vh, 680px); overflow: hidden; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
+		.graph-canvas { display: block; width: 100%; height: 100%; min-height: clamp(420px, 58vh, 680px); touch-action: none; user-select: none; }
 		.graph-hit { fill: transparent; cursor: grab; }
 		.graph-hit[data-panning="true"] { cursor: grabbing; }
 		.graph-edge { stroke: var(--vscode-editorWidget-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -1028,7 +1064,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.graph-halo { fill: var(--vscode-editor-background); stroke: var(--vscode-widget-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
 		.graph-dot { stroke: var(--vscode-editor-foreground); stroke-width: .6; vector-effect: non-scaling-stroke; }
 		.graph-label { fill: var(--vscode-editor-foreground); stroke: var(--vscode-editor-background); stroke-width: 3px; paint-order: stroke; font-family: var(--vscode-editor-font-family); font-size: 9px; pointer-events: none; }
-		.graph-details { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
+		.graph-details { display: grid; min-width: 0; max-height: clamp(420px, 58vh, 680px); align-content: start; gap: 8px; overflow: auto; padding: 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.graph-details h3 { margin: 0; font-size: 13px; }
 		.graph-details code { overflow-wrap: anywhere; }
 		.graph-legend { display: flex; flex-wrap: wrap; gap: 5px 10px; color: var(--vscode-descriptionForeground); font-size: 11px; }
@@ -1043,8 +1079,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
 		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
 			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-		@media (max-width: 780px) { .workspace-navigation { align-items: stretch; flex-direction: column; } .mode-switcher { min-width: 0; width: 100%; } .native-actions { justify-content: end; } }
-		@media (max-width: 720px) { .graph-workspace { grid-template-columns: 1fr; } .composer-bar { grid-template-columns: 1fr; } .inline-field select { max-width: none; } .control-grid { position: static; width: 100%; grid-template-columns: 1fr; } .control-grid .field:first-child { grid-column: auto; } .composer-actions { justify-content: start; } .composer-foot { flex-direction: column; } }
+		@media (max-width: 900px) { .graph-workspace, .plan-workspace { grid-template-columns: 1fr; } .graph-details { max-height: none; } }
+		@media (max-width: 780px) { .workspace-navigation { align-items: stretch; flex-direction: column; } .mode-switcher { width: 100%; } .native-actions { justify-content: start; } }
+		@media (max-width: 720px) { .composer-bar { grid-template-columns: 1fr; } .inline-field select { max-width: none; } .control-grid { width: 100%; grid-template-columns: 1fr; } .control-grid .field:first-child { grid-column: auto; } .composer-actions { justify-content: start; } .composer-foot { flex-direction: column; } .plan-evidence { grid-template-columns: 1fr; } }
 			@media (max-width: 520px) { .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } .statistics-status { grid-template-columns: 1fr; } }
 		@media (max-width: 420px) { .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } }
 		@media (max-width: 280px) { .provider-card { grid-template-columns: 1fr; } }
@@ -1062,6 +1099,67 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	<script id="fikeya-memory-graph-data" type="application/json" nonce="${nonce}">${memoryGraphData}</script>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
+		const persistedState = vscode.getState() || {};
+		const surfaceRoot = document.querySelector('[data-initial-surface]');
+		const surfaceTabs = Array.from(document.querySelectorAll('[data-surface-tab]'));
+		const surfaceTargets = Array.from(document.querySelectorAll('[data-surface-target]'));
+		const surfacePanels = Array.from(document.querySelectorAll('[data-surface-panel]'));
+		const availableSurfaces = new Set(surfacePanels.map(panel => panel.dataset.surfacePanel));
+		const activateSurface = (surfaceName, focus = false) => {
+			if (!surfaceName || !availableSurfaces.has(surfaceName)) return;
+			for (const panel of surfacePanels) panel.hidden = panel.dataset.surfacePanel !== surfaceName;
+			for (const tab of surfaceTabs) {
+				const selected = tab.dataset.surfaceTab === surfaceName;
+				tab.setAttribute('aria-selected', String(selected));
+				tab.tabIndex = selected ? 0 : -1;
+				if (selected && focus) tab.focus();
+			}
+			vscode.setState({ ...persistedState, surface: surfaceName, planStep: vscode.getState()?.planStep });
+		};
+		for (const target of surfaceTargets) target.addEventListener('click', () => activateSurface(target.dataset.surfaceTarget));
+		for (const [index, tab] of surfaceTabs.entries()) tab.addEventListener('keydown', event => {
+			let nextIndex;
+			if (event.key === 'ArrowRight') nextIndex = (index + 1) % surfaceTabs.length;
+			else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + surfaceTabs.length) % surfaceTabs.length;
+			else if (event.key === 'Home') nextIndex = 0;
+			else if (event.key === 'End') nextIndex = surfaceTabs.length - 1;
+			else return;
+			event.preventDefault();
+			surfaceTabs[nextIndex].click();
+			surfaceTabs[nextIndex].focus();
+		});
+		const serverInitialSurface = surfaceRoot?.dataset.initialSurface || 'chat';
+		const initialSurface = serverInitialSurface === 'chat' && persistedState.surface === 'plan' ? 'plan' : serverInitialSurface;
+		activateSurface(initialSurface);
+		const planSteps = Array.from(document.querySelectorAll('[data-plan-step]'));
+		const planDetails = Array.from(document.querySelectorAll('[data-plan-detail]'));
+		const selectPlanStep = (stepId, focus = false) => {
+			if (!planSteps.some(step => step.dataset.planStep === stepId)) return;
+			for (const step of planSteps) {
+				const selected = step.dataset.planStep === stepId;
+				step.setAttribute('aria-selected', String(selected));
+				step.tabIndex = selected ? 0 : -1;
+				if (selected && focus) step.focus();
+			}
+			for (const detail of planDetails) detail.hidden = detail.dataset.planDetail !== stepId;
+			const state = vscode.getState() || {};
+			vscode.setState({ ...state, planStep: stepId });
+		};
+		for (const [index, step] of planSteps.entries()) {
+			step.addEventListener('click', () => selectPlanStep(step.dataset.planStep));
+			step.addEventListener('keydown', event => {
+				let nextIndex;
+				if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (index + 1) % planSteps.length;
+				else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (index - 1 + planSteps.length) % planSteps.length;
+				else if (event.key === 'Home') nextIndex = 0;
+				else if (event.key === 'End') nextIndex = planSteps.length - 1;
+				else return;
+				event.preventDefault();
+				selectPlanStep(planSteps[nextIndex].dataset.planStep, true);
+			});
+		}
+		const renderedPlanStep = planSteps.find(step => step.getAttribute('aria-selected') === 'true')?.dataset.planStep;
+		selectPlanStep(planSteps.some(step => step.dataset.planStep === persistedState.planStep) ? persistedState.planStep : renderedPlanStep);
 		document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openCommand', command: button.dataset.command })));
 		document.querySelector('[data-action="refresh-providers"]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshProviders' }));
 		document.querySelectorAll('[data-provider-test]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'testProvider', providerName: button.dataset.providerTest })));
@@ -1337,6 +1435,50 @@ function renderStatistics(state: StatisticsSurfaceState, strings: WebviewStrings
 		<h2>${escapeHtml(strings.providerModelBreakdown)}</h2>
 		${breakdown}
 	</section>`;
+}
+
+function renderPlanSurface(state: DashboardState, strings: WebviewStrings): string {
+	const outcome = state.agent.outcome;
+	const timeline = buildPlanTimeline({ status: state.agent.status, hasOutcome: outcome !== undefined });
+	const selectedStage = timeline.find(stage => stage.status === 'active' || stage.status === 'attention')?.id
+		?? timeline.at(-1)?.id
+		?? 'draft';
+	const provider = state.providers.find(profile => profile.name === state.agent.providerName) ?? state.providers.at(0);
+	const providerLabel = provider ? `${provider.name} / ${provider.model}` : strings.noProviderSelected;
+	const planLines = extractPlanSteps(outcome?.plan);
+	const labels: Record<FikeyaPlanStageId, { readonly title: string; readonly summary: string }> = {
+		draft: { title: vscode.l10n.t('Draft'), summary: vscode.l10n.t('Turn the request into a bounded plan') },
+		review: { title: vscode.l10n.t('Review'), summary: vscode.l10n.t('Check scope, context, and workspace') },
+		approval: { title: vscode.l10n.t('Approval'), summary: vscode.l10n.t('Pause before an exact tool call') },
+		execute: { title: vscode.l10n.t('Execute'), summary: vscode.l10n.t('Run approved work in this project') },
+		verify: { title: vscode.l10n.t('Verify'), summary: vscode.l10n.t('Inspect tests, files, and evidence') }
+	};
+	const timelineButtons = timeline.map((stage, index) => `<button class="plan-step" id="plan-step-${stage.id}" role="tab" aria-controls="plan-detail-${stage.id}" aria-selected="${stage.id === selectedStage}" tabindex="${stage.id === selectedStage ? '0' : '-1'}" data-plan-step="${stage.id}" data-status="${stage.status}" type="button"><span class="plan-step-index" aria-hidden="true">${index + 1}</span><span class="plan-step-copy"><strong>${escapeHtml(labels[stage.id].title)}</strong><span>${escapeHtml(labels[stage.id].summary)}</span></span><span class="plan-step-status">${escapeHtml(planStageStatusLabel(stage, strings))}</span></button>`).join('');
+	const planList = planLines.length > 0
+		? `<ol class="plan-lines">${planLines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ol>`
+		: `<p class="empty">${escapeHtml(vscode.l10n.t('The provider plan will appear here after a completed run. You can still inspect every lifecycle boundary before sending.'))}</p>`;
+	const terminalStatus = state.agent.failure ?? outcome?.summary ?? agentStatusLabel(state.agent, strings);
+	const details: Record<FikeyaPlanStageId, string> = {
+		draft: `<h3>${escapeHtml(vscode.l10n.t('Draft the work'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Fikeya turns the request into a bounded sequence before workspace tools are used.'))}</p>${planList}`,
+		review: `<h3>${escapeHtml(vscode.l10n.t('Review the boundary'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Confirm the selected model, Qarinah context state, and current workspace before execution.'))}</p><div class="plan-evidence"><div><span>${escapeHtml(strings.providerAndModel)}</span><strong>${escapeHtml(providerLabel)}</strong></div><div><span>${escapeHtml(strings.context)}</span><strong>${escapeHtml(formatContextStatus(state.agent.memory, strings))}</strong></div><div><span>${escapeHtml(strings.workspace)}</span><strong>${escapeHtml(state.workspaceName)}</strong></div></div>`,
+		approval: `<h3>${escapeHtml(vscode.l10n.t('Approve exact actions'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('When a supported tool is requested, Fikeya shows its name, bounded arguments, and evidence hash before continuing.'))}</p><p class="plan-boundary">${escapeHtml(vscode.l10n.t('Approvals remain one-use decisions. This timeline does not imply that a tool ran until an execution outcome exists.'))}</p>`,
+		execute: `<h3>${escapeHtml(vscode.l10n.t('Execute in the workspace'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Only approved, root-bounded actions run. Completed outcomes expose the tools and changed-file hashes.'))}</p><div class="plan-evidence"><div><span>${escapeHtml(vscode.l10n.t('Plan steps'))}</span><strong>${(outcome?.steps ?? 0).toLocaleString()}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Tool calls'))}</span><strong>${(outcome?.toolCalls.length ?? 0).toLocaleString()}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Changed files'))}</span><strong>${(outcome?.changedFiles.length ?? 0).toLocaleString()}</strong></div></div>`,
+		verify: `<h3>${escapeHtml(vscode.l10n.t('Verify the result'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Inspect test outcomes, the final run state, and the receipt identity before accepting the work.'))}</p><div class="plan-evidence"><div><span>${escapeHtml(strings.test)}</span><strong>${(outcome?.tests.length ?? 0).toLocaleString()}</strong></div><div><span>${escapeHtml(strings.status)}</span><strong>${escapeHtml(terminalStatus)}</strong></div><div><span>${escapeHtml(strings.session)}</span><strong>${escapeHtml(state.agent.sessionId ?? strings.unavailable)}</strong></div></div>`
+	};
+	const detailPanels = timeline.map(stage => `<section class="plan-detail" id="plan-detail-${stage.id}" role="tabpanel" aria-labelledby="plan-step-${stage.id}" data-plan-detail="${stage.id}"${stage.id === selectedStage ? '' : ' hidden'}>${details[stage.id]}</section>`).join('');
+	return `<section class="card plan-surface" aria-labelledby="plan-surface-title">
+		<div class="plan-heading"><div><h2 id="plan-surface-title">${escapeHtml(vscode.l10n.t('Plan timeline'))}</h2><p>${escapeHtml(vscode.l10n.t('Move from request to verified outcome without hiding the approval boundary. Select a stage to inspect what Fikeya knows now.'))}</p></div><span class="badge">${escapeHtml(agentStatusLabel(state.agent, strings))}</span></div>
+		<div class="plan-workspace"><div class="plan-timeline" role="tablist" aria-label="${escapeHtml(vscode.l10n.t('Run lifecycle'))}">${timelineButtons}</div><div class="plan-details" aria-live="polite">${detailPanels}</div></div>
+	</section>`;
+}
+
+function planStageStatusLabel(stage: FikeyaPlanTimelineStage, strings: WebviewStrings): string {
+	switch (stage.status) {
+		case 'active': return vscode.l10n.t('Current');
+		case 'complete': return vscode.l10n.t('Complete');
+		case 'attention': return vscode.l10n.t('Attention');
+		default: return strings.notChecked;
+	}
 }
 
 function renderAgentSurface(state: DashboardState, strings: WebviewStrings, researchMode: boolean): string {
