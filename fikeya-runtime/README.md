@@ -149,12 +149,15 @@ fikeya plan cancel pln_example --workspace . --reason "person cancelled" --json
 ```
 
 `plan approve` also accepts `--all`, but approval remains one exact,
-single-use reference per selected step and canonical tool-call digest. A plan
-review never grants tool permission. `plan run` executes eligible approved
-steps in dependency order and stops in `awaiting_approval` at the next eligible
-unapproved step. `plan resume` completes a persisted verifying step or continues
-after more steps receive approval. A persisted executing step is treated as an
-uncertain failure rather than being replayed. `plan show`
+single-use reference per selected step and canonical tool-call digest. Each
+reference reports `issuedAt` and `expiresAt` and expires after five minutes by
+default. An expired reference is rejected before execution and the step returns
+to `awaiting_approval` for a new exact reference. A plan review never grants
+tool permission. `plan run` executes eligible approved steps in dependency order
+and stops in `awaiting_approval` at the next eligible unapproved step.
+`plan resume` completes a persisted verifying step or continues after more steps
+receive approval. A persisted executing step is treated as an uncertain failure
+rather than being replayed. `plan show`
 returns the current record plus its content-free proof receipt. Terminal failed
 or cancelled plans cannot be resumed, and cancellation never turns an
 interrupted step into success.

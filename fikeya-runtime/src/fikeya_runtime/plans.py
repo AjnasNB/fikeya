@@ -11,7 +11,9 @@ import json
 import re
 import sqlite3
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import cast
 
 from fikeya_agent_core import CancellationToken, ToolCall
@@ -27,6 +29,8 @@ _MAX_PLAN_BYTES = 1_048_576
 _MAX_STEPS = 64
 _MAX_TITLE_BYTES = 4_096
 _MAX_VERIFICATION_FILE_BYTES = 33_554_432
+_DEFAULT_APPROVAL_TTL_SECONDS = 300
+_MAX_APPROVAL_TTL_SECONDS = 600
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SUPPORTED_TOOLS = frozenset(
     {
@@ -284,11 +288,13 @@ class PlanApprovalReference:
     reference_id: str
     tool_call_sha256: str
     issued_at: str
+    expires_at: str
     consumed_at: str | None = None
 
     def as_json(self) -> dict[str, object]:
         return {
             "consumedAt": self.consumed_at,
+            "expiresAt": self.expires_at,
             "issuedAt": self.issued_at,
             "referenceId": self.reference_id,
             "toolCallSha256": self.tool_call_sha256,
@@ -299,21 +305,46 @@ class PlanApprovalReference:
         item = _object(value, "approval reference")
         _exact_keys(
             item,
-            {"consumedAt", "issuedAt", "referenceId", "toolCallSha256"},
+            {
+                "consumedAt",
+                "expiresAt",
+                "issuedAt",
+                "referenceId",
+                "toolCallSha256",
+            },
             "approval reference",
+            optional={"expiresAt"},
         )
         consumed = item["consumedAt"]
         if consumed is not None and not isinstance(consumed, str):
             raise ConfigurationError("Approval consumedAt must be a string or null.")
         reference_id = _string(item, "referenceId", "approval reference")
         validate_identifier(reference_id, "approval reference")
+        issued_at = _normalized_timestamp(
+            _string(item, "issuedAt", "approval reference"),
+            "approval issuedAt",
+        )
+        expires_at = _normalized_timestamp(
+            _optional_string(item, "expiresAt", issued_at),
+            "approval expiresAt",
+        )
+        if _parse_timestamp(expires_at, "approval expiresAt") < _parse_timestamp(
+            issued_at, "approval issuedAt"
+        ):
+            raise ConfigurationError("Approval expiresAt cannot precede issuedAt.")
+        consumed_at = (
+            _normalized_timestamp(consumed, "approval consumedAt")
+            if isinstance(consumed, str)
+            else None
+        )
         return cls(
             reference_id=reference_id,
             tool_call_sha256=_digest(
                 _string(item, "toolCallSha256", "approval reference")
             ),
-            issued_at=_string(item, "issuedAt", "approval reference"),
-            consumed_at=consumed,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            consumed_at=consumed_at,
         )
 
 
@@ -611,6 +642,9 @@ class PlanRecord:
                     "approvalConsumedAt": (
                         step.approval.consumed_at if step.approval else None
                     ),
+                    "approvalExpiresAt": (
+                        step.approval.expires_at if step.approval else None
+                    ),
                     "approvalReference": (
                         step.approval.reference_id if step.approval else None
                     ),
@@ -733,9 +767,15 @@ class PlanStore:
 class PlanService:
     """Create, approve, execute, verify, and resume deterministic local plans."""
 
-    def __init__(self, workspace: Workspace) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.workspace = workspace
         self.store = PlanStore(workspace)
+        self._clock = clock or _system_utc_now
 
     def create(self, specification: dict[str, object]) -> PlanRecord:
         title, steps = _parse_specification(specification)
@@ -769,6 +809,7 @@ class PlanService:
         *,
         step_ids: tuple[str, ...] = (),
         approve_all: bool = False,
+        ttl_seconds: int = _DEFAULT_APPROVAL_TTL_SECONDS,
     ) -> tuple[PlanRecord, tuple[PlanApprovalReference, ...]]:
         plan = self.store.load(plan_id)
         if plan.status not in {PlanStatus.REVIEWED, PlanStatus.AWAITING_APPROVAL}:
@@ -778,6 +819,10 @@ class PlanService:
         requested = set(step_ids)
         if len(requested) != len(step_ids):
             raise ConfigurationError("Each plan step can be approved only once per request.")
+        ttl = _approval_ttl(ttl_seconds)
+        issued = _normalized_datetime(self._clock(), "plan approval clock")
+        issued_at = _format_timestamp(issued)
+        expires_at = _format_timestamp(issued + timedelta(seconds=ttl))
         selected: list[PlanStep] = []
         references: list[PlanApprovalReference] = []
         for step in plan.steps:
@@ -785,15 +830,22 @@ class PlanService:
             if not should_approve:
                 selected.append(step)
                 continue
-            if step.status not in {
+            expired = (
+                step.approval is not None
+                and step.approval.consumed_at is None
+                and _approval_expired(step.approval, issued)
+            )
+            eligible_status = step.status in {
                 PlanStepStatus.PENDING,
                 PlanStepStatus.AWAITING_APPROVAL,
-            } or step.approval is not None:
+            } or (step.status is PlanStepStatus.APPROVED and expired)
+            if not eligible_status or (step.approval is not None and not expired):
                 raise StateError(f"Step is not awaiting a new approval: {step.step_id}")
             reference = PlanApprovalReference(
                 reference_id=f"apr_{uuid.uuid4().hex}",
                 tool_call_sha256=step.tool_call_sha256,
-                issued_at=utc_now(),
+                issued_at=issued_at,
+                expires_at=expires_at,
             )
             references.append(reference)
             selected.append(
@@ -881,6 +933,15 @@ class PlanService:
                 )
             if approval.tool_call_sha256 != current.tool_call_sha256:
                 raise StateError("Approval does not match the exact planned tool call.")
+            if _approval_expired(approval, self._clock()):
+                waiting = replace(current, status=PlanStepStatus.AWAITING_APPROVAL)
+                return self.store.save(
+                    replace(
+                        plan,
+                        status=PlanStatus.AWAITING_APPROVAL,
+                        steps=_replace_step(plan.steps, waiting),
+                    )
+                )
             token.raise_if_cancelled()
             started_at = utc_now()
             executing = replace(
@@ -1243,6 +1304,55 @@ def _dependencies_succeeded(
 
 def _replace_step(steps: tuple[PlanStep, ...], updated: PlanStep) -> tuple[PlanStep, ...]:
     return tuple(updated if item.step_id == updated.step_id else item for item in steps)
+
+
+def _approval_ttl(value: int) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= _MAX_APPROVAL_TTL_SECONDS
+    ):
+        raise ConfigurationError(
+            f"Plan approval lifetime must be between 1 and "
+            f"{_MAX_APPROVAL_TTL_SECONDS} seconds."
+        )
+    return value
+
+
+def _approval_expired(reference: PlanApprovalReference, now: datetime) -> bool:
+    current = _normalized_datetime(now, "plan approval clock")
+    expires = _parse_timestamp(reference.expires_at, "approval expiresAt")
+    return expires <= current
+
+
+def _system_utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _normalized_datetime(value: datetime, label: str) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ConfigurationError(f"{label} must return a timezone-aware datetime.")
+    return value.astimezone(timezone.utc)
+
+
+def _format_timestamp(value: datetime) -> str:
+    return (
+        _normalized_datetime(value, "timestamp")
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _parse_timestamp(value: str, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ConfigurationError(f"{label} must be an ISO 8601 timestamp.") from error
+    return _normalized_datetime(parsed, label)
+
+
+def _normalized_timestamp(value: str, label: str) -> str:
+    return _format_timestamp(_parse_timestamp(value, label))
 
 
 def _digest(value: str) -> str:

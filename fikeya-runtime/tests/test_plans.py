@@ -9,6 +9,7 @@ import io
 import json
 import re
 import socket
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,17 @@ class _JsonInput:
 
     def isatty(self) -> bool:
         return False
+
+
+class _TestClock:
+    def __init__(self, current: datetime) -> None:
+        self.current = current
+
+    def __call__(self) -> datetime:
+        return self.current
+
+    def advance(self, *, seconds: int) -> None:
+        self.current += timedelta(seconds=seconds)
 
 
 def _sha256(value: str) -> str:
@@ -140,6 +152,80 @@ def test_plan_pauses_for_exact_approvals_then_resumes_to_verified_proof(
     assert _DIGEST.fullmatch(str(receipt["steps"][0]["toolCallSha256"]))
     assert _DIGEST.fullmatch(str(receipt["steps"][0]["resultSha256"]))
     assert _DIGEST.fullmatch(str(receipt["steps"][0]["verificationSha256"]))
+
+
+def test_expired_plan_approval_is_rejected_before_execution_and_can_be_reissued(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    clock = _TestClock(datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc))
+    service = PlanService(workspace, clock=clock)
+    draft = service.create(_two_step_specification())
+    service.review(draft.plan_id)
+
+    approved, references = service.approve(
+        draft.plan_id,
+        step_ids=("write-proof",),
+    )
+    reference = references[0]
+    assert reference.as_json() == {
+        "consumedAt": None,
+        "expiresAt": "2026-08-26T12:05:00.000Z",
+        "issuedAt": "2026-08-26T12:00:00.000Z",
+        "referenceId": reference.reference_id,
+        "toolCallSha256": approved.steps[0].tool_call_sha256,
+    }
+    assert service.store.load(draft.plan_id).steps[0].approval == reference
+
+    clock.advance(seconds=300)
+    waiting = _run(service.run(draft.plan_id), monkeypatch)
+    assert hasattr(waiting, "status")
+    assert waiting.status is PlanStatus.AWAITING_APPROVAL
+    assert waiting.steps[0].status is PlanStepStatus.AWAITING_APPROVAL
+    assert waiting.steps[0].approval == reference
+    assert waiting.steps[0].approval.consumed_at is None
+    assert not (root / "proof.txt").exists()
+
+    reapproved, replacements = service.approve(
+        draft.plan_id,
+        step_ids=("write-proof",),
+        ttl_seconds=60,
+    )
+    replacement = replacements[0]
+    assert replacement.reference_id != reference.reference_id
+    assert replacement.tool_call_sha256 == reference.tool_call_sha256
+    assert replacement.expires_at == "2026-08-26T12:06:00.000Z"
+    assert reapproved.steps[0].approval == replacement
+
+    resumed = _run(service.run(draft.plan_id), monkeypatch)
+    assert hasattr(resumed, "status")
+    assert resumed.steps[0].status is PlanStepStatus.SUCCEEDED
+    assert resumed.steps[0].approval is not None
+    assert resumed.steps[0].approval.consumed_at is not None
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "proof\n"
+
+
+@pytest.mark.parametrize("ttl_seconds", [True, 0, 601, 1.5])
+def test_plan_approval_rejects_invalid_lifetimes(
+    tmp_path: Path,
+    ttl_seconds: object,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    service = PlanService(workspace)
+    plan = service.create(_two_step_specification())
+    service.review(plan.plan_id)
+
+    with pytest.raises(ConfigurationError, match="between 1 and 600 seconds"):
+        service.approve(
+            plan.plan_id,
+            approve_all=True,
+            ttl_seconds=ttl_seconds,  # type: ignore[arg-type]
+        )
 
 
 def test_plan_fails_closed_when_file_verification_disagrees(
