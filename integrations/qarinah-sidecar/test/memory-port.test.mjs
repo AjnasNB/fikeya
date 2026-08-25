@@ -8,7 +8,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { MemoryPort, normalizeLifecycleEvent, safeError, toQarinahEventId } from '../src/memory-port.mjs';
+import { MemoryPort, normalizeLifecycleEvent, safeError, toQarinahEventId, validateContextBudget } from '../src/memory-port.mjs';
 
 test('binds the memory port to one absolute workspace root', () => {
 	const port = new MemoryPort('.');
@@ -99,6 +99,63 @@ test('records and retrieves cited project memory through Qarinah', async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test('forwards and honors explicit 8000 and 12000 character budgets', async t => {
+	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-qarinah-budget-'));
+	try {
+		const port = new MemoryPort(root);
+		const initialized = await port.dispatch('memory.initialize', { capture: 'content' }, 'initialize-budget');
+		await port.dispatch('memory.approve', {
+			capture: 'content',
+			policyHash: initialized.policy.policyHash
+		}, 'approve-budget');
+		await port.dispatch('memory.record', {
+			event: {
+				id: 'decision-explicit-context-budget',
+				type: 'decision.recorded',
+				occurredAt: '2026-08-24T00:00:00.000Z',
+				sessionId: 'session-budget',
+				payload: {
+					title: 'Honor explicit context budgets',
+					body: 'Forward the caller character budget to Qarinah and reject any response that widens or exceeds it.'
+				}
+			}
+		}, 'record-budget');
+
+		for (const maxChars of [8_000, 12_000]) {
+			await t.test(`${maxChars} characters`, async () => {
+				const context = await port.dispatch('memory.prepare', {
+					query: 'Honor explicit context budgets',
+					maxChars,
+					maxTokens: Math.ceil(maxChars / 4),
+					minimumCoverage: 'direct'
+				}, `prepare-${maxChars}`);
+
+				assert.equal(context.budget.maxChars, maxChars);
+				assert.ok(context.budget.usedChars <= maxChars);
+				assert.equal(context.items[0].title, 'Honor explicit context budgets');
+			});
+		}
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('fails closed for invalid requests and widened Qarinah budgets', async () => {
+	const port = new MemoryPort('.');
+	await assert.rejects(
+		() => port.dispatch('memory.prepare', { maxChars: 511 }, 'undersized-budget'),
+		/maxChars must be an integer from 512 to 1000000/
+	);
+	assert.throws(
+		() => validateContextBudget({ budget: { maxChars: 12_000, usedChars: 1_000 } }, 8_000),
+		/Qarinah returned maxChars 12000, but 8000 was requested/
+	);
+	assert.throws(
+		() => validateContextBudget({ budget: { maxChars: 8_000, usedChars: 8_001 } }, 8_000),
+		/exceeds its declared character budget/
+	);
 });
 
 test('scans a workspace and returns bounded symbol intelligence', async () => {
