@@ -3,20 +3,20 @@
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<meta name="description" content="Fikeya is an open AI code editor and coding agent that selects task-relevant project evidence within explicit budgets and records provider-reported usage.">
+		<meta name="description" content="Fikeya is an open AI code editor that compiles task-relevant project evidence and records provider-reported usage so developers can measure whether matched tasks use fewer billed input tokens.">
 		<meta name="robots" content="index, follow, max-image-preview:large">
 		<meta name="theme-color" content="#0b0f0e">
 		<meta name="color-scheme" content="dark">
 		<meta property="og:type" content="website">
 		<meta property="og:site_name" content="Fikeya">
-		<meta property="og:title" content="Fikeya | The open AI code editor for supported providers">
-		<meta property="og:description" content="Bring your model, use task-relevant project evidence, and inspect provider, context, tool, and verification receipts in one open coding workbench.">
+		<meta property="og:title" content="Fikeya | Build with your model. Spend fewer tokens.">
+		<meta property="og:description" content="Compile task-relevant evidence, run approved tools, and inspect provider-reported token and verification receipts in one open coding workbench.">
 		<meta property="og:url" content="https://fikeya.com/">
-		<meta property="og:image" content="https://fikeya.com/fikeya-desktop-beta-editor.jpg">
-		<meta property="og:image:alt" content="Fikeya Desktop editing a real source repository in the complete Fikeya workbench.">
+		<meta property="og:image" content="https://fikeya.com/fikeya-live-chat.png">
+		<meta property="og:image:alt" content="Fikeya Chat completing a real local turn beside source code and reporting measured provider usage.">
 		<meta name="twitter:card" content="summary_large_image">
 		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
-		<title>Fikeya | The open AI code editor for supported providers</title>
+		<title>Fikeya | Build with your model. Spend fewer tokens.</title>
 		<link rel="canonical" href="https://fikeya.com/">
 		<link rel="icon" href="favicon.svg?v=20260825h" type="image/svg+xml">
 		<link rel="manifest" href="site.webmanifest">
@@ -53,8 +53,8 @@
 				<div class="shell hero-layout">
 					<div class="hero-copy">
 						<p class="release-line"><span aria-hidden="true"></span>Fikeya 0.1.0-beta.1 · Desktop, VS Code extension, and CLI</p>
-						<h1>Build with your model.<span>Use task-relevant context.</span></h1>
-						<p class="hero-summary">Fikeya is an AI code editor and coding agent that selects task-relevant project evidence instead of replaying the whole repository on every turn. Bring your own provider, approve tools, run code, and inspect measured token and verification receipts from one local workbench.</p>
+						<h1>Build with your model.<span>Spend fewer tokens.</span></h1>
+						<p class="hero-summary">Fikeya selects task-relevant project evidence instead of replaying the whole repository on every turn. Bring your own provider, approve tools, run code, and inspect measured token and verification receipts. The product target is lower billed input tokens on matched coding tasks, not an unqualified savings claim.</p>
 						<div class="hero-actions">
 							<a class="button button-primary" href="/download/">Download the public beta</a>
 							<a class="button button-text" href="/docs/">Start with the docs</a>
@@ -65,11 +65,11 @@
 					</div>
 					<figure class="product-shot">
 						<div class="product-shot-bar">
-							<span>Fikeya Desktop</span>
-							<span>real Windows workspace</span>
+							<span>Fikeya Chat</span>
+							<span>real local proof workspace</span>
 						</div>
-					<img src="/fikeya-desktop-beta-editor.jpg" width="1202" height="801" alt="Fikeya Desktop editing the real Fikeya repository inside the full Fikeya workbench">
-						<figcaption>Desktop keeps the full editor. The extension adds only the focused agent, memory, provider, and usage surfaces to an existing VS Code window.</figcaption>
+						<img src="/fikeya-live-chat.png" width="1800" height="1050" alt="Fikeya Chat completing a real deterministic local turn beside source code with measured provider usage">
+						<figcaption>The completed local turn reports 60 input, 12 cached input, and 15 output tokens. Qarinah context is visibly unavailable in this capture.</figcaption>
 					</figure>
 				</div>
 			</section>
@@ -128,8 +128,8 @@
 				<div class="shell">
 					<div class="section-intro proof-intro">
 						<p class="eyebrow">Tested in the real workbench</p>
-						<h2>Chat, project memory, and measured usage in one run.</h2>
-						<p>These captures come from an initialized Windows workspace running the Fikeya extension and bundled runtime. A deterministic local provider answered inside the right editor group; Qarinah supplied six cited project items, and the runtime retained provider-reported usage without contacting a paid model.</p>
+						<h2>Real Chat, a real graph, and measured local usage.</h2>
+						<p>The Chat capture shows a completed deterministic local turn with provider-reported usage and an explicit unavailable-context state. A separate initialized workspace capture shows Qarinah reporting six cited items and rendering 76 bounded nodes with 201 visible links. Neither capture contacted a paid model.</p>
 					</div>
 					<div class="proof-grid">
 						<article class="proof-card">
