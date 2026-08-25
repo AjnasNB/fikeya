@@ -18,6 +18,7 @@ jobs:
       contents: read
     outputs:
       public_version: ${{ steps.version.outputs.public_version }}
+      extension_version: ${{ steps.version.outputs.extension_version }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -42,7 +43,9 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $version = [string]((Get-Content fikeya-distribution.json -Raw | ConvertFrom-Json).version)
+          $extensionVersion = [string]((Get-Content extensions/fikeya-desktop/package.json -Raw | ConvertFrom-Json).version)
           "public_version=$version" >> $env:GITHUB_OUTPUT
+          "extension_version=$extensionVersion" >> $env:GITHUB_OUTPUT
           $tag = if ($env:FIKEYA_GIT_REF.StartsWith('refs/tags/')) { $env:FIKEYA_GIT_REF_NAME } else { "v$version" }
           node scripts/fikeya/verify-release-version.ts $tag
       - name: Require tagged release commits to belong to main
@@ -119,6 +122,16 @@ jobs:
             if ($signature.Status -ne 'NotSigned') { throw "Unsigned build unexpectedly has signature status $($signature.Status)." }
           }
           ./scripts/fikeya/write-release-manifest.ps1 -OutputDirectory release-artifacts -Version $version
+      - name: Verify complete unsigned release payload
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python scripts/fikeya/verify_release_artifacts.py `
+            --artifact-directory release-artifacts `
+            --public-version '${{ steps.version.outputs.public_version }}' `
+            --extension-version '${{ steps.version.outputs.extension_version }}' `
+            --expected-commit $env:GITHUB_SHA `
+            --require-installer
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fikeya-unsigned-${{ github.sha }}
@@ -138,6 +151,14 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/fikeya/verify_release_artifacts.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: fikeya-unsigned-${{ github.sha }}
@@ -249,6 +270,16 @@ jobs:
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath release-artifacts/release-verification.json -Encoding utf8
           $hashLines = Get-ChildItem release-artifacts -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object { '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
           $hashLines | Set-Content -LiteralPath release-artifacts/SHA256SUMS.txt -Encoding ascii
+      - name: Verify complete final release payload
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python scripts/fikeya/verify_release_artifacts.py `
+            --artifact-directory release-artifacts `
+            --public-version '${{ needs.build-windows.outputs.public_version }}' `
+            --extension-version '${{ needs.build-windows.outputs.extension_version }}' `
+            --expected-commit $env:GITHUB_SHA `
+            --require-installer
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: release-artifacts/*
