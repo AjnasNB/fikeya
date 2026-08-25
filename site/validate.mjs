@@ -107,6 +107,10 @@ assert(html.includes('src="/fikeya-live-context-graph.png"'), 'Real Context grap
 assert(html.includes('76 bounded nodes and 201 visible links'), 'Measured live graph scope is missing');
 assert(html.includes('fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health'), 'Live CLI to Wrangler proof is missing');
 assert(html.includes('2026-08-25-cli-wrangler.md'), 'CLI to Wrangler verification receipt is missing');
+const proofPage = pageDocuments.get('proof/index.html') ?? '';
+assert(proofPage.includes('Plan-to-proof fixture'), 'Plan-to-proof evaluation is missing from the proof page');
+assert(proofPage.includes('3,606 of 8,000 characters used'), 'Measured Qarinah budget result is missing from the proof page');
+assert(proofPage.includes('tokens remain explicitly not measured'), 'No-model token boundary is missing from the proof page');
 assert(html.includes('fikeya provider list --json'), 'Provider discovery command is missing');
 assert(!html.includes('Keep the work between coding-agent sessions'), 'Stale session-handoff positioning found');
 assert(!html.includes('Keep the work. Change the session.'), 'Stale session-handoff closing copy found');
@@ -194,6 +198,8 @@ const allowedExternalLinks = new Set([
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-desktop-0.1.0-win32-x64.vsix',
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-cli-0.1.0-beta.1.zip',
 	'https://github.com/AjnasNB/fikeya/blob/main/docs/fikeya/verification/2026-08-25-cli-wrangler.md',
+	'https://github.com/AjnasNB/fikeya/tree/main/bench/fikeya-plan-proof',
+	'https://github.com/AjnasNB/fikeya/blob/main/bench/fikeya-plan-proof/results/latest.json',
 	'https://fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health',
 	'https://qarinah.io/docs/benchmarks/'
 ]);
