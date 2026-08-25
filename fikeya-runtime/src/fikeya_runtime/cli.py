@@ -27,6 +27,12 @@ from .errors import (
     SecretStoreUnavailable,
 )
 from .inference import MAX_REQUEST_BYTES, CancellationToken
+from .planning import (
+    PLAN_PROPOSAL_PROTOCOL,
+    PLAN_REQUEST_PROTOCOL,
+    PlanProposalRunner,
+)
+from .plans import PlanService, PlanStatus
 from .providers import (
     PROVIDER_REGISTRY,
     OSKeyringSecretStore,
@@ -35,12 +41,6 @@ from .providers import (
     ProviderStore,
     ProviderTester,
     build_profile,
-)
-from .plans import PlanService, PlanStatus
-from .planning import (
-    PLAN_PROPOSAL_PROTOCOL,
-    PLAN_REQUEST_PROTOCOL,
-    PlanProposalRunner,
 )
 from .qarinah import qarinah_adapter_kind, select_qarinah_adapter
 from .state import StateStore
@@ -695,8 +695,11 @@ def _run_coding_agent(
         from fikeya_agent_core import (
             AgentCoreError,
             ApprovalDecision,
+        )
+        from fikeya_agent_core import (
             CancellationToken as CoreCancellationToken,
         )
+
         from .coding import CodingAgentRunner
     except ImportError as error:
         raise ProviderError(

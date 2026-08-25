@@ -26,7 +26,6 @@ from .state import StateStore
 from .util import sha256_text
 from .workspace import Workspace
 
-
 _MAXIMUM_MEMORY_QUERY_CHARACTERS = 4_096
 _MEMORY_QUERY_HEAD_CHARACTERS = 1_536
 _MEMORY_QUERY_SEPARATOR = "\n...[middle omitted for bounded retrieval]...\n"

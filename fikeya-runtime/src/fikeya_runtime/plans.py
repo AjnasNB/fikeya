@@ -805,7 +805,7 @@ class PlanService:
             )
             requested.discard(step.step_id)
         if requested:
-            raise StateError(f"Unknown plan step: {sorted(requested)[0]}")
+            raise StateError(f"Unknown plan step: {min(requested)}")
         if not references:
             raise StateError("No pending plan steps were selected for approval.")
         updated = self.store.save(
@@ -901,7 +901,7 @@ class PlanService:
                     token,
                     idempotency_key=_execution_key(plan, executing),
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - the broker boundary must fail closed.
                 failed = replace(executing, status=PlanStepStatus.FAILED)
                 return self.store.save(
                     replace(

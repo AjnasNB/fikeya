@@ -498,7 +498,7 @@ def _is_cancellation_requested(callback: Callable[[], bool] | None) -> bool:
         return False
     try:
         return bool(callback())
-    except Exception:
+    except Exception:  # noqa: BLE001 - a broken callback must request cancellation.
         # A broken cancellation channel cannot safely authorize continued execution.
         return True
 

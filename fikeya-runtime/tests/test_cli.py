@@ -256,6 +256,7 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
     monkeypatch: object,
 ) -> None:
     from fikeya_agent_core import ApprovalDecision
+
     from fikeya_runtime import coding
 
     home = tmp_path / "home"

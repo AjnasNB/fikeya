@@ -9,11 +9,10 @@ import json
 from dataclasses import dataclass
 from typing import cast
 
-from .agent import AgentRunResult, AgentRunner
+from .agent import AgentRunner, AgentRunResult
 from .errors import ConfigurationError, FikeyaError
 from .inference import CancellationToken
 from .plans import PlanRecord, PlanService
-
 
 PLAN_PROPOSAL_PROTOCOL = "fikeya.plan-proposal.v1"
 PLAN_REQUEST_PROTOCOL = "fikeya.plan-request.v1"
