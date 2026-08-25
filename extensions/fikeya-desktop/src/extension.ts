@@ -9,9 +9,12 @@ import { appendConversationMessage, FikeyaConversationMessage } from './conversa
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import { captureCompletedFikeyaRun } from './sessionCapture';
-import { buildPlanTimeline, extractPlanSteps, FikeyaPlanStageId, FikeyaPlanTimelineStage } from './surface';
+import { FikeyaPlanStageId } from './surface';
 import {
 	configureFikeyaProvider,
+	approveFikeyaPlan,
+	changeFikeyaPlan,
+	createFikeyaPlan,
 	FikeyaAgentApproval,
 	FikeyaAgentApprovalDecision,
 	FikeyaAgentMemory,
@@ -19,17 +22,24 @@ import {
 	FikeyaAgentUsage,
 	FikeyaCodingOutcome,
 	FikeyaMemoryMode,
+	FikeyaPlanRecord,
+	FikeyaPlanProposalRunHandle,
+	FikeyaPlanRunHandle,
+	FikeyaPlanSpecification,
 	FikeyaProviderConfiguration,
 	FikeyaProviderProfile,
 	FikeyaProviderReceipt,
 	FikeyaRuntimeResult,
 	FikeyaStatistics,
 	loadFikeyaAgentReceipts,
+	loadFikeyaPlan,
 	loadFikeyaStatistics,
 	listFikeyaProviders,
 	removeFikeyaProvider,
 	runFikeyaRuntime,
 	startFikeyaAgentRun,
+	startFikeyaPlanProposal,
+	startFikeyaPlan,
 	testFikeyaProvider
 } from './runtime';
 
@@ -72,7 +82,14 @@ interface StatisticsSurfaceState {
 	readonly snapshot?: FikeyaStatistics;
 }
 
-type FikeyaWorkspaceMode = 'chat' | 'research' | 'context' | 'usage' | 'setup';
+interface PlanSurfaceState {
+	readonly status: 'idle' | 'loading' | 'ready' | 'running' | 'unavailable';
+	readonly record?: FikeyaPlanRecord;
+	readonly recordSha256?: string;
+	readonly failure?: string;
+}
+
+type FikeyaWorkspaceMode = 'chat' | 'research' | 'plan' | 'context' | 'usage' | 'setup';
 
 interface DashboardState {
 	readonly isDesktop: boolean;
@@ -85,6 +102,7 @@ interface DashboardState {
 	readonly agent: AgentSurfaceState;
 	readonly memory: MemorySurfaceState;
 	readonly statistics: StatisticsSurfaceState;
+	readonly plan: PlanSurfaceState;
 	readonly runtime: 'not-checked' | 'checking' | 'ready' | 'attention';
 	readonly workspaceInitialized: boolean;
 	readonly runtimeProviderCount?: number;
@@ -163,12 +181,16 @@ async function runDesktopOnboarding(context: vscode.ExtensionContext, provider: 
 class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
 	public static readonly viewType = 'fikeya.dashboard';
 	private static readonly panelViewType = 'fikeya.workspace';
+	private static readonly currentPlanKey = 'fikeya.plan.current.v1';
 	private view: vscode.WebviewView | undefined;
 	private viewBinding: vscode.Disposable | undefined;
 	private panel: vscode.WebviewPanel | undefined;
 	private panelBinding: vscode.Disposable | undefined;
 	private state: DashboardState;
 	private activeAgentRun: FikeyaAgentRunHandle | undefined;
+	private activePlanProposalRun: FikeyaPlanProposalRunHandle | undefined;
+	private activePlanRun: FikeyaPlanRunHandle | undefined;
+	private planCancellationInProgress = false;
 
 	public constructor(private readonly context: vscode.ExtensionContext) {
 		this.state = {
@@ -182,6 +204,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			agent: { status: 'idle', receiptsStatus: 'idle', receipts: [] },
 			memory: { status: 'not-loaded' },
 			statistics: { status: 'not-loaded' },
+			plan: { status: 'idle' },
 			runtime: 'not-checked',
 			workspaceInitialized: false,
 			runtimeProviderCount: undefined,
@@ -247,6 +270,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	public dispose(): void {
 		this.activeAgentRun?.cancel();
 		this.activeAgentRun = undefined;
+		this.activePlanProposalRun?.cancel();
+		this.activePlanProposalRun = undefined;
+		this.activePlanRun?.cancel();
+		this.activePlanRun = undefined;
 		this.viewBinding?.dispose();
 		this.viewBinding = undefined;
 		this.view = undefined;
@@ -276,6 +303,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if (this.state.statistics.status === 'not-loaded') {
 			void this.refreshStatistics(false);
 		}
+		if (this.state.plan.status === 'idle' && this.currentPlanId()) {
+			void this.refreshPlan(false);
+		}
 	}
 
 	private async handleWebviewMessage(value: unknown): Promise<void> {
@@ -300,8 +330,23 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			case 'runAgent':
 				await this.runAgent(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode);
 				break;
+			case 'proposePlan':
+				await this.proposePlan(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode);
+				break;
 			case 'cancelAgent':
 				this.cancelAgent();
+				break;
+			case 'createPlan':
+				await this.createPlan(message.specification);
+				break;
+			case 'newPlan':
+				await this.startNewPlan();
+				break;
+			case 'refreshPlan':
+				await this.refreshPlan(true);
+				break;
+			case 'planAction':
+				await this.runPlanAction(message.action, message.stepId);
 				break;
 			case 'clearConversation':
 				if (this.state.agent.status !== 'running') {
@@ -531,7 +576,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
-		if (!workspacePath || this.activeAgentRun || !profile) {
+		if (!workspacePath || this.activeAgentRun || this.activePlanProposalRun || !profile) {
 			return;
 		}
 
@@ -633,6 +678,98 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 	}
 
+	private async proposePlan(
+		providerName: string,
+		prompt: string,
+		maxOutputTokens: number,
+		contextMaxCharacters: number,
+		memoryMode: FikeyaMemoryMode
+	): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		const profile = this.state.providers.find(provider => provider.name === providerName);
+		if (!workspacePath || this.activeAgentRun || this.activePlanProposalRun || this.activePlanRun || this.planCancellationInProgress || !profile) {
+			return;
+		}
+
+		this.state = {
+			...this.state,
+			conversation: appendConversationMessage(this.state.conversation, createConversationMessage('user', prompt)),
+			agent: {
+				status: 'running',
+				providerName,
+				receiptsStatus: 'idle',
+				receipts: []
+			}
+		};
+		this.refresh();
+		const operation = startFikeyaPlanProposal(
+			providerName,
+			prompt,
+			maxOutputTokens,
+			contextMaxCharacters,
+			memoryMode,
+			workspacePath
+		);
+		this.activePlanProposalRun = operation;
+		const result = await operation.result;
+		if (this.activePlanProposalRun !== operation) {
+			return;
+		}
+		this.activePlanProposalRun = undefined;
+		if (!result.ok || !result.value) {
+			const cancelled = result.failure === 'cancelled';
+			const failure = cancelled
+				? vscode.l10n.t('Planning stopped before a draft was confirmed. No workspace tool ran.')
+				: vscode.l10n.t('No structured plan was accepted. The provider response did not satisfy the planning protocol or the runtime stopped safely. No workspace tool ran.');
+			this.state = {
+				...this.state,
+				conversation: appendConversationMessage(this.state.conversation, createConversationMessage('notice', failure, providerName, cancelled ? 'normal' : 'error')),
+				agent: {
+					status: cancelled ? 'cancelled' : 'failed',
+					providerName,
+					receiptsStatus: 'idle',
+					receipts: [],
+					failure
+				}
+			};
+			this.refresh();
+			return;
+		}
+
+		const proposed = result.value;
+		await this.context.workspaceState.update(FikeyaWebviewViewProvider.currentPlanKey, proposed.plan.planId);
+		this.state = {
+			...this.state,
+			activeMode: 'plan',
+			conversation: appendConversationMessage(
+				this.state.conversation,
+				createConversationMessage(
+					'assistant',
+					vscode.l10n.t('Created draft plan "{0}" with {1} exact step(s). No workspace tool ran. Review the plan before issuing any single-use approval.', proposed.plan.title, proposed.plan.steps.length),
+					providerName
+				)
+			),
+			agent: {
+				status: 'completed',
+				providerName,
+				sessionId: proposed.proposal.sessionId,
+				callId: proposed.proposal.callId,
+				usage: proposed.proposal.usage,
+				memory: proposed.proposal.memory,
+				receiptsStatus: 'loading',
+				receipts: []
+			},
+			plan: {
+				status: 'ready',
+				record: proposed.plan,
+				recordSha256: proposed.recordSha256
+			}
+		};
+		this.refresh();
+		await this.refreshReceipts(false);
+		await this.refreshStatistics(false);
+	}
+
 	private async offerProviderHandoff(
 		prompt: string,
 		maxOutputTokens: number,
@@ -716,10 +853,181 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	}
 
 	private cancelAgent(): void {
-		if (!this.activeAgentRun) {
+		this.activeAgentRun?.cancel();
+		this.activePlanProposalRun?.cancel();
+	}
+
+	private currentPlanId(): string | undefined {
+		return this.state.plan.record?.planId ?? this.context.workspaceState.get<string>(FikeyaWebviewViewProvider.currentPlanKey);
+	}
+
+	private async startNewPlan(): Promise<void> {
+		if (this.activePlanRun || this.activePlanProposalRun || this.planCancellationInProgress
+			|| this.state.plan.status === 'loading' || this.state.plan.status === 'running') {
 			return;
 		}
-		this.activeAgentRun.cancel();
+		await this.context.workspaceState.update(FikeyaWebviewViewProvider.currentPlanKey, undefined);
+		this.state = { ...this.state, activeMode: 'plan', plan: { status: 'idle' } };
+		this.refresh();
+	}
+
+	private async createPlan(specification: FikeyaPlanSpecification): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		if (!workspacePath) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Open one trusted local folder before creating a plan.'));
+			return;
+		}
+		if (this.activePlanRun || this.activePlanProposalRun || this.planCancellationInProgress) {
+			return;
+		}
+		this.state = { ...this.state, plan: { status: 'loading', record: this.state.plan.record, recordSha256: this.state.plan.recordSha256 } };
+		this.refresh();
+		const result = await createFikeyaPlan(specification, workspacePath);
+		if (!result.ok || !result.value) {
+			this.state = { ...this.state, plan: { status: 'unavailable', failure: runtimeFailureMessage(result.failure) } };
+			this.refresh();
+			void vscode.window.showErrorMessage(vscode.l10n.t('The exact plan could not be created. Initialize the workspace, inspect the JSON, and try again.'));
+			return;
+		}
+		await this.context.workspaceState.update(FikeyaWebviewViewProvider.currentPlanKey, result.value.plan.planId);
+		this.applyPlanView(result.value);
+	}
+
+	private async refreshPlan(showFailure: boolean): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		const planId = this.currentPlanId();
+		if (!workspacePath) {
+			if (showFailure) {
+				void vscode.window.showErrorMessage(vscode.l10n.t('Open the local folder that owns this plan before refreshing it.'));
+			}
+			return;
+		}
+		if (!planId || this.activePlanRun || this.planCancellationInProgress) {
+			return;
+		}
+		this.state = { ...this.state, plan: { status: 'loading', record: this.state.plan.record, recordSha256: this.state.plan.recordSha256 } };
+		this.refresh();
+		const result = await loadFikeyaPlan(planId, workspacePath);
+		if (!result.ok || !result.value) {
+			this.state = { ...this.state, plan: { status: 'unavailable', failure: runtimeFailureMessage(result.failure) } };
+			this.refresh();
+			if (showFailure) {
+				void vscode.window.showErrorMessage(vscode.l10n.t('The saved plan could not be reloaded from this workspace.'));
+			}
+			return;
+		}
+		this.applyPlanView(result.value);
+	}
+
+	private async runPlanAction(action: 'review' | 'approve-all' | 'approve-step' | 'run' | 'resume' | 'cancel', stepId?: string): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		const plan = this.state.plan.record;
+		if (!workspacePath) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Open the local folder that owns this plan before changing it.'));
+			return;
+		}
+		if (!plan) {
+			return;
+		}
+		if (this.planCancellationInProgress) {
+			return;
+		}
+
+		if (action === 'cancel') {
+			this.planCancellationInProgress = true;
+			this.state = { ...this.state, plan: { ...this.state.plan, status: 'loading', failure: undefined } };
+			this.refresh();
+			try {
+				const active = this.activePlanRun;
+				if (active) {
+					active.cancel();
+					await active.result;
+					if (this.activePlanRun === active) {
+						this.activePlanRun = undefined;
+					}
+				}
+				this.applyPlanResult(await changeFikeyaPlan('cancel', plan.planId, workspacePath));
+			} finally {
+				this.planCancellationInProgress = false;
+			}
+			return;
+		}
+
+		if (this.activePlanRun) {
+			return;
+		}
+		if ((action === 'approve-step' || action === 'approve-all') && !await this.confirmPlanApproval(plan, action === 'approve-step' ? stepId : undefined)) {
+			return;
+		}
+
+		this.state = { ...this.state, plan: { ...this.state.plan, status: action === 'run' || action === 'resume' ? 'running' : 'loading', failure: undefined } };
+		this.refresh();
+		if (action === 'review') {
+			this.applyPlanResult(await changeFikeyaPlan('review', plan.planId, workspacePath));
+			return;
+		}
+		if (action === 'approve-all') {
+			const pendingStepIds = plan.steps
+				.filter(step => step.status === 'pending' || step.status === 'awaiting_approval')
+				.map(step => step.stepId);
+			if (pendingStepIds.length === 0) {
+				this.applyPlanFailure(vscode.l10n.t('No pending plan steps are available for approval.'));
+				return;
+			}
+			this.applyPlanResult(await approveFikeyaPlan(plan.planId, pendingStepIds, workspacePath));
+			return;
+		}
+		if (action === 'approve-step') {
+			if (!stepId) {
+				this.applyPlanFailure(vscode.l10n.t('Choose one waiting step before approving it.'));
+				return;
+			}
+			this.applyPlanResult(await approveFikeyaPlan(plan.planId, [stepId], workspacePath));
+			return;
+		}
+
+		const operation = startFikeyaPlan(action, plan.planId, workspacePath);
+		this.activePlanRun = operation;
+		const result = await operation.result;
+		if (this.activePlanRun !== operation) {
+			return;
+		}
+		this.activePlanRun = undefined;
+		this.applyPlanResult(result);
+	}
+
+	private async confirmPlanApproval(plan: FikeyaPlanRecord, stepId?: string): Promise<boolean> {
+		const steps = stepId ? plan.steps.filter(step => step.stepId === stepId) : plan.steps.filter(step => step.status === 'pending' || step.status === 'awaiting_approval');
+		if (steps.length === 0) {
+			return false;
+		}
+		const approve = steps.length === 1 ? vscode.l10n.t('Approve Exact Step') : vscode.l10n.t('Approve All Exact Steps');
+		const detail = steps.map(step => `${step.order}. ${step.title}\n${step.toolCall.name}\n${step.toolCallSha256}\n${JSON.stringify(step.toolCall.arguments, null, 2)}`).join('\n\n');
+		const selected = await vscode.window.showWarningMessage(
+			vscode.l10n.t('Issue {0} single-use approval reference(s)?', steps.length),
+			{ modal: true, detail },
+			approve
+		);
+		return selected === approve;
+	}
+
+	private applyPlanResult(result: Awaited<ReturnType<typeof loadFikeyaPlan>>): void {
+		if (!result.ok || !result.value) {
+			this.applyPlanFailure(runtimeFailureMessage(result.failure));
+			return;
+		}
+		this.applyPlanView(result.value);
+	}
+
+	private applyPlanView(value: { readonly plan: FikeyaPlanRecord; readonly recordSha256: string }): void {
+		this.state = { ...this.state, plan: { status: 'ready', record: value.plan, recordSha256: value.recordSha256 } };
+		this.refresh();
+	}
+
+	private applyPlanFailure(message: string): void {
+		this.state = { ...this.state, plan: { status: 'unavailable', record: this.state.plan.record, recordSha256: this.state.plan.recordSha256, failure: message } };
+		this.refresh();
+		void vscode.window.showErrorMessage(message);
 	}
 
 	private async refreshReceipts(showFailure: boolean): Promise<void> {
@@ -841,12 +1149,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const usageBasis = this.state.agent.usage?.measurement ?? strings.noUsageRecorded;
 		const contextStatus = formatContextStatus(this.state.agent.memory, strings);
 		const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'fikeya.svg'));
-		const initialSurface = this.state.activeMode === 'context' || this.state.activeMode === 'usage' || this.state.activeMode === 'setup'
+		const initialSurface = this.state.activeMode === 'plan' || this.state.activeMode === 'context' || this.state.activeMode === 'usage' || this.state.activeMode === 'setup'
 			? this.state.activeMode
 			: 'chat';
 		const desktopNavigation = `<div class="workspace-navigation"><nav class="mode-switcher" role="tablist" aria-label="${escapeHtml(strings.workspaceModes)}">
 			<button id="surface-tab-chat" role="tab" aria-controls="surface-panel-chat" aria-selected="${initialSurface === 'chat'}" tabindex="${initialSurface === 'chat' ? '0' : '-1'}" data-surface-tab="chat" data-surface-target="chat" data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Chat'))}</button>
-			<button id="surface-tab-plan" role="tab" aria-controls="surface-panel-plan" aria-selected="false" tabindex="-1" data-surface-tab="plan" data-surface-target="plan" data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Plan'))}</button>
+			<button id="surface-tab-plan" role="tab" aria-controls="surface-panel-plan" aria-selected="${initialSurface === 'plan'}" tabindex="${initialSurface === 'plan' ? '0' : '-1'}" data-surface-tab="plan" data-surface-target="plan" data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Plan'))}</button>
 			<button id="surface-tab-context" role="tab" aria-controls="surface-panel-context" aria-selected="${initialSurface === 'context'}" tabindex="${initialSurface === 'context' ? '0' : '-1'}" data-surface-tab="context" data-surface-target="context" data-command="fikeya.mode.lab" type="button">${escapeHtml(vscode.l10n.t('Context'))}</button>
 			<button id="surface-tab-usage" role="tab" aria-controls="surface-panel-usage" aria-selected="${initialSurface === 'usage'}" tabindex="${initialSurface === 'usage' ? '0' : '-1'}" data-surface-tab="usage" data-surface-target="usage" data-command="fikeya.view.usage" type="button">${escapeHtml(vscode.l10n.t('Usage'))}</button>
 		</nav><nav class="native-actions" aria-label="${escapeHtml(vscode.l10n.t('Workbench destinations'))}"><button class="quiet" data-command="fikeya.mode.research" type="button">${escapeHtml(vscode.l10n.t('Research'))}</button><button class="quiet" id="surface-action-setup" data-surface-target="setup" data-command="fikeya.view.setup" type="button">${escapeHtml(vscode.l10n.t('Setup'))}</button><button class="quiet" data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Code'))}</button><button class="quiet" data-command="fikeya.mode.terminal" type="button">${escapeHtml(strings.terminalMode)}</button><button class="quiet" data-command="fikeya.mode.review" type="button">${escapeHtml(strings.reviewMode)}</button></nav></div>`;
@@ -865,7 +1173,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const usageSurface = `${statisticsSurface}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
 		const surfacePanels = `<div class="active-surface" data-initial-surface="${initialSurface}">
 			<section id="surface-panel-chat" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-chat" data-surface-panel="chat"${initialSurface === 'chat' ? '' : ' hidden'}>${agentSurface}</section>
-			<section id="surface-panel-plan" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-plan" data-surface-panel="plan" hidden>${planSurface}</section>
+			<section id="surface-panel-plan" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-plan" data-surface-panel="plan"${initialSurface === 'plan' ? '' : ' hidden'}>${planSurface}</section>
 			<section id="surface-panel-context" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-context" data-surface-panel="context"${initialSurface === 'context' ? '' : ' hidden'}>${memoryGraph}</section>
 			<section id="surface-panel-usage" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-usage" data-surface-panel="usage"${initialSurface === 'usage' ? '' : ' hidden'}>${usageSurface}</section>
 			<section id="surface-panel-setup" class="surface-panel" role="region" aria-labelledby="surface-action-setup" data-surface-panel="setup"${initialSurface === 'setup' ? '' : ' hidden'}>${setupCards}</section>
@@ -1024,6 +1332,17 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.plan-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 		.plan-heading h2 { margin: 0; font-size: 16px; }
 		.plan-heading p { max-width: 70ch; margin-top: 4px; }
+		.plan-create-form { display: grid; gap: 10px; margin-top: 12px; }
+		.plan-create-form textarea { min-height: 300px; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); tab-size: 2; }
+		.plan-client-error { margin: 0; color: var(--vscode-errorForeground); }
+		.plan-actions { margin: 12px 0; }
+		.plan-lifecycle { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 12px 0 0; padding: 1px; list-style: none; background: var(--vscode-widget-border); }
+		.plan-lifecycle li { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; padding: 8px; background: var(--vscode-editorWidget-background); }
+		.plan-lifecycle li span { display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--vscode-widget-border); border-radius: 50%; font-family: var(--vscode-editor-font-family); font-size: 9px; }
+		.plan-lifecycle li strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+		.plan-lifecycle li[data-status="complete"] span { border-color: var(--vscode-testing-iconPassed); color: var(--vscode-testing-iconPassed); }
+		.plan-lifecycle li[data-status="active"] span { border-color: var(--vscode-progressBar-background); background: var(--vscode-progressBar-background); color: var(--vscode-button-foreground); }
+		.plan-lifecycle li[data-status="attention"] span { border-color: var(--vscode-testing-iconFailed); color: var(--vscode-testing-iconFailed); }
 		.plan-workspace { display: grid; min-width: 0; grid-template-columns: minmax(220px, .62fr) minmax(0, 1.38fr); gap: 10px; }
 		.plan-timeline { display: grid; align-content: start; gap: 1px; min-width: 0; padding: 1px; background: var(--vscode-widget-border); }
 		.plan-step { display: grid; min-width: 0; min-height: 58px; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 0; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background); text-align: left; }
@@ -1081,7 +1400,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 		@media (max-width: 900px) { .graph-workspace, .plan-workspace { grid-template-columns: 1fr; } .graph-details { max-height: none; } }
 		@media (max-width: 780px) { .workspace-navigation { align-items: stretch; flex-direction: column; } .mode-switcher { width: 100%; } .native-actions { justify-content: start; } }
-		@media (max-width: 720px) { .composer-bar { grid-template-columns: 1fr; } .inline-field select { max-width: none; } .control-grid { width: 100%; grid-template-columns: 1fr; } .control-grid .field:first-child { grid-column: auto; } .composer-actions { justify-content: start; } .composer-foot { flex-direction: column; } .plan-evidence { grid-template-columns: 1fr; } }
+		@media (max-width: 720px) { .composer-bar { grid-template-columns: 1fr; } .inline-field select { max-width: none; } .control-grid { width: 100%; grid-template-columns: 1fr; } .control-grid .field:first-child { grid-column: auto; } .composer-actions { justify-content: start; } .composer-foot { flex-direction: column; } .plan-evidence { grid-template-columns: 1fr; } .plan-lifecycle { grid-template-columns: 1fr; } }
 			@media (max-width: 520px) { .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } .statistics-status { grid-template-columns: 1fr; } }
 		@media (max-width: 420px) { .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } }
 		@media (max-width: 280px) { .provider-card { grid-template-columns: 1fr; } }
@@ -1160,6 +1479,26 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 		const renderedPlanStep = planSteps.find(step => step.getAttribute('aria-selected') === 'true')?.dataset.planStep;
 		selectPlanStep(planSteps.some(step => step.dataset.planStep === persistedState.planStep) ? persistedState.planStep : renderedPlanStep);
+		const planCreateForm = document.querySelector('[data-plan-create-form]');
+		const planClientError = document.querySelector('[data-plan-client-error]');
+		planCreateForm?.addEventListener('submit', event => {
+			event.preventDefault();
+			const source = planCreateForm.querySelector('[name="specification"]')?.value;
+			try {
+				const specification = JSON.parse(source || '');
+				if (!specification || typeof specification !== 'object' || Array.isArray(specification)) throw new Error('Plan must be a JSON object.');
+				if (planClientError) planClientError.hidden = true;
+				vscode.postMessage({ type: 'createPlan', specification });
+			} catch (error) {
+				if (planClientError) {
+					planClientError.textContent = error instanceof Error ? error.message : 'Plan JSON is invalid.';
+					planClientError.hidden = false;
+				}
+			}
+		});
+		document.querySelector('[data-plan-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshPlan' }));
+		document.querySelector('[data-plan-new]')?.addEventListener('click', () => vscode.postMessage({ type: 'newPlan' }));
+		document.querySelectorAll('[data-plan-action]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'planAction', action: button.dataset.planAction, stepId: button.dataset.planActionStep })));
 		document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openCommand', command: button.dataset.command })));
 		document.querySelector('[data-action="refresh-providers"]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshProviders' }));
 		document.querySelectorAll('[data-provider-test]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'testProvider', providerName: button.dataset.providerTest })));
@@ -1171,6 +1510,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const agentForm = document.querySelector('[data-agent-form]');
 		const networkConsent = document.querySelector('[data-network-consent]');
 		const runButton = document.querySelector('[data-agent-run]');
+		const planButton = document.querySelector('[data-agent-plan]');
 		const promptField = agentForm?.querySelector('[name="prompt"]');
 		document.querySelectorAll('[data-prompt-value]').forEach(button => button.addEventListener('click', () => {
 			if (!promptField) return;
@@ -1178,19 +1518,34 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			promptField.focus();
 		}));
 		if (agentForm && networkConsent && runButton) {
-			const updateRunButton = () => { runButton.disabled = !networkConsent.checked; };
-			networkConsent.addEventListener('change', updateRunButton);
-			updateRunButton();
-			agentForm.addEventListener('submit', event => {
-				event.preventDefault();
+			const readAgentRequest = () => {
 				const providerName = agentForm.querySelector('[name="providerName"]')?.value;
 				const prompt = agentForm.querySelector('[name="prompt"]')?.value;
 				const maxOutputTokens = Number(agentForm.querySelector('[name="maxOutputTokens"]')?.value);
 				const contextMaxCharacters = Number(agentForm.querySelector('[name="contextMaxCharacters"]')?.value);
 				const memoryMode = agentForm.querySelector('[name="memoryMode"]')?.value;
-				if (!networkConsent.checked || !providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return;
-				runButton.disabled = true;
-				vscode.postMessage({ type: 'runAgent', providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true });
+				if (!networkConsent.checked || !providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return undefined;
+				return { providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true };
+			};
+			const setRunButtonsDisabled = disabled => {
+				runButton.disabled = disabled;
+				if (planButton) planButton.disabled = disabled;
+			};
+			const updateRunButtons = () => setRunButtonsDisabled(!networkConsent.checked);
+			networkConsent.addEventListener('change', updateRunButtons);
+			updateRunButtons();
+			agentForm.addEventListener('submit', event => {
+				event.preventDefault();
+				const request = readAgentRequest();
+				if (!request) return;
+				setRunButtonsDisabled(true);
+				vscode.postMessage({ type: 'runAgent', ...request });
+			});
+			planButton?.addEventListener('click', () => {
+				const request = readAgentRequest();
+				if (!request) return;
+				setRunButtonsDisabled(true);
+				vscode.postMessage({ type: 'proposePlan', ...request });
 			});
 			promptField?.addEventListener('keydown', event => {
 				if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -1438,47 +1793,116 @@ function renderStatistics(state: StatisticsSurfaceState, strings: WebviewStrings
 }
 
 function renderPlanSurface(state: DashboardState, strings: WebviewStrings): string {
-	const outcome = state.agent.outcome;
-	const timeline = buildPlanTimeline({ status: state.agent.status, hasOutcome: outcome !== undefined });
-	const selectedStage = timeline.find(stage => stage.status === 'active' || stage.status === 'attention')?.id
-		?? timeline.at(-1)?.id
-		?? 'draft';
-	const provider = state.providers.find(profile => profile.name === state.agent.providerName) ?? state.providers.at(0);
-	const providerLabel = provider ? `${provider.name} / ${provider.model}` : strings.noProviderSelected;
-	const planLines = extractPlanSteps(outcome?.plan);
-	const labels: Record<FikeyaPlanStageId, { readonly title: string; readonly summary: string }> = {
-		draft: { title: vscode.l10n.t('Draft'), summary: vscode.l10n.t('Turn the request into a bounded plan') },
-		review: { title: vscode.l10n.t('Review'), summary: vscode.l10n.t('Check scope, context, and workspace') },
-		approval: { title: vscode.l10n.t('Approval'), summary: vscode.l10n.t('Pause before an exact tool call') },
-		execute: { title: vscode.l10n.t('Execute'), summary: vscode.l10n.t('Run approved work in this project') },
-		verify: { title: vscode.l10n.t('Verify'), summary: vscode.l10n.t('Inspect tests, files, and evidence') }
-	};
-	const timelineButtons = timeline.map((stage, index) => `<button class="plan-step" id="plan-step-${stage.id}" role="tab" aria-controls="plan-detail-${stage.id}" aria-selected="${stage.id === selectedStage}" tabindex="${stage.id === selectedStage ? '0' : '-1'}" data-plan-step="${stage.id}" data-status="${stage.status}" type="button"><span class="plan-step-index" aria-hidden="true">${index + 1}</span><span class="plan-step-copy"><strong>${escapeHtml(labels[stage.id].title)}</strong><span>${escapeHtml(labels[stage.id].summary)}</span></span><span class="plan-step-status">${escapeHtml(planStageStatusLabel(stage, strings))}</span></button>`).join('');
-	const planList = planLines.length > 0
-		? `<ol class="plan-lines">${planLines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ol>`
-		: `<p class="empty">${escapeHtml(vscode.l10n.t('The provider plan will appear here after a completed run. You can still inspect every lifecycle boundary before sending.'))}</p>`;
-	const terminalStatus = state.agent.failure ?? outcome?.summary ?? agentStatusLabel(state.agent, strings);
-	const details: Record<FikeyaPlanStageId, string> = {
-		draft: `<h3>${escapeHtml(vscode.l10n.t('Draft the work'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Fikeya turns the request into a bounded sequence before workspace tools are used.'))}</p>${planList}`,
-		review: `<h3>${escapeHtml(vscode.l10n.t('Review the boundary'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Confirm the selected model, Qarinah context state, and current workspace before execution.'))}</p><div class="plan-evidence"><div><span>${escapeHtml(strings.providerAndModel)}</span><strong>${escapeHtml(providerLabel)}</strong></div><div><span>${escapeHtml(strings.context)}</span><strong>${escapeHtml(formatContextStatus(state.agent.memory, strings))}</strong></div><div><span>${escapeHtml(strings.workspace)}</span><strong>${escapeHtml(state.workspaceName)}</strong></div></div>`,
-		approval: `<h3>${escapeHtml(vscode.l10n.t('Approve exact actions'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('When a supported tool is requested, Fikeya shows its name, bounded arguments, and evidence hash before continuing.'))}</p><p class="plan-boundary">${escapeHtml(vscode.l10n.t('Approvals remain one-use decisions. This timeline does not imply that a tool ran until an execution outcome exists.'))}</p>`,
-		execute: `<h3>${escapeHtml(vscode.l10n.t('Execute in the workspace'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Only approved, root-bounded actions run. Completed outcomes expose the tools and changed-file hashes.'))}</p><div class="plan-evidence"><div><span>${escapeHtml(vscode.l10n.t('Plan steps'))}</span><strong>${(outcome?.steps ?? 0).toLocaleString()}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Tool calls'))}</span><strong>${(outcome?.toolCalls.length ?? 0).toLocaleString()}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Changed files'))}</span><strong>${(outcome?.changedFiles.length ?? 0).toLocaleString()}</strong></div></div>`,
-		verify: `<h3>${escapeHtml(vscode.l10n.t('Verify the result'))}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Inspect test outcomes, the final run state, and the receipt identity before accepting the work.'))}</p><div class="plan-evidence"><div><span>${escapeHtml(strings.test)}</span><strong>${(outcome?.tests.length ?? 0).toLocaleString()}</strong></div><div><span>${escapeHtml(strings.status)}</span><strong>${escapeHtml(terminalStatus)}</strong></div><div><span>${escapeHtml(strings.session)}</span><strong>${escapeHtml(state.agent.sessionId ?? strings.unavailable)}</strong></div></div>`
-	};
-	const detailPanels = timeline.map(stage => `<section class="plan-detail" id="plan-detail-${stage.id}" role="tabpanel" aria-labelledby="plan-step-${stage.id}" data-plan-detail="${stage.id}"${stage.id === selectedStage ? '' : ' hidden'}>${details[stage.id]}</section>`).join('');
+	const plan = state.plan.record;
+	const sample = JSON.stringify({
+		schemaVersion: 1,
+		title: 'Inspect this project safely',
+		steps: [{
+			stepId: 'list-project-files',
+			title: 'List bounded project files',
+			toolCall: { callId: 'plan:list-files', name: 'workspace.list_files', arguments: { path: '.' } },
+			verify: { expectedStatus: 'ok' }
+		}]
+	}, null, 2);
+	if (!plan) {
+		const narrativeBoundary = state.agent.outcome
+			? vscode.l10n.t('The latest Chat run returned a provider narrative, but it is not an immutable structured plan. Create an exact local plan below before claiming step-level proof.')
+			: vscode.l10n.t('No structured plan exists yet. Chat remains available, while this form creates a separate immutable plan with exact tools, arguments, approvals, and verification receipts.');
+		return `<section class="card plan-surface" aria-labelledby="plan-surface-title">
+			<div class="plan-heading"><div><h2 id="plan-surface-title">${escapeHtml(vscode.l10n.t('Plan to proof'))}</h2><p>${escapeHtml(narrativeBoundary)}</p></div><span class="badge">${escapeHtml(state.plan.status === 'loading' ? vscode.l10n.t('Creating') : strings.notChecked)}</span></div>
+			${state.plan.failure ? `<p class="plan-boundary" role="alert">${escapeHtml(state.plan.failure)}</p>` : ''}
+			<form class="plan-create-form" data-plan-create-form>
+				<label class="field"><span>${escapeHtml(vscode.l10n.t('Exact plan JSON'))}</span><textarea name="specification" rows="18" maxlength="1048576" spellcheck="false"${state.plan.status === 'loading' ? ' disabled' : ''}>${escapeHtml(sample)}</textarea></label>
+				<p class="plan-boundary">${escapeHtml(vscode.l10n.t('This JSON crosses to the local runtime through stdin. It never appears in process arguments. The starter plan is read-only; edit it only when you understand the exact tool calls.'))}</p>
+				<p class="plan-client-error" data-plan-client-error role="alert" hidden></p>
+				<div class="actions"><button type="submit"${state.plan.status === 'loading' ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Create exact plan'))}</button></div>
+			</form>
+		</section>`;
+	}
+
+	const selectedStep = plan.steps.find(step => ['awaiting_approval', 'executing', 'verifying', 'failed'].includes(step.status)) ?? plan.steps.at(-1)!;
+	const busy = state.plan.status === 'loading' || state.plan.status === 'running';
+	const waitingSteps = plan.steps.filter(step => step.status === 'pending' || step.status === 'awaiting_approval');
+	const approvedSteps = plan.steps.filter(step => step.status === 'approved');
+	const lifecycle = renderPlanLifecycle(plan);
+	const actionButtons = [
+		plan.status === 'draft' ? `<button data-plan-action="review" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Review immutable plan'))}</button>` : '',
+		plan.status === 'reviewed' ? `<button data-plan-action="run" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Start to approval'))}</button>` : '',
+		(plan.status === 'reviewed' || plan.status === 'awaiting_approval') && waitingSteps.length > 0 ? `<button class="secondary" data-plan-action="approve-all" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Approve all pending'))}</button>` : '',
+		(plan.status === 'executing' || plan.status === 'verifying' || (plan.status === 'awaiting_approval' && approvedSteps.length > 0)) ? `<button data-plan-action="resume" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Resume approved work'))}</button>` : '',
+		!['succeeded', 'failed', 'cancelled'].includes(plan.status) ? `<button class="secondary" data-plan-action="cancel" type="button">${escapeHtml(vscode.l10n.t('Cancel plan'))}</button>` : '',
+		`<button class="quiet" data-plan-refresh type="button"${busy ? ' disabled' : ''}>${escapeHtml(strings.refresh)}</button>`,
+		`<button class="quiet" data-plan-new type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New plan'))}</button>`
+	].join('');
+	const timelineButtons = plan.steps.map(step => `<button class="plan-step" id="plan-step-${escapeHtml(step.stepId)}" role="tab" aria-controls="plan-detail-${escapeHtml(step.stepId)}" aria-selected="${step.stepId === selectedStep.stepId}" tabindex="${step.stepId === selectedStep.stepId ? '0' : '-1'}" data-plan-step="${escapeHtml(step.stepId)}" data-status="${planStepVisualStatus(step.status)}" type="button"><span class="plan-step-index" aria-hidden="true">${step.order}</span><span class="plan-step-copy"><strong>${escapeHtml(step.title)}</strong><span>${escapeHtml(step.toolCall.name)}</span></span><span class="plan-step-status">${escapeHtml(planStepStatusLabel(step.status))}</span></button>`).join('');
+	const detailPanels = plan.steps.map(step => {
+		const dependencies = step.dependsOn.length > 0 ? step.dependsOn.join(', ') : vscode.l10n.t('None');
+		const approval = step.approval ? `${step.approval.referenceId}${step.approval.consumedAt ? ` · ${vscode.l10n.t('consumed')}` : ` · ${vscode.l10n.t('unused')}`}` : vscode.l10n.t('Not issued');
+		const execution = step.execution ? `${step.execution.status} · ${step.execution.executionSha256}` : vscode.l10n.t('No execution receipt');
+		const verification = step.verification ? `${step.verification.status} · ${step.verification.outcomeSha256}` : vscode.l10n.t('No verification receipt');
+		const approveStep = (plan.status === 'reviewed' || plan.status === 'awaiting_approval') && (step.status === 'pending' || step.status === 'awaiting_approval')
+			? `<button data-plan-action="approve-step" data-plan-action-step="${escapeHtml(step.stepId)}" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Approve this exact step'))}</button>`
+			: '';
+		const checks = step.verification?.checks.length
+			? `<ul class="plan-lines">${step.verification.checks.map(check => `<li>${escapeHtml(check.passed ? '✓' : '×')} ${escapeHtml(check.kind)} · ${escapeHtml(check.subject)} · ${escapeHtml(check.actual)}</li>`).join('')}</ul>`
+			: '';
+		return `<section class="plan-detail" id="plan-detail-${escapeHtml(step.stepId)}" role="tabpanel" aria-labelledby="plan-step-${escapeHtml(step.stepId)}" data-plan-detail="${escapeHtml(step.stepId)}"${step.stepId === selectedStep.stepId ? '' : ' hidden'}>
+			<h3>${escapeHtml(step.title)}</h3><p class="plan-detail-copy">${escapeHtml(vscode.l10n.t('Step {0} of {1}', step.order, plan.steps.length))}</p>
+			<div class="plan-evidence"><div><span>${escapeHtml(vscode.l10n.t('Status'))}</span><strong>${escapeHtml(planStepStatusLabel(step.status))}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Dependencies'))}</span><strong>${escapeHtml(dependencies)}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Tool'))}</span><strong>${escapeHtml(step.toolCall.name)}</strong></div></div>
+			<h4>${escapeHtml(vscode.l10n.t('Exact arguments'))}</h4><pre class="agent-output" tabindex="0">${escapeHtml(JSON.stringify(step.toolCall.arguments, null, 2))}</pre>
+			<h4>${escapeHtml(vscode.l10n.t('Expected verification'))}</h4><pre class="agent-output" tabindex="0">${escapeHtml(JSON.stringify(step.verificationSpec, null, 2))}</pre>
+			<dl class="receipt"><dt>${escapeHtml(vscode.l10n.t('Tool call evidence'))}</dt><dd><code>${escapeHtml(step.toolCallSha256)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Approval'))}</dt><dd><code>${escapeHtml(approval)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Execution'))}</dt><dd><code>${escapeHtml(execution)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Verification'))}</dt><dd><code>${escapeHtml(verification)}</code></dd></dl>${checks}<div class="actions">${approveStep}</div>
+		</section>`;
+	}).join('');
 	return `<section class="card plan-surface" aria-labelledby="plan-surface-title">
-		<div class="plan-heading"><div><h2 id="plan-surface-title">${escapeHtml(vscode.l10n.t('Plan timeline'))}</h2><p>${escapeHtml(vscode.l10n.t('Move from request to verified outcome without hiding the approval boundary. Select a stage to inspect what Fikeya knows now.'))}</p></div><span class="badge">${escapeHtml(agentStatusLabel(state.agent, strings))}</span></div>
-		<div class="plan-workspace"><div class="plan-timeline" role="tablist" aria-label="${escapeHtml(vscode.l10n.t('Run lifecycle'))}">${timelineButtons}</div><div class="plan-details" aria-live="polite">${detailPanels}</div></div>
+		<div class="plan-heading"><div><h2 id="plan-surface-title">${escapeHtml(plan.title)}</h2><p>${escapeHtml(vscode.l10n.t('Durable plan {0} · revision {1}', plan.planId, plan.revision))}</p></div><span class="badge">${escapeHtml(state.plan.status === 'running' ? vscode.l10n.t('Running') : planStatusLabel(plan.status))}</span></div>
+		${lifecycle}
+		<div class="actions plan-actions">${actionButtons}</div>
+		${state.plan.failure || plan.failureReason ? `<p class="plan-boundary" role="alert">${escapeHtml(state.plan.failure ?? plan.failureReason ?? '')}</p>` : ''}
+		<div class="plan-workspace"><div class="plan-timeline" role="tablist" aria-label="${escapeHtml(vscode.l10n.t('Exact plan steps'))}">${timelineButtons}</div><div class="plan-details" aria-live="polite">${detailPanels}</div></div>
+		<dl class="receipt compact-receipt"><dt>${escapeHtml(vscode.l10n.t('Specification'))}</dt><dd><code>${escapeHtml(plan.specSha256)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Current record'))}</dt><dd><code>${escapeHtml(state.plan.recordSha256 ?? strings.unavailable)}</code></dd></dl>
 	</section>`;
 }
 
-function planStageStatusLabel(stage: FikeyaPlanTimelineStage, strings: WebviewStrings): string {
-	switch (stage.status) {
-		case 'active': return vscode.l10n.t('Current');
-		case 'complete': return vscode.l10n.t('Complete');
-		case 'attention': return vscode.l10n.t('Attention');
-		default: return strings.notChecked;
+function renderPlanLifecycle(plan: FikeyaPlanRecord): string {
+	const order: readonly { readonly id: FikeyaPlanStageId; readonly title: string }[] = [
+		{ id: 'draft', title: vscode.l10n.t('Draft') },
+		{ id: 'review', title: vscode.l10n.t('Review') },
+		{ id: 'approval', title: vscode.l10n.t('Approval') },
+		{ id: 'execute', title: vscode.l10n.t('Execute') },
+		{ id: 'verify', title: vscode.l10n.t('Verify') }
+	];
+	const activeIndex = plan.status === 'draft' ? 0
+		: plan.status === 'reviewed' ? 1
+			: plan.status === 'awaiting_approval' ? 2
+				: plan.status === 'executing' ? 3
+					: 4;
+	const terminalSuccess = plan.status === 'succeeded';
+	return `<ol class="plan-lifecycle" aria-label="${escapeHtml(vscode.l10n.t('Plan lifecycle'))}">${order.map((stage, index) => {
+		const visual = terminalSuccess || index < activeIndex ? 'complete' : index === activeIndex ? (plan.status === 'failed' || plan.status === 'cancelled' ? 'attention' : 'active') : 'pending';
+		return `<li data-status="${visual}"><span>${index + 1}</span><strong>${escapeHtml(stage.title)}</strong></li>`;
+	}).join('')}</ol>`;
+}
+
+function planStepVisualStatus(status: FikeyaPlanRecord['steps'][number]['status']): 'pending' | 'active' | 'complete' | 'attention' {
+	if (status === 'succeeded') {
+		return 'complete';
 	}
+	if (status === 'failed' || status === 'cancelled') {
+		return 'attention';
+	}
+	if (status === 'awaiting_approval' || status === 'executing' || status === 'verifying') {
+		return 'active';
+	}
+	return 'pending';
+}
+
+function planStepStatusLabel(status: FikeyaPlanRecord['steps'][number]['status']): string {
+	return status.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+function planStatusLabel(status: FikeyaPlanRecord['status']): string {
+	return status.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 
 function renderAgentSurface(state: DashboardState, strings: WebviewStrings, researchMode: boolean): string {
@@ -1502,7 +1926,7 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, rese
 		<div class="chat-thread" data-chat-thread aria-live="polite">${conversation}${progress}</div>
 		<form class="agent-form" data-agent-form autocomplete="off">
 			<label class="field composer"><span class="sr-only">${escapeHtml(strings.prompt)}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(researchMode ? vscode.l10n.t('Research a technical question and ask for cited findings...') : vscode.l10n.t('Ask Fikeya to inspect, edit, run, or review this project...'))}"${running || state.providers.length === 0 ? ' disabled' : ''} required></textarea></label>
-			<div class="composer-bar"><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${running || state.providers.length === 0 ? ' disabled' : ''}>${providerOptions}</select></label><details class="run-controls"><summary>${escapeHtml(vscode.l10n.t('Model and context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${running || state.providers.length === 0 ? ' disabled' : ''}><option value="auto">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="512" max="64000" step="256" value="12000"${running || state.providers.length === 0 ? ' disabled' : ''}></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="1" max="32768" step="1" value="1024"${running || state.providers.length === 0 ? ' disabled' : ''}></label></div></details><div class="actions composer-actions"><button data-agent-run type="submit"${running || state.providers.length === 0 ? ' disabled' : ''}>${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Send'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div></div>
+			<div class="composer-bar"><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${running || state.providers.length === 0 ? ' disabled' : ''}>${providerOptions}</select></label><details class="run-controls"><summary>${escapeHtml(vscode.l10n.t('Model and context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${running || state.providers.length === 0 ? ' disabled' : ''}><option value="auto">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="512" max="64000" step="256" value="12000"${running || state.providers.length === 0 ? ' disabled' : ''}></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="1" max="32768" step="1" value="1024"${running || state.providers.length === 0 ? ' disabled' : ''}></label></div></details><div class="actions composer-actions"><button data-agent-run type="submit"${running || state.providers.length === 0 ? ' disabled' : ''}>${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Send'))}</button><button class="secondary" data-agent-plan type="button"${running || state.providers.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Create plan'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div></div>
 			<div class="composer-foot"><label class="consent"><input data-network-consent type="checkbox"${running || state.providers.length === 0 ? ' disabled' : ''}><span>${escapeHtml(vscode.l10n.t('Allow provider network for this turn'))}</span></label><span>${escapeHtml(vscode.l10n.t('Enter to send, Shift+Enter for a new line'))}</span></div>
 		</form>
 		<div class="agent-status" data-tone="${statusTone}" role="status">${escapeHtml(state.providers.length === 0 ? vscode.l10n.t('Add a model in Fikeya Settings to begin.') : agentStatusLabel(state.agent, strings))}</div>
