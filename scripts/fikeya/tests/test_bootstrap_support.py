@@ -170,11 +170,13 @@ class PathTests(unittest.TestCase):
 
     @staticmethod
     def _create_checkout(root: Path) -> Path:
+        (root / "fikeya-agent-core").mkdir(parents=True)
         (root / "fikeya-runtime").mkdir(parents=True)
         (root / "packages" / "fikeya-protocol").mkdir(parents=True)
         (root / "integrations" / "qarinah-sidecar").mkdir(parents=True)
         (root / "scripts" / "fikeya").mkdir(parents=True)
         (root / "product.json").write_text("{}\n", encoding="utf-8")
+        (root / "fikeya-agent-core" / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
         (root / "fikeya-runtime" / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
         (root / "packages" / "fikeya-protocol" / "package-lock.json").write_text(
             "{}\n", encoding="utf-8"

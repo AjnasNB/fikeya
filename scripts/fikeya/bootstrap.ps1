@@ -103,6 +103,7 @@ if ($CheckOnly) {
 }
 
 $resolvedRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$agentCoreSource = Join-Path $resolvedRoot 'fikeya-agent-core'
 $runtimeSource = Join-Path $resolvedRoot 'fikeya-runtime'
 $constraints = Join-Path $scriptDirectory 'runtime-constraints.txt'
 $runtimeEnvironment = Join-Path $cachePath 'runtime'
@@ -119,8 +120,8 @@ if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) {
 
 $env:PIP_DISABLE_PIP_VERSION_CHECK = '1'
 $env:PIP_NO_INPUT = '1'
-Write-Output '[2/5] Installing Fikeya Runtime with the Azure identity extra'
-& $runtimePython -m pip install --no-input --disable-pip-version-check --constraint $constraints "$runtimeSource[azure]"
+Write-Output '[2/5] Installing Fikeya Agent Core and Runtime with the Azure identity extra'
+& $runtimePython -m pip install --no-input --disable-pip-version-check --constraint $constraints $agentCoreSource "$runtimeSource[azure]"
 if ($LASTEXITCODE -ne 0) {
 	exit $LASTEXITCODE
 }

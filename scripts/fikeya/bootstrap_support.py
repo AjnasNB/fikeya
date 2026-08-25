@@ -96,6 +96,7 @@ def resolve_project_root(value: str | os.PathLike[str]) -> Path:
 
     markers = (
         "product.json",
+        "fikeya-agent-core/pyproject.toml",
         "fikeya-runtime/pyproject.toml",
         "packages/fikeya-protocol/package-lock.json",
         "integrations/qarinah-sidecar/package-lock.json",
@@ -209,7 +210,7 @@ def build_receipt(
         components.append(record)
 
     installed = {}
-    for distribution in ("fikeya-runtime", "azure-identity", "keyring"):
+    for distribution in ("fikeya-agent-core", "fikeya-runtime", "azure-identity", "keyring"):
         try:
             installed[distribution] = importlib.metadata.version(distribution)
         except importlib.metadata.PackageNotFoundError as error:

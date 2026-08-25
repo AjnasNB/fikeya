@@ -91,6 +91,7 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
 fi
 
 PROJECT_ROOT=$(CDPATH= cd -- "$PROJECT_ROOT" && pwd -P)
+AGENT_CORE_SOURCE=$PROJECT_ROOT/fikeya-agent-core
 RUNTIME_SOURCE=$PROJECT_ROOT/fikeya-runtime
 CONSTRAINTS=$SCRIPT_DIRECTORY/runtime-constraints.txt
 RUNTIME_ENVIRONMENT=$CACHE_PATH/runtime
@@ -104,9 +105,9 @@ fi
 
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_NO_INPUT=1
-printf '%s\n' '[2/5] Installing Fikeya Runtime with the Azure identity extra'
+printf '%s\n' '[2/5] Installing Fikeya Agent Core and Runtime with the Azure identity extra'
 "$RUNTIME_PYTHON" -m pip install --no-input --disable-pip-version-check \
-	--constraint "$CONSTRAINTS" "$RUNTIME_SOURCE[azure]"
+	--constraint "$CONSTRAINTS" "$AGENT_CORE_SOURCE" "$RUNTIME_SOURCE[azure]"
 
 export npm_config_cache=$CACHE_PATH/npm-cache
 printf '%s\n' '[3/5] Installing the locked Fikeya protocol dependencies'
