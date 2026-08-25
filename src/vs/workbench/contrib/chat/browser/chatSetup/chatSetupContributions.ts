@@ -837,7 +837,7 @@ export class ChatTeardownContribution extends Disposable implements IWorkbenchCo
 				return; // unrelated event
 			}
 
-			const enabledAiExtension = this.extensionsWorkbenchService.local.find(value => this.isManagedAiExtension(value.identifier.id) && value.local && this.extensionEnablementService.isEnabled(value.local));
+			const enabledAiExtension = this.extensionsWorkbenchService.installed.find(value => this.isManagedAiExtension(value.identifier.id) && value.local && this.extensionEnablementService.isEnabled(value.local));
 			if (enabledAiExtension?.local) {
 				if (enabledAiExtension.enablementState === EnablementState.EnabledWorkspace) {
 					if (this.configurationService.inspect(ChatAIDisabledSettingId).workspaceValue === true) {
@@ -858,7 +858,10 @@ export class ChatTeardownContribution extends Disposable implements IWorkbenchCo
 	}
 
 	private async maybeEnableOrDisableExtensions(state: EnablementState.EnabledGlobally | EnablementState.EnabledWorkspace | EnablementState.DisabledGlobally | EnablementState.DisabledWorkspace): Promise<void> {
-		const managedExtensions = this.extensionsWorkbenchService.local.filter(value => this.isManagedAiExtension(value.identifier.id) && value.local);
+		// One identifier can be installed in multiple extension-management servers
+		// (for example both the desktop and a remote workspace). Disable every copy;
+		// `local` intentionally collapses duplicates to a single primary extension.
+		const managedExtensions = this.extensionsWorkbenchService.installed.filter(value => this.isManagedAiExtension(value.identifier.id) && value.local);
 		if (managedExtensions.length === 0) {
 			return;
 		}
