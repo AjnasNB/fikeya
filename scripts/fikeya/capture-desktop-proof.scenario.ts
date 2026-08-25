@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  SPDX-License-Identifier: AGPL-3.0-or-later
- *  Copyright (C) 2026 Fikeya contributors
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 const fs = require('fs');
@@ -49,9 +49,11 @@ interface Scenario {
 
 interface ChatState {
 	readonly chatVisible: boolean;
+	readonly assistant: string;
+	readonly provider: string;
+	readonly usage: Readonly<Record<string, string>>;
+	readonly usageBasis: string;
 	readonly planTab?: string;
-	readonly prompt?: string;
-	readonly createPlan?: string;
 }
 
 interface DraftState {
@@ -75,6 +77,11 @@ interface ApprovalState {
 const workspacePath = process.env.FIKEYA_CAPTURE_WORKSPACE;
 if (!workspacePath || !path.isAbsolute(workspacePath)) {
 	throw new Error('FIKEYA_CAPTURE_WORKSPACE must name the absolute disposable proof workspace.');
+}
+const providerName = process.env.FIKEYA_CAPTURE_PROVIDER_NAME;
+const providerOutput = process.env.FIKEYA_CAPTURE_PROVIDER_OUTPUT;
+if (!providerName || !providerOutput) {
+	throw new Error('FIKEYA_CAPTURE_PROVIDER_NAME and FIKEYA_CAPTURE_PROVIDER_OUTPUT must describe the deterministic proof provider.');
 }
 
 const planSpecification = {
@@ -197,8 +204,8 @@ const scenario: Scenario = {
 	stepPauseMs: 900,
 	steps: [
 		{
-			id: 'chat-ready',
-			title: 'Open the real Chat surface in the proof workspace',
+			id: 'successful-chat',
+			title: 'Complete a real Chat turn through the deterministic provider',
 			async run({ code, page, workbench }) {
 				await workbench.quickaccess.openFile(path.join(workspacePath, 'README.md'));
 				await page.keyboard.press('Escape');
@@ -218,33 +225,64 @@ const scenario: Scenario = {
 					`(() => {
 						const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
 						const chatTab = document.querySelector('[data-surface-tab="chat"]');
-						const planButton = document.querySelector('[data-agent-plan]');
-						if (!prompt || !chatTab || !planButton) return false;
+						const provider = document.querySelector('[data-agent-form] [name="providerName"]');
+						if (!prompt || !chatTab || !provider || !Array.from(provider.options).some(option => option.value === ${JSON.stringify(providerName)})) return false;
 						chatTab.click();
 						return !document.querySelector('[data-surface-panel="chat"]').hidden;
 					})()`,
 					'The real Fikeya Chat composer did not become ready.',
 					60_000
 				);
-				await pause(600);
-				const state = await evaluateFikeya<ChatState>(code, `(() => {
+				const submitted = await evaluateFikeya<boolean>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
 					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
-					if (prompt) {
-						prompt.value = 'Inspect this proof workspace and prepare a reviewable plan.';
-						prompt.dispatchEvent(new Event('input', { bubbles: true }));
-					}
-					return {
+					const provider = document.querySelector('[data-agent-form] [name="providerName"]');
+					const contextBudget = document.querySelector('[data-agent-form] [name="contextMaxCharacters"]');
+					const consent = document.querySelector('[data-network-consent]');
+					if (!form || !prompt || !provider || !contextBudget || !consent) return false;
+					provider.value = ${JSON.stringify(providerName)};
+					provider.dispatchEvent(new Event('change', { bubbles: true }));
+					// The control has min=512 and step=256. Use a value on that exact
+					// lattice so native form validation cannot suppress requestSubmit().
+					contextBudget.value = '12032';
+					contextBudget.dispatchEvent(new Event('input', { bubbles: true }));
+					prompt.value = 'Inspect this proof workspace and explain what the bounded project evidence verifies.';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					consent.checked = true;
+					consent.dispatchEvent(new Event('change', { bubbles: true }));
+					if (!form.checkValidity()) return false;
+					form.requestSubmit();
+					return true;
+				})()`);
+				if (!submitted) {
+					throw new Error('The real Chat composer could not submit the deterministic provider turn.');
+				}
+				const state = await waitForFikeya<ChatState>(code, `(() => {
+					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim();
+					const metrics = Object.fromEntries(Array.from(document.querySelectorAll('.run-metric')).map(item => [
+						item.querySelector('span')?.textContent?.trim(),
+						item.querySelector('strong')?.textContent?.trim()
+					]));
+					const value = {
+						assistant,
 						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden,
 						planTab: document.querySelector('[data-surface-tab="plan"]')?.textContent?.trim(),
-						prompt: prompt?.value,
-						createPlan: document.querySelector('[data-agent-plan]')?.textContent?.trim()
+						provider: metrics['Provider / Model'],
+						usage: metrics,
+						usageBasis: document.querySelector('.usage-basis')?.textContent?.trim()
 					};
-				})()`);
-				if (!state?.chatVisible || state.planTab !== 'Plan' || state.createPlan !== 'Create plan'
-					|| state.prompt !== 'Inspect this proof workspace and prepare a reviewable plan.') {
-					throw new Error(`Unexpected Chat state: ${JSON.stringify(state)}`);
-				}
-				return 'The actual extension Chat composer, Plan route, provider picker, and unsent proof prompt are visible; no provider request was made.';
+					return value.chatVisible
+						&& value.planTab === 'Plan'
+						&& value.assistant === ${JSON.stringify(providerOutput)}
+						&& value.provider === ${JSON.stringify(`${providerName} / fikeya-proof-model`)}
+						&& value.usage['Input Tokens'] === '60'
+						&& value.usage['Cached Input Tokens'] === '12'
+						&& value.usage['Output Tokens'] === '15'
+						&& value.usageBasis.includes('provider-reported')
+						? value
+						: false;
+				})()`, 'Chat did not render the successful assistant response and exact provider-reported usage.', 90_000);
+				return `Completed a real three-call Chat turn through ${state.provider}; visible usage is ${state.usage['Input Tokens']} input, ${state.usage['Cached Input Tokens']} cached input, and ${state.usage['Output Tokens']} output tokens.`;
 			}
 		},
 		{

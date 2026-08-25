@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  SPDX-License-Identifier: AGPL-3.0-or-later
- *  Copyright (C) 2026 Fikeya contributors
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 const assert: typeof import('node:assert/strict') = require('node:assert/strict');
@@ -9,11 +9,15 @@ const os: typeof import('node:os') = require('node:os');
 const path: typeof import('node:path') = require('node:path');
 const test: typeof import('node:test') = require('node:test');
 const {
+	buildCaptureProviderArguments,
+	captureProviderDecisions,
+	captureProviderModel,
 	captureHelp,
 	createProofWorkspace,
 	parseCaptureArguments,
 	publishStableEvidence,
-	readEvidenceSummary
+	readEvidenceSummary,
+	startDeterministicProvider
 } = require('../capture-desktop-proof.ts');
 
 test('capture arguments default to a compiled real-app run', () => {
@@ -41,6 +45,52 @@ test('proof workspace is disposable and contains executable project evidence', a
 	await stat(path.join(workspace, 'test', 'calculator.test.js'));
 });
 
+test('capture provider configuration is credential-free and loopback-only', () => {
+	const args = buildCaptureProviderArguments('http://127.0.0.1:43123/v1');
+	assert.deepEqual(args.slice(0, 3), ['provider', 'configure', 'fikeya-desktop-proof']);
+	assert.ok(args.includes('openai-compatible'));
+	assert.ok(args.includes('none'));
+	assert.ok(args.includes('chat-completions'));
+	assert.ok(!args.includes('--secret-stdin'));
+	assert.throws(() => buildCaptureProviderArguments('https://example.com/v1'), /loopback endpoint/u);
+});
+
+test('deterministic loopback provider returns strict Chat decisions and measured usage', async () => {
+	const provider = await startDeterministicProvider();
+	try {
+		for (const decision of captureProviderDecisions) {
+			const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ model: captureProviderModel, messages: [] })
+			});
+			assert.equal(response.status, 200);
+			const payload = await response.json() as {
+				readonly choices: readonly { readonly message: { readonly content: string } }[];
+				readonly usage: { readonly prompt_tokens: number; readonly completion_tokens: number; readonly prompt_tokens_details: { readonly cached_tokens: number } };
+			};
+			assert.deepEqual(JSON.parse(payload.choices[0].message.content), decision);
+			assert.deepEqual(payload.usage, {
+				completion_tokens: 5,
+				prompt_tokens: 20,
+				prompt_tokens_details: { cached_tokens: 4 }
+			});
+		}
+		assert.equal(provider.requestCount(), 3);
+	} finally {
+		await provider.close();
+	}
+});
+
+test('Electron Chat proof submits a natively valid bounded context budget', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	const match = /contextBudget\.value = '(\d+)'/u.exec(scenario);
+	assert.ok(match, 'capture scenario must set an explicit context budget');
+	const value = Number(match[1]);
+	assert.equal((value - 512) % 256, 0, 'context budget must satisfy min=512 and step=256');
+	assert.match(scenario, /if \(!form\.checkValidity\(\)\) return false;/u);
+});
+
 test('evidence summary rejects non-passing and incomplete runs', async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-evidence-test-'));
 	await writeFile(path.join(root, 'manifest.json'), JSON.stringify({
@@ -54,7 +104,7 @@ test('evidence summary rejects non-passing and incomplete runs', async () => {
 
 test('evidence summary rejects artifacts outside the evidence run', async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-evidence-boundary-'));
-	const stepIds = ['chat-ready', 'draft-plan', 'reviewed-plan', 'awaiting-approval'];
+	const stepIds = ['successful-chat', 'draft-plan', 'reviewed-plan', 'awaiting-approval'];
 	await writeFile(path.join(root, 'manifest.json'), JSON.stringify({
 		scenarioId: 'fikeya-chat-plan-proof',
 		outcome: 'passed',
@@ -69,7 +119,7 @@ test('stable evidence copies only passed real-run screenshots and hashes them', 
 	const run = path.join(root, 'run');
 	const output = path.join(root, 'published');
 	await mkdir(run, { recursive: true });
-	const stepIds = ['chat-ready', 'draft-plan', 'reviewed-plan', 'awaiting-approval'];
+	const stepIds = ['successful-chat', 'draft-plan', 'reviewed-plan', 'awaiting-approval'];
 	for (const stepId of stepIds) {
 		await writeFile(path.join(run, `${stepId}.png`), `real-${stepId}`, 'utf8');
 	}

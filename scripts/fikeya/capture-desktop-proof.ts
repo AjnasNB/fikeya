@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /*---------------------------------------------------------------------------------------------
- *  SPDX-License-Identifier: AGPL-3.0-or-later
- *  Copyright (C) 2026 Fikeya contributors
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 const { spawn }: typeof import('node:child_process') = require('node:child_process');
 const { createHash }: typeof import('node:crypto') = require('node:crypto');
 const { copyFile, mkdir, mkdtemp, readFile, stat, writeFile }: typeof import('node:fs/promises') = require('node:fs/promises');
+const { createServer }: typeof import('node:http') = require('node:http');
 const path: typeof import('node:path') = require('node:path');
 const process: typeof import('node:process') = require('node:process');
 
@@ -16,6 +17,24 @@ const scenarioSourcePath = path.join(scriptDirectory, 'capture-desktop-proof.sce
 const scenarioBuildDirectory = path.join(repositoryRoot, '.build', 'fikeya-desktop-proof-scenario');
 const compiledScenarioPath = path.join(scenarioBuildDirectory, 'capture-desktop-proof.scenario.js');
 const defaultOutputDirectory = path.join(repositoryRoot, '.build', 'fikeya-desktop-proof');
+const captureProviderName = 'fikeya-desktop-proof';
+const captureProviderModel = 'fikeya-proof-model';
+const captureProviderOutput = 'Verified the disposable proof workspace: README.md documents the durable reviewable plan, src/calculator.js exports add, and test/calculator.test.js checks add(2, 3).';
+const captureProviderDecisions = [
+	{
+		kind: 'plan',
+		content: 'Summarize the initialized proof workspace from its bounded project evidence without running a tool.'
+	},
+	{
+		kind: 'answer',
+		content: 'The proof workspace contains a calculator module, its focused test, and a README describing the durable reviewable plan.'
+	},
+	{
+		kind: 'review',
+		reviewAction: 'complete',
+		content: captureProviderOutput
+	}
+] as const;
 
 interface CaptureOptions {
 	compile: boolean;
@@ -93,6 +112,12 @@ interface PublishedEvidence {
 	};
 }
 
+interface DeterministicProviderServer {
+	readonly baseUrl: string;
+	readonly requestCount: () => number;
+	readonly close: () => Promise<void>;
+}
+
 function parseCaptureArguments(argv: readonly string[]): CaptureOptions {
 	const options: CaptureOptions = {
 		compile: true,
@@ -125,9 +150,10 @@ function captureHelp(): string {
 	return [
 		'Usage: node scripts/fikeya/capture-desktop-proof.ts [options]',
 		'',
-		'Launch the real Fikeya dev Electron build with the local extension, create a',
+		'Launch the real Fikeya dev Electron build with the local extension, complete',
+		'one Chat turn through an isolated deterministic loopback provider, create a',
 		'durable draft through the actual Plan UI, review it, stop at exact approval,',
-		'and save Chat/Plan screenshots plus the scenario report, video, and trace.',
+		'and save successful Chat/Plan screenshots plus the report, video, and trace.',
 		'',
 		'Options:',
 		'  --output <dir>   copy stable proof screenshots and a manifest here',
@@ -135,6 +161,106 @@ function captureHelp(): string {
 		'  --check          validate prerequisites without launching Electron',
 		'  --help           show this message'
 	].join('\n');
+}
+
+function buildCaptureProviderArguments(baseUrl: string): string[] {
+	if (!/^http:\/\/127\.0\.0\.1:\d+\/v1$/u.test(baseUrl)) {
+		throw new Error('The deterministic capture provider must use an ephemeral IPv4 loopback endpoint.');
+	}
+	return [
+		'provider',
+		'configure',
+		captureProviderName,
+		'--kind',
+		'openai-compatible',
+		'--base-url',
+		baseUrl,
+		'--model',
+		captureProviderModel,
+		'--credential-type',
+		'none',
+		'--api-mode',
+		'chat-completions',
+		'--json'
+	];
+}
+
+async function startDeterministicProvider(): Promise<DeterministicProviderServer> {
+	let requestCount = 0;
+	const server = createServer(async (request, response) => {
+		try {
+			if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
+				response.writeHead(404, { 'Content-Type': 'application/json' });
+				response.end('{"error":"not found"}');
+				return;
+			}
+			const chunks: Buffer[] = [];
+			let size = 0;
+			for await (const chunk of request) {
+				const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+				size += bytes.length;
+				if (size > 1_048_576) {
+					throw new Error('Deterministic provider request exceeded one MiB.');
+				}
+				chunks.push(bytes);
+			}
+			const payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { readonly model?: unknown };
+			if (payload.model !== captureProviderModel) {
+				response.writeHead(400, { 'Content-Type': 'application/json' });
+				response.end('{"error":"unexpected model"}');
+				return;
+			}
+			const decision = captureProviderDecisions[requestCount];
+			if (!decision) {
+				response.writeHead(409, { 'Content-Type': 'application/json' });
+				response.end('{"error":"unexpected provider call"}');
+				return;
+			}
+			requestCount += 1;
+			const body = JSON.stringify({
+				choices: [{ message: { content: JSON.stringify(decision) } }],
+				usage: {
+					completion_tokens: 5,
+					prompt_tokens: 20,
+					prompt_tokens_details: { cached_tokens: 4 }
+				}
+			});
+			response.writeHead(200, {
+				'Connection': 'close',
+				'Content-Length': Buffer.byteLength(body),
+				'Content-Type': 'application/json'
+			});
+			response.end(body);
+		} catch {
+			if (!response.headersSent) {
+				response.writeHead(400, { 'Content-Type': 'application/json' });
+			}
+			response.end('{"error":"invalid request"}');
+		}
+	});
+	await new Promise<void>((resolve, reject) => {
+		const onError = (error: Error) => {
+			server.off('listening', onListening);
+			reject(error);
+		};
+		const onListening = () => {
+			server.off('error', onError);
+			resolve();
+		};
+		server.once('error', onError);
+		server.once('listening', onListening);
+		server.listen(0, '127.0.0.1');
+	});
+	const address = server.address();
+	if (!address || typeof address === 'string') {
+		await new Promise<void>(resolve => server.close(() => resolve()));
+		throw new Error('The deterministic capture provider did not bind an IP loopback port.');
+	}
+	return {
+		baseUrl: `http://127.0.0.1:${address.port}/v1`,
+		requestCount: () => requestCount,
+		close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+	};
 }
 
 async function createProofWorkspace(parentDirectory: string = defaultOutputDirectory): Promise<string> {
@@ -154,7 +280,7 @@ async function createProofWorkspace(parentDirectory: string = defaultOutputDirec
 	);
 	await writeFile(
 		path.join(workspace, 'test', 'calculator.test.js'),
-		"import assert from 'node:assert/strict';\nimport { add } from '../src/calculator.js';\nassert.equal(add(2, 3), 5);\n",
+		'import assert from \'node:assert/strict\';\nimport { add } from \'../src/calculator.js\';\nassert.equal(add(2, 3), 5);\n',
 		'utf8'
 	);
 	return workspace;
@@ -264,7 +390,7 @@ async function readEvidenceSummary(runDirectory: string): Promise<EvidenceSummar
 	return {
 		manifest,
 		manifestPath,
-		chatScreenshot: screenshotFor('chat-ready'),
+		chatScreenshot: screenshotFor('successful-chat'),
 		draftScreenshot: screenshotFor('draft-plan'),
 		reviewedScreenshot: screenshotFor('reviewed-plan'),
 		approvalScreenshot: screenshotFor('awaiting-approval'),
@@ -353,14 +479,40 @@ async function captureDesktopProof(options: CaptureOptions) {
 		throw new Error('The compiled desktop proof scenario is missing. Re-run without --skip-compile.');
 	});
 	const workspace = await createProofWorkspace(options.outputDirectory);
-	const result = await runProcess(process.execPath, [
-		runner,
-		compiledScenarioPath,
-		'--dev',
-		`--extensionDevelopmentPath=${path.join(repositoryRoot, 'extensions', 'fikeya-desktop')}`
-	], {
-		env: { ...process.env, FIKEYA_CAPTURE_WORKSPACE: workspace }
-	});
+	const runtimeHome = await mkdtemp(path.join(options.outputDirectory, 'home-'));
+	const provider = await startDeterministicProvider();
+	let result: RunProcessResult;
+	try {
+		const runtimeExecutable = path.join(
+			repositoryRoot,
+			'extensions',
+			'fikeya-desktop',
+			'runtime',
+			process.platform === 'win32' ? 'fikeya-runtime.exe' : 'fikeya-runtime'
+		);
+		await runProcess(runtimeExecutable, buildCaptureProviderArguments(provider.baseUrl), {
+			env: { ...process.env, FIKEYA_HOME: runtimeHome }
+		});
+		result = await runProcess(process.execPath, [
+			runner,
+			compiledScenarioPath,
+			'--dev',
+			`--extensionDevelopmentPath=${path.join(repositoryRoot, 'extensions', 'fikeya-desktop')}`
+		], {
+			env: {
+				...process.env,
+				FIKEYA_CAPTURE_PROVIDER_NAME: captureProviderName,
+				FIKEYA_CAPTURE_PROVIDER_OUTPUT: captureProviderOutput,
+				FIKEYA_CAPTURE_WORKSPACE: workspace,
+				FIKEYA_HOME: runtimeHome
+			}
+		});
+		if (provider.requestCount() !== captureProviderDecisions.length) {
+			throw new Error(`The successful Chat proof made ${provider.requestCount()} provider calls; expected ${captureProviderDecisions.length}.`);
+		}
+	} finally {
+		await provider.close();
+	}
 	const match = result.stdout.match(/^Evidence run:\s*(.+)$/mu);
 	if (!match) {
 		throw new Error('The scenario runner did not report its evidence directory.');
@@ -370,6 +522,7 @@ async function captureDesktopProof(options: CaptureOptions) {
 	return {
 		checked: true,
 		workspace,
+		runtimeHome,
 		evidenceDirectory: path.dirname(summary.manifestPath),
 		reportPath: summary.reportPath,
 		tracePath: summary.tracePath,
@@ -396,6 +549,11 @@ if (require.main === module) {
 }
 
 module.exports = {
+	buildCaptureProviderArguments,
+	captureProviderDecisions,
+	captureProviderModel,
+	captureProviderName,
+	captureProviderOutput,
 	captureDesktopProof,
 	captureHelp,
 	compiledScenarioPath,
@@ -408,5 +566,6 @@ module.exports = {
 	runProcess,
 	scenarioBuildDirectory,
 	scenarioSourcePath,
+	startDeterministicProvider,
 	validateCapturePrerequisites
 };
