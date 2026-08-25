@@ -89,7 +89,10 @@ jobs:
           npm --prefix extensions/markdown-language-features run test-markdown-editor-package-json
 
       - name: Compile & Hygiene
-        run: npm exec -- npm-run-all2 -lp --max-parallel 2 core-ci hygiene eslint valid-layers-check define-class-fields-check vscode-dts-compile-check tsec-compile-check test-build-scripts
+        # The standard hosted runner cannot safely overlap the minified Code OSS
+        # build with the full-repository ESLint process. Run every gate serially
+        # so a valid build is not reported as failed by an out-of-memory shutdown.
+        run: npm exec -- npm-run-all2 -lp --max-parallel 1 core-ci hygiene eslint valid-layers-check define-class-fields-check vscode-dts-compile-check tsec-compile-check test-build-scripts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
