@@ -181,6 +181,7 @@ export interface FikeyaPlanApprovalReference {
 	readonly referenceId: string;
 	readonly toolCallSha256: string;
 	readonly issuedAt: string;
+	readonly expiresAt: string;
 	readonly consumedAt: string | null;
 }
 
@@ -1093,14 +1094,24 @@ function parsePlanApproval(value: unknown): FikeyaPlanApprovalReference | undefi
 	const referenceId = strictBoundedString(record?.referenceId, 128);
 	const toolCallSha256 = strictBoundedString(record?.toolCallSha256, 71);
 	const issuedAt = parseTimestamp(record?.issuedAt);
+	// Pre-expiry records are accepted only as already-expired approvals. This mirrors the
+	// runtime migration boundary, where a missing expiresAt is normalized to issuedAt so
+	// legacy data can be inspected but can never authorize new execution.
+	const hasExpiry = record ? Object.prototype.hasOwnProperty.call(record, 'expiresAt') : false;
+	const expiresAt = hasExpiry ? parseTimestamp(record?.expiresAt) : issuedAt;
 	const consumedAt = parseNullableTimestamp(record?.consumedAt);
-	if (!record || !hasExactRecordKeys(record, ['consumedAt', 'issuedAt', 'referenceId', 'toolCallSha256'])
+	const hasExactKeys = record && (
+		hasExactRecordKeys(record, ['consumedAt', 'expiresAt', 'issuedAt', 'referenceId', 'toolCallSha256'])
+		|| hasExactRecordKeys(record, ['consumedAt', 'issuedAt', 'referenceId', 'toolCallSha256'])
+	);
+	if (!record || !hasExactKeys
 		|| !referenceId || !identifierPattern.test(referenceId)
 		|| !toolCallSha256 || !/^sha256:[0-9a-f]{64}$/.test(toolCallSha256)
-		|| !issuedAt || consumedAt === undefined) {
+		|| !issuedAt || !expiresAt || Date.parse(expiresAt) < Date.parse(issuedAt)
+		|| consumedAt === undefined) {
 		return undefined;
 	}
-	return { referenceId, toolCallSha256, issuedAt, consumedAt };
+	return { referenceId, toolCallSha256, issuedAt, expiresAt, consumedAt };
 }
 
 function parsePlanExecution(value: unknown): FikeyaPlanExecutionOutcome | undefined {

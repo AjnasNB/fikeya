@@ -1864,6 +1864,9 @@ function renderPlanSurface(state: DashboardState, strings: WebviewStrings): stri
 	const detailPanels = plan.steps.map(step => {
 		const dependencies = step.dependsOn.length > 0 ? step.dependsOn.join(', ') : vscode.l10n.t('None');
 		const approval = step.approval ? `${step.approval.referenceId}${step.approval.consumedAt ? ` · ${vscode.l10n.t('consumed')}` : ` · ${vscode.l10n.t('unused')}`}` : vscode.l10n.t('Not issued');
+		const approvalExpiry = step.approval
+			? `<dt>${escapeHtml(vscode.l10n.t('Approval expires'))}</dt><dd><time datetime="${escapeHtml(step.approval.expiresAt)}">${escapeHtml(step.approval.expiresAt)}</time></dd>`
+			: '';
 		const execution = step.execution ? `${step.execution.status} · ${step.execution.executionSha256}` : vscode.l10n.t('No execution receipt');
 		const verification = step.verification ? `${step.verification.status} · ${step.verification.outcomeSha256}` : vscode.l10n.t('No verification receipt');
 		const approveStep = (plan.status === 'reviewed' || plan.status === 'awaiting_approval') && (step.status === 'pending' || step.status === 'awaiting_approval')
@@ -1877,7 +1880,7 @@ function renderPlanSurface(state: DashboardState, strings: WebviewStrings): stri
 			<div class="plan-evidence"><div><span>${escapeHtml(vscode.l10n.t('Status'))}</span><strong>${escapeHtml(planStepStatusLabel(step.status))}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Dependencies'))}</span><strong>${escapeHtml(dependencies)}</strong></div><div><span>${escapeHtml(vscode.l10n.t('Tool'))}</span><strong>${escapeHtml(step.toolCall.name)}</strong></div></div>
 			<h4>${escapeHtml(vscode.l10n.t('Exact arguments'))}</h4><pre class="agent-output" tabindex="0">${escapeHtml(JSON.stringify(step.toolCall.arguments, null, 2))}</pre>
 			<h4>${escapeHtml(vscode.l10n.t('Expected verification'))}</h4><pre class="agent-output" tabindex="0">${escapeHtml(JSON.stringify(step.verificationSpec, null, 2))}</pre>
-			<dl class="receipt"><dt>${escapeHtml(vscode.l10n.t('Tool call evidence'))}</dt><dd><code>${escapeHtml(step.toolCallSha256)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Approval'))}</dt><dd><code>${escapeHtml(approval)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Execution'))}</dt><dd><code>${escapeHtml(execution)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Verification'))}</dt><dd><code>${escapeHtml(verification)}</code></dd></dl>${checks}<div class="actions">${approveStep}</div>
+			<dl class="receipt"><dt>${escapeHtml(vscode.l10n.t('Tool call evidence'))}</dt><dd><code>${escapeHtml(step.toolCallSha256)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Approval'))}</dt><dd><code>${escapeHtml(approval)}</code></dd>${approvalExpiry}<dt>${escapeHtml(vscode.l10n.t('Execution'))}</dt><dd><code>${escapeHtml(execution)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Verification'))}</dt><dd><code>${escapeHtml(verification)}</code></dd></dl>${checks}<div class="actions">${approveStep}</div>
 		</section>`;
 	}).join('');
 	return `<section class="card plan-surface" aria-labelledby="plan-surface-title">

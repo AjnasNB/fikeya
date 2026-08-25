@@ -221,7 +221,7 @@ describe('Fikeya runtime protocol', () => {
 			specSha256: hash('a'),
 			status: 'succeeded',
 			steps: [{
-				approval: { consumedAt: '2026-08-26T10:01:00.000Z', issuedAt: '2026-08-26T10:00:30.000Z', referenceId: 'apr_example', toolCallSha256: hash('b') },
+				approval: { consumedAt: '2026-08-26T10:01:00.000Z', expiresAt: '2026-08-26T10:05:30.000Z', issuedAt: '2026-08-26T10:00:30.000Z', referenceId: 'apr_example', toolCallSha256: hash('b') },
 				dependsOn: [],
 				execution: { durationMs: 4, executionSha256: hash('d'), exitCode: null, finishedAt: '2026-08-26T10:01:00.004Z', resultSha256: hash('c'), startedAt: '2026-08-26T10:01:00.000Z', status: 'ok', toolCallSha256: hash('b') },
 				order: 1,
@@ -241,6 +241,7 @@ describe('Fikeya runtime protocol', () => {
 		assert.strictEqual(parsed?.recordSha256, hash('f'));
 		assert.strictEqual(parsed?.plan.status, 'succeeded');
 		assert.strictEqual(parsed?.plan.steps[0].approval?.referenceId, 'apr_example');
+		assert.strictEqual(parsed?.plan.steps[0].approval?.expiresAt, '2026-08-26T10:05:30.000Z');
 		assert.strictEqual(parsed?.plan.steps[0].execution?.executionSha256, hash('d'));
 		assert.strictEqual(parsed?.plan.steps[0].verification?.checks[0].passed, true);
 		assert.deepStrictEqual(parsed?.plan.steps[0].toolCall.arguments, { path: '.' });
@@ -248,6 +249,19 @@ describe('Fikeya runtime protocol', () => {
 		const mismatchedApproval = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
 		mismatchedApproval.plan.steps[0].approval.toolCallSha256 = hash('9');
 		assert.strictEqual(parsePlanView(mismatchedApproval), undefined);
+		const malformedExpiry = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		malformedExpiry.plan.steps[0].approval.expiresAt = 'not-a-timestamp';
+		assert.strictEqual(parsePlanView(malformedExpiry), undefined, 'approval expiry must be a timestamp');
+		const precedingExpiry = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		precedingExpiry.plan.steps[0].approval.expiresAt = '2026-08-26T10:00:29.999Z';
+		assert.strictEqual(parsePlanView(precedingExpiry), undefined, 'approval expiry cannot precede issuance');
+		const legacyApproval = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		delete (legacyApproval.plan.steps[0].approval as Partial<typeof plan.steps[0]['approval']>).expiresAt;
+		assert.strictEqual(
+			parsePlanView(legacyApproval)?.plan.steps[0].approval?.expiresAt,
+			'2026-08-26T10:00:30.000Z',
+			'legacy approvals normalize expiry to issuance and therefore fail closed at execution time'
+		);
 		assert.strictEqual(parsePlanView({
 			ok: true,
 			plan: {
