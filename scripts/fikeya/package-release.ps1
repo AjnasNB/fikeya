@@ -83,6 +83,8 @@ Compress-Archive -LiteralPath $cliFiles.FullName -DestinationPath $cliBundle -Co
 if (-not $SkipDesktop) {
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "compile-build-without-mangling")
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64")
+	$packagedProduct = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\resources\app\product.json"
+	Invoke-Checked $repositoryRoot "python" @("scripts\fikeya\verify_packaged_product.py", $packagedProduct)
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64-user-setup")
 	$setupSource = Join-Path $repositoryRoot ".build\win32-x64\user-setup\FikeyaSetup.exe"
 	if (-not (Test-Path -LiteralPath $setupSource)) {
