@@ -61,3 +61,13 @@
 # Vendored third-party libraries
 src/vs/base/common/lit-html/**
 src/vs/base/common/signals-core/**
+
+# Fikeya-owned packages have independent formatters, tests, and SPDX headers.
+# The root Code OSS lint profile enforces Microsoft-internal localization and
+# copyright conventions and therefore is not the correct policy boundary for
+# these distributable surfaces.
+bench/fikeya-efficiency/**
+extensions/fikeya-desktop/**
+integrations/**
+packages/fikeya-protocol/**
+site/**

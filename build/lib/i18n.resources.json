@@ -303,6 +303,10 @@
 			"project": "vscode-workbench"
 		},
 		{
+			"name": "vs/workbench/contrib/fikeya",
+			"project": "vscode-workbench"
+		},
+		{
 			"name": "vs/workbench/contrib/welcomeGettingStarted",
 			"project": "vscode-workbench"
 		},
