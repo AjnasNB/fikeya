@@ -22,7 +22,11 @@ class NoopOnboardingService implements IOnboardingService {
 	show(): void { }
 }
 
-registerSingleton(IOnboardingService, product.defaultChatAgent ? OnboardingVariationA : NoopOnboardingService, InstantiationType.Delayed);
+if (product.defaultChatAgent) {
+	registerSingleton(IOnboardingService, OnboardingVariationA, InstantiationType.Delayed);
+} else {
+	registerSingleton(IOnboardingService, NoopOnboardingService, InstantiationType.Delayed);
+}
 
 if (product.defaultChatAgent) {
 	registerAction2(class extends Action2 {
