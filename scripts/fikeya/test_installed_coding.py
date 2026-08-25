@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -24,8 +25,18 @@ from typing import Any
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fikeya", required=True, type=Path)
-    return parser.parse_args()
+    parser.add_argument(
+        "--fikeya",
+        type=Path,
+        help="Path to the installed Fikeya console entry point (defaults to PATH).",
+    )
+    arguments = parser.parse_args()
+    if arguments.fikeya is None:
+        installed = shutil.which("fikeya")
+        if installed is None:
+            parser.error("fikeya was not found on PATH; pass --fikeya explicitly")
+        arguments.fikeya = Path(installed)
+    return arguments
 
 
 def _run_json(command: list[str], *, environment: dict[str, str]) -> dict[str, Any]:
