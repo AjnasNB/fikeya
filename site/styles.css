@@ -735,6 +735,7 @@ h1 span {
 .provider-console,
 .receipt-card,
 .install-commands {
+	min-width: 0;
 	border: 1px solid var(--line-strong);
 	background: #090d0c;
 }
@@ -1073,6 +1074,7 @@ h1 span {
 	display: grid;
 	justify-items: start;
 	gap: 24px;
+	min-width: 0;
 }
 
 .install-commands pre {
