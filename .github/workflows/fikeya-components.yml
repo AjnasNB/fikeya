@@ -202,9 +202,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-          cache-dependency-path: fikeya-runtime/pyproject.toml
+          cache-dependency-path: |
+            fikeya-runtime/pyproject.toml
+            fikeya-agent-core/pyproject.toml
       - run: python -m pip install --disable-pip-version-check --upgrade pip
-      - run: python -m pip install -e ".[test,azure]"
+      - name: Install the runtime and its source agent core
+        run: python -m pip install -e ../fikeya-agent-core -e ".[test,azure]"
       - run: python -m pytest
 
   agent-core:
