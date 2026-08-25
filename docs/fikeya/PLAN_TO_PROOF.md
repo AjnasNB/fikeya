@@ -1,10 +1,10 @@
 # Plan-to-proof product contract
 
-Status: implementation contract for the next Fikeya public beta.
+Status: implemented beta contract for the durable planning path. Explicit gaps are listed below rather than presented as shipped behavior.
 
 ## Product promise
 
-Fikeya is a free, bring-your-own-model coding workbench. A developer can describe a task in Chat, inspect and change the proposed plan, approve the exact work that may run, follow execution step by step, and inspect the resulting diff, tests, token usage, and evidence.
+Fikeya is a free, bring-your-own-model coding workbench. A developer can describe a task in Chat, ask the selected provider for a strict draft plan, inspect that plan, review it, approve the exact step calls that may run, execute bounded work, and inspect verification and usage evidence.
 
 Fikeya optimizes for verified work per token. It selects bounded, cited project evidence instead of replaying the whole repository by default. Any efficiency statement must come from a matched task receipt; it is not a promise that every provider, model, repository, or task costs less.
 
@@ -15,7 +15,7 @@ Fikeya optimizes for verified work per token. It selects bounded, cited project 
 - Opens a repository and reaches Chat immediately.
 - Chooses a provider and model or continues with an already configured local profile.
 - Sees the context sources, plan, exact tool requests, progress, changed files, tests, and usage without leaving the conversation.
-- Can edit, reorder, pause, resume, cancel, or retry eligible plan steps.
+- Can create a replacement draft, resume eligible interrupted work, or cancel a non-terminal plan. Direct step editing, reordering, generalized pause, and automatic retry remain follow-up work.
 
 ### Maintainer or team lead
 
@@ -42,13 +42,13 @@ The public Fikeya runtime remains useful without Maqam. The enterprise boundary 
 1. **Open** - validate the workspace root and display initialization status.
 2. **Ask** - accept the task in the right-side Chat surface.
 3. **Compile context** - retrieve a bounded Qarinah pack with source event IDs and hashes.
-4. **Draft plan** - create ordered, typed steps with objectives, dependencies, risks, and expected verification.
-5. **Review plan** - let the developer select every step, inspect its reasoning summary and evidence, edit eligible fields, and approve or return the plan for revision.
+4. **Draft plan** - make a planning-only provider call under the trusted `fikeya.plan-proposal.v1` output contract, validate the exact envelope, and persist ordered typed steps with dependencies, canonical calls, and expected verification. This call exposes no tools and cannot execute the plan.
+5. **Review plan** - let the developer inspect the immutable draft and each exact tool-call digest, then mark the plan reviewed or create a replacement draft.
 6. **Authorize tools** - request an exact one-use approval for each risky canonical tool call. Plan approval never implies tool approval.
-7. **Execute** - stream step state, tool state, artifacts, and recoverable failures.
+7. **Execute** - run approved dependency-ready calls through the bounded broker and persist step state, execution outcomes, and recoverable interruption state.
 8. **Verify** - run the declared checks and bind their exit status and output hashes to the step.
-9. **Review outcome** - show the diff, changed-file hashes, tests, provider-reported usage, context receipt, and unresolved warnings.
-10. **Accept, retry, revert, or hand off** - preserve a durable content-bounded receipt and the Qarinah references needed for the next task.
+9. **Review outcome** - show execution and verification hashes, declared checks, provider-reported proposal usage, context status, and any incomplete or failure reason.
+10. **Accept or continue deliberately** - inspect the content-free proof receipt, approve remaining pending work when appropriate, or create a new plan for follow-up work.
 
 ## Plan state machine
 
@@ -65,38 +65,36 @@ draft | reviewed | awaiting_approval | executing | verifying
 
 executing | verifying
   -> failed
-  -> executing       (explicit bounded retry or resume)
+
+verifying
+  -> verifying       (`plan resume` after an interrupted client)
 ```
 
-Transitions are append-only events. A UI may derive the current state, but it must not overwrite the event history. Restarting the client must not turn an interrupted step into a success.
+The current store uses an optimistic, content-addressed revision for each transition; it does not yet expose a separate append-only plan-event history. Restarting the client must not turn an interrupted step into a success. A recovered `verifying` step can be verified from its persisted execution receipt, while a recovered `executing` step fails as uncertain instead of being replayed.
 
 ## Plan record
 
-Every plan has:
+Every persisted plan currently has:
 
-- stable plan, session, workspace, and task identifiers;
+- stable plan and workspace identifiers; the provider proposal receipt separately carries its provider session and call identifiers;
 - creation and update timestamps;
-- current state and state-transition events;
-- provider profile, model, and context-budget selection;
-- a Qarinah context receipt or an explicit unavailable reason;
+- current state and monotonically increasing revision;
+- a content-addressed specification and append-only revisions;
+- a separate proposal receipt containing provider profile/model call identity, provider-reported usage when present, and Qarinah context status;
 - ordered steps and dependency edges;
-- plan-review identity and timestamp when present;
-- aggregate provider-reported usage;
-- result, diff, test, and evidence hashes; and
+- reviewed status and the exact approval references issued for its steps;
+- execution, verification, record, and proof hashes; and
 - terminal outcome or an explicit incomplete reason.
 
-Every step has:
+Every persisted step currently has:
 
-- stable ID, title, objective, and type;
+- stable ID, title, canonical tool-call ID, tool name, and arguments;
 - dependencies and display order;
-- current status and attempt number;
-- input evidence references;
-- risk and permission class;
+- current status;
 - exact tool requests and one-use approval references;
-- started, finished, cancelled, and failed timestamps when applicable;
-- changed paths and before/after hashes;
-- verification command, exit state, and output hash; and
-- a concise human-readable outcome.
+- approval issue and consumption timestamps, plus execution start and finish timestamps when applicable;
+- execution status, exit code, output hash, and affected-path hashes when applicable; and
+- verification expectations, checks, outcome status, timestamp, and outcome hash.
 
 ## Desktop information architecture
 
@@ -110,16 +108,16 @@ Every step has:
 
 ### Chat
 
-- Shows a real bounded multi-turn conversation.
+- Shows a bounded process-local multi-turn conversation; it is not provider-native session replay.
 - Exposes provider, model, context mode, and effort or output budget without turning the composer into a settings page.
-- Streams plan and execution summaries into the transcript.
-- Provides direct actions for new chat, stop, open plan, open context, and open settings.
+- Starts either an ordinary interactive agent run or a separate planning-only proposal call from the same composer.
+- Provides direct actions for stop, create/open plan, open context, usage, and settings.
 
 ### Plan
 
 - Displays a compact vertical timeline with states: proposed, needs review, waiting for approval, running, verifying, passed, failed, or cancelled.
-- Selecting a step opens its objective, dependencies, evidence, tool requests, approvals, changed files, and checks.
-- Provides explicit **Approve plan**, **Request changes**, **Run approved work**, **Pause**, **Resume**, **Retry**, and **Cancel** actions when those transitions are valid.
+- Selecting a step exposes its dependencies, canonical tool request and digest, approval, execution, and verification fields.
+- Provides explicit **Review**, per-step or pending-step **Approve**, **Run approved work**, **Resume**, **Cancel**, and **New plan** actions when those transitions are valid.
 - Never labels a proposed or approved action as completed.
 
 ### Context
@@ -137,32 +135,31 @@ Every step has:
 
 ## CLI parity
 
-The CLI and Desktop consume the same serialized plan record and transition rules. The CLI must support deterministic commands to:
+The CLI and Desktop consume the same serialized plan record and transition rules. The implemented CLI commands are:
 
-- create a plan;
-- show the plan and one selected step;
-- review or request changes;
-- approve eligible plan execution;
-- execute or resume approved work;
-- cancel a run; and
-- print the final proof receipt as JSON.
+- `plan propose` - ask one provider for a strict draft, with the versioned request sent through stdin and no tools exposed;
+- `plan create` - create a draft from a bounded local JSON specification sent through stdin;
+- `plan show` - show the plan, steps, record hash, and proof receipt;
+- `plan review` - mark the immutable draft reviewed;
+- `plan approve` - issue exact single-use references for selected steps or all currently eligible pending steps;
+- `plan run` - execute approved dependency-ready work and stop before unapproved work;
+- `plan resume` - finish a persisted verifying step or continue after additional approvals; an uncertain executing step is not replayed; and
+- `plan cancel` - cancel a non-terminal plan with a recorded reason.
 
-Prompts and credential values must not be placed in process arguments, logs, analytics, or committed project files.
+Plan prompts and specifications enter through stdin rather than process arguments. Credential values must not be placed in arguments, logs, analytics, or committed project files. The prompt and raw provider response are ephemeral; durable state retains the validated draft and content-free proposal receipt.
 
-## Qarinah recording
+## Qarinah recording boundary
 
-Qarinah records durable project evidence rather than acting as the execution authority. Fikeya records:
+Qarinah supplies cited project context and context receipts; it is not the execution authority. The current Fikeya plan store records:
 
-- the accepted task summary;
-- plan identity and current state;
-- reviewed decisions and their evidence;
+- plan identity, specification digest, revision, and current state;
+- exact approval references and tool-call digests;
 - tool request and result hashes;
-- changed-file hashes;
 - verification outcomes;
-- conflicts or incomplete reasons; and
+- failure or incomplete reasons; and
 - the final proof-receipt identity.
 
-Raw provider secrets, hidden reasoning, and unrestricted tool output are excluded. A stale Qarinah derived index must be rebuilt and verified before its graph is used as release evidence.
+The provider proposal receipt separately records the provider call identity, provider-reported usage when supplied, and Qarinah context status. Raw provider secrets, hidden reasoning, plan prompts, raw provider responses, and unrestricted tool output are excluded. Automatic projection of every plan transition into the Qarinah ledger is not claimed by this beta; a stale Qarinah derived index must be rebuilt and verified before its graph is used as release evidence.
 
 ## Enterprise control boundary
 
@@ -196,7 +193,7 @@ The next beta is eligible only when all applicable checks pass:
 
 1. A clean test repository initializes successfully.
 2. Chat is the obvious default surface and remains usable at 320, 480, and 720 CSS pixels.
-3. A user can draft, inspect, revise, approve, execute, and verify a multi-step plan in Desktop.
+3. A user can draft, inspect, review, approve, execute, and verify a multi-step plan in Desktop.
 4. The same plan can be shown and resumed through the CLI.
 5. Every risky tool request requires an exact one-use approval.
 6. Cancelled and failed runs remain cancelled or failed after restart.

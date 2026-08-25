@@ -4,9 +4,35 @@ Fikeya Desktop is the focused coding-agent workspace for the local Fikeya runtim
 
 ## Chat beside the editor
 
-Use **Fikeya: Open Fikeya Chat** (`Ctrl+Alt+I` or `Ctrl+Alt+L`, `Cmd` on macOS) to open a conversation in the editor group beside the active code. The compact activity-bar view is a launcher with direct routes to Chat, the Qarinah context graph, and local usage. The full panel has dedicated Chat, Research, Context, Usage, and Setup destinations; Code, Terminal, and Review route to the existing native workbench surfaces instead of recreating them inside a dashboard.
+Use **Fikeya: Open Fikeya Chat** (`Ctrl+Alt+I` or `Ctrl+Alt+L`, `Cmd` on macOS) to open a conversation in the editor group beside the active code. The compact activity-bar view is a launcher with direct routes to Chat, Plan, the Qarinah context graph, and local usage. The full panel separates **Chat**, **Plan**, **Context**, **Usage**, and **Setup**; Code, Terminal, and Review route to the existing native workbench surfaces instead of recreating them inside a dashboard.
 
 Chat keeps a bounded, process-local conversation visible while the extension host is running. Each submitted turn executes through the same reviewed Fikeya Runtime protocol, recompiles task-relevant Qarinah evidence, pauses for exact tool approvals, and attaches receipts to the latest run. Conversation bodies are not written to extension settings or analytics. Durable project evidence belongs to Qarinah, while Fikeya Runtime stores only its documented session and receipt records. Reopening the command reveals the existing panel rather than creating duplicate sessions or message listeners. A webview message cannot invoke arbitrary workbench commands: every command and action is validated against a fixed allowlist.
+
+**Send** and **Create plan** are different operations. Send starts the interactive `fikeya agent execute` loop, which may request tools and pauses at every exact approval. Create plan calls `fikeya plan propose` with a versioned request over stdin. The provider receives trusted planning-only instructions and must return exactly one `fikeya.plan-proposal.v1` JSON envelope. That provider turn exposes no tool channel, writes no project files, and can persist only a validated `draft` plan. Narrative, fenced JSON, duplicate keys, non-finite values, unsupported tools, invalid dependencies, or an oversized response fail closed without creating a plan.
+
+## Plan-to-proof workspace
+
+The **Plan** destination renders the durable plan record separately from the conversation. It shows the plan status, ordered steps, dependencies, canonical tool name and arguments, exact tool-call digest, approval reference, execution status, verification checks, and record or proof hashes when present.
+
+The current lifecycle is explicit:
+
+1. Create a provider-generated draft from the Chat composer, or create a draft from a validated local JSON specification.
+2. Review the immutable draft.
+3. Approve selected pending steps. An approval is bound to one canonical tool-call digest and is not reusable.
+4. Run the approved work. Fikeya stops at the next unapproved eligible step instead of treating plan review as blanket tool permission.
+5. Resume a persisted verifying or partially approved plan, or cancel a non-terminal plan. An uncertain persisted executing step is not replayed.
+6. Inspect execution and verification evidence. Only passed verification can produce a successful terminal plan.
+
+The UI does not describe a draft, reviewed plan, or approved step as completed. Creating a new plan clears the current selection in the panel; it does not delete the durable record. Direct plan-step editing, drag-to-reorder, generalized pause, and automatic retry are not claimed by this beta surface.
+
+## Surface boundaries
+
+- **Chat** is the bounded conversation and interactive agent entry point.
+- **Plan** is the durable proposed/reviewed/approved/executed state machine and its verification evidence.
+- **Context** is the local Qarinah graph and cited context-receipt inspection surface.
+- **Usage** is content-free workspace statistics and provider-reported token accounting when the provider supplies it.
+
+Context and Usage are evidence surfaces, not authority to execute. Plan review is not tool approval, and a provider never receives the ability to approve its own proposal.
 
 ## Runtime setup
 
@@ -35,7 +61,7 @@ Azure OpenAI defaults to Entra ID and sends no credential payload. Ollama is cre
 
 ## Live beta-candidate surfaces
 
-The Chat surface reads configured profiles from `fikeya provider list --json` and runs each turn through the reviewed plan-act-observe-review loop in `fikeya agent execute`. Prompts and approval decisions travel over a private JSON Lines stdin protocol and never enter process arguments. Every workspace read, edit, or process request pauses for an exact **Allow Once**, **Deny Once**, or **Cancel Run** decision. Completed runs show the plan, result, changed files, tool and test outcomes, provider-reported usage, and Qarinah evidence. Content-free call and session receipts can be refreshed from local runtime state; provider response bodies and stderr are not persisted as error details. The visible transcript is a bounded local view, not provider-native session replay: each turn retrieves current project evidence instead of silently resending prior response bodies.
+The Chat surface reads configured profiles from `fikeya provider list --json` and runs ordinary turns through the reviewed plan-act-observe-review loop in `fikeya agent execute`. Prompts and approval decisions travel over a private JSON Lines stdin protocol and never enter process arguments. Every workspace read, edit, or process request pauses for an exact **Allow Once**, **Deny Once**, or **Cancel Run** decision. Completed runs show the result, changed files, tool and test outcomes, provider-reported usage, and Qarinah evidence. Content-free call and session receipts can be refreshed from local runtime state; provider response bodies and stderr are not persisted as error details. The visible transcript is a bounded local view, not provider-native session replay: each turn retrieves current project evidence instead of silently resending prior response bodies.
 
 The workspace also reads a compact, bounded graph from the pinned Qarinah package through a local JSON-RPC adapter. Search, type filters, node dragging, canvas pan and zoom are local. Node evidence hashes, graph manifest, and ledger head are displayed when present. If Qarinah is missing, uninitialized, invalid, too large, or times out, the graph says it is unavailable; it never substitutes sample data.
 

@@ -19,12 +19,17 @@ Only the first category should be treated as current end-user behavior.
 Fikeya Desktop is a branded Code OSS workbench with the existing editor, terminal, source-control, debugging, task, language-service, and extension-host surfaces. The built-in Fikeya extension adds one focused coding-agent workspace rather than duplicating those native surfaces. The same extension can be packaged as a VSIX for VS Code-compatible hosts.
 
 - **Editor** is the native workbench editor and its language services.
-  - **Agent** exposes provider selection, Qarinah context controls, the reviewed coding loop, exact approvals, cancellation, outcomes, and receipts.
-  - **Lab** opens the same verified provider, usage, and graph surface for controlled model experiments without duplicating the editor inside the extension.
+- **Chat** exposes provider selection, Qarinah context controls, ordinary reviewed agent turns, and a separate planning-only proposal action.
+- **Plan** displays the durable draft/review/approval/execution/verification state machine and its content-addressed proof fields.
+- **Context** exposes the bounded local Qarinah graph and context receipts.
+- **Usage** exposes content-free local aggregates and provider-reported tokens when supplied.
+- **Lab** opens the same verified provider, usage, and graph surface for controlled model experiments without duplicating the editor inside the extension.
 - **Terminal** is the native integrated terminal; agent-requested processes remain separate approval-gated operations.
 - **Review** uses native source control plus the Fikeya execution and evidence receipts.
 
-The Agent surface requires fresh network consent for every run. It receives output after the provider turn completes; token-delta streaming is not implemented. Each file, search, edit, or process tool request pauses for a request-bound allow-once, deny-once, or cancel decision. Approved arguments cannot be mutated or reused.
+Chat requires fresh network consent for every provider run. Ordinary agent turns receive output after the provider turn completes; token-delta streaming is not implemented. Each file, search, edit, or process tool request pauses for a request-bound allow-once, deny-once, or cancel decision. Approved arguments cannot be mutated or reused.
+
+Create Plan uses a separate planning-only runtime mode. The provider receives a trusted, versioned JSON output contract and optional untrusted cited context, but no execution tools. Only an exact valid `fikeya.plan-proposal.v1` envelope can create a persisted `draft`. Plan review remains separate from the exact single-use approvals attached to canonical step-call digests. The Plan surface can review, approve pending steps, run, resume, cancel, refresh, or start a new selection without rewriting prior durable plan records.
 
 The Studio layout can display a bounded, searchable Qarinah graph from the pinned local sidecar. Search, filters, node movement, pan, and zoom are local UI behavior. The graph reports unavailable data instead of substituting samples.
 
@@ -36,10 +41,13 @@ The current runtime provides:
 - provider-profile metadata backed by the operating-system credential store;
 - explicit provider connectivity tests;
 - one bounded model turn after `--allow-network`;
+- a planning-only provider turn that validates and persists a strict draft without exposing tools;
+- durable `plan propose`, `create`, `show`, `review`, `approve`, `run`, `resume`, and `cancel` commands;
 - cooperative cancellation and resumable/forkable SQLite session primitives;
 - provider-reported usage or an explicit `unavailable` measurement;
-- content-free provider and Qarinah receipts; and
-- a process-only `ToolBroker` that accepts an executable and argument vector, starts disabled, and requires an exact one-use approval before real execution.
+- content-free provider and Qarinah receipts;
+- a process-only `ToolBroker` that accepts an executable and argument vector, starts disabled, and requires an exact one-use approval before real execution; and
+- a structured plan execution broker for root-bound file, search, edit, write, and allowlisted process calls, with execution and verification receipts.
 
 Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Google Gemini, Hugging Face Inference Providers, Groq, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Vertex AI is available through the compatible profile with a regional endpoint and a short-lived Google Cloud token; automatic ADC refresh remains a release follow-up. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral identity token. HTTP quota failures are classified without retaining the provider body so the Desktop can offer a person-controlled handoff to another configured profile while retrieving the same workspace context again.
 
@@ -138,21 +146,21 @@ The provider layer should add capability negotiation, cancellation-aware streami
 
 Provider-reported token counts and locally calculated estimates must remain distinguishable. No estimate may be displayed as provider billing.
 
-### Target run flow
+### Integrated plan-to-proof flow
 
 1. Desktop or CLI binds a canonical workspace root.
 2. The gateway starts or reconnects the runtime and Qarinah sidecar.
 3. Qarinah verifies workspace policy and ledger state.
 4. The runtime creates or resumes a session.
 5. Context preparation compiles a cited pack under the selected budget.
-6. The provider produces bounded model events using its declared capabilities.
-7. Proposed tools become structured approval requests.
-8. Approved tools run through the broker or an external sandbox.
-9. Result hashes, exit status, affected paths, tests, and provider usage become receipts.
-10. The runtime evaluates completion and either continues, asks the user, or ends the turn.
-11. Qarinah compacts derived context while retaining authoritative evidence.
+6. In planning mode, the provider returns one strict versioned draft envelope and receives no tool channel.
+7. The runtime validates the envelope and persists the content-addressed draft; invalid output creates no plan.
+8. The developer reviews the draft, then issues separate exact single-use approvals for selected canonical step calls.
+9. Approved dependency-ready calls run through the bounded local broker; execution stops before the next unapproved eligible step.
+10. Declared status, exit-code, output-hash, and file-hash expectations are evaluated and persisted as verification checks and an outcome hash.
+11. `plan show` exposes the current record and content-free proof receipt; a terminal success requires passed verification.
 
-Steps 6 through 10 are not yet connected end to end in the current Desktop/CLI path.
+The current integration is local and sequential. Transactional multi-file patch staging, generalized pause/retry, delegated worktrees, external sandbox backends, and complete ACP/MCP agent wiring remain target requirements rather than shipped plan behavior.
 
 ## Storage
 

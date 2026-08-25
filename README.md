@@ -17,12 +17,13 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 - **Open protocols:** ACP for complete agents and MCP for tools and resources.
 - **Reviewed browser and crawler presets:** validated, digest-bound connector configuration that stays disabled until the developer explicitly enables it; the connector process and MCP session are separate integrations.
 - **Integrated native-agent core:** typed plan, act, observe, and review stages with cancellation, bounded retries, exact-call approvals, workspace tools, changed-file hashes, test outcomes, and execution receipts in both Desktop and CLI.
+- **Plan before execution:** Chat can ask one configured provider for a strict `fikeya.plan-proposal.v1` draft. That planning turn has no tool channel and cannot execute workspace operations. The persisted draft must be reviewed, each canonical tool call must receive its own exact single-use approval, and bounded execution must finish with verification evidence before Fikeya labels the plan successful.
 
 ## Product Shape
 
 ```text
 Fikeya Desktop                         Fikeya CLI
-Editor | Agent | Terminal | Review | Lab     init | doctor | provider | agent | tool
+Editor | Chat | Plan | Context | Usage       init | doctor | provider | agent | plan | tool
                     │
                     ▼
              Fikeya Local Gateway
@@ -30,13 +31,15 @@ ACP | MCP | typed events | approvals | cancellation | resume
                     │
                     ▼
               Fikeya Runtime
-provider calls | context budgets | connector presets | usage receipts
+provider calls | draft plans | execution broker | verification receipts
                     │
           ┌─────────┼──────────┐
           ▼                    ▼
        Qarinah          ACP and MCP adapters
    context engine       plus reviewed presets
 ```
+
+The plan-to-proof path is intentionally split: a provider may propose a typed draft, but it cannot approve or execute that draft. A developer reviews the persisted plan and issues exact approvals for the selected step calls; Fikeya then runs only those approved calls inside the initialized workspace and records execution and verification hashes. See the [product contract](docs/fikeya/PLAN_TO_PROOF.md) and [runtime commands](fikeya-runtime/README.md#propose-review-and-run-a-durable-plan).
 
 ## Efficiency Evidence
 
