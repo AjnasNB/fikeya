@@ -81,8 +81,8 @@ expect(
 )
 expect_equal(
     product.get("builtInAiExtensions"),
-    ["github.copilot-chat"],
-    "provider-neutral built-in AI teardown allowlist",
+    [],
+    "provider-neutral built-in AI extension list",
 )
 expect(
     "trustedExtensionAuthAccess" not in product,
