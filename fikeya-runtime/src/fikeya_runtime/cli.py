@@ -37,6 +37,11 @@ from .providers import (
     build_profile,
 )
 from .plans import PlanService, PlanStatus
+from .planning import (
+    PLAN_PROPOSAL_PROTOCOL,
+    PLAN_REQUEST_PROTOCOL,
+    PlanProposalRunner,
+)
 from .qarinah import qarinah_adapter_kind, select_qarinah_adapter
 from .state import StateStore
 from .tool_presets import (
@@ -207,6 +212,28 @@ def _parser() -> argparse.ArgumentParser:
         "plan", help="Create and run durable approval-gated local plans."
     )
     plan_commands = plan.add_subparsers(dest="plan_command", required=True)
+
+    plan_propose = plan_commands.add_parser(
+        "propose",
+        help="Ask one model for a strict draft plan without executing tools.",
+    )
+    plan_propose.add_argument("path", nargs="?", default=".")
+    plan_propose.add_argument("--provider", required=True)
+    plan_propose.add_argument(
+        "--request-stdin",
+        action="store_true",
+        help="Read one versioned JSON request from stdin so task content stays out of arguments.",
+    )
+    plan_propose.add_argument("--allow-network", action="store_true")
+    plan_propose.add_argument("--timeout", type=float, default=60.0)
+    plan_propose.add_argument("--max-output-tokens", type=int, default=2_048)
+    plan_propose.add_argument(
+        "--memory",
+        choices=("auto", "off", "required"),
+        default="auto",
+    )
+    plan_propose.add_argument("--context-max-characters", type=int, default=12_000)
+    plan_propose.add_argument("--json", action="store_true")
 
     plan_create = plan_commands.add_parser(
         "create", help="Create a draft plan from one bounded JSON specification."
@@ -760,9 +787,86 @@ def _emit_protocol_message(value: dict[str, object]) -> None:
 
 
 def _run_plan(args: argparse.Namespace) -> int:
-    workspace_path = args.path if args.plan_command == "create" else args.workspace
+    workspace_path = (
+        args.path if args.plan_command in {"create", "propose"} else args.workspace
+    )
     workspace = Workspace.load(workspace_path)
     service = PlanService(workspace)
+    if args.plan_command == "propose":
+        if not args.request_stdin:
+            raise ProviderError(
+                "Plan requests must use --request-stdin so content does not enter process arguments."
+            )
+        request = _read_bounded_json_object(_PLAN_REQUEST_BYTES)
+        if set(request) != {"prompt", "protocol"}:
+            raise ProviderError(
+                "Plan requests must contain only protocol and prompt."
+            )
+        if request.get("protocol") != PLAN_REQUEST_PROTOCOL:
+            raise ProviderError(f"Plan request protocol must be {PLAN_REQUEST_PROTOCOL}.")
+        prompt = request.get("prompt")
+        if (
+            not isinstance(prompt, str)
+            or not prompt.strip()
+            or len(prompt.encode("utf-8")) > MAX_REQUEST_BYTES
+        ):
+            raise ProviderError(
+                f"Plan prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes."
+            )
+        store = ProviderStore(runtime_home(args.home))
+        agent = AgentRunner(workspace, store)
+        if args.memory != "off":
+            agent.memory = select_qarinah_adapter(
+                workspace_root=workspace.root,
+                state=agent.state,
+            )
+        cancellation = CancellationToken()
+        try:
+            with _cancellation_signals(cancellation):
+                proposed = PlanProposalRunner(agent).propose(
+                    provider_name=args.provider,
+                    prompt=prompt,
+                    allow_network=args.allow_network,
+                    timeout=args.timeout,
+                    max_output_tokens=args.max_output_tokens,
+                    cancellation=cancellation,
+                    memory_mode=args.memory,
+                    context_max_characters=args.context_max_characters,
+                )
+        except CancellationError:
+            _emit(
+                {"cancelled": True, "error": "Operation cancelled.", "ok": False},
+                as_json=args.json,
+            )
+            return 130
+        usage = proposed.agent.provider_call.usage
+        _emit(
+            {
+                "message": f"Created draft plan {proposed.plan.plan_id}.",
+                "ok": True,
+                "proposal": {
+                    "callId": proposed.agent.call_id,
+                    "memory": {
+                        "coverage": proposed.agent.memory.coverage,
+                        "evidenceCount": proposed.agent.memory.evidence_count,
+                        "receiptId": proposed.agent.memory.receipt_id,
+                        "responseSha256": proposed.agent.memory.response_sha256,
+                        "status": proposed.agent.memory.status,
+                    },
+                    "protocol": PLAN_PROPOSAL_PROTOCOL,
+                    "sessionId": proposed.agent.session_id,
+                    "usage": {
+                        "cachedInputTokens": usage.cached_input_tokens,
+                        "inputTokens": usage.input_tokens,
+                        "measurement": usage.measurement,
+                        "outputTokens": usage.output_tokens,
+                    },
+                },
+                **service.view(proposed.plan),
+            },
+            as_json=args.json,
+        )
+        return 0
     if args.plan_command == "create":
         if not args.spec_stdin:
             raise ProviderError(
@@ -835,6 +939,7 @@ def _run_plan(args: argparse.Namespace) -> int:
 
 
 _PLAN_SPECIFICATION_BYTES = 1_048_576
+_PLAN_REQUEST_BYTES = (MAX_REQUEST_BYTES * 4) + 4_096
 
 
 def _read_bounded_json_object(maximum_bytes: int) -> dict[str, object]:
@@ -842,12 +947,29 @@ def _read_bounded_json_object(maximum_bytes: int) -> dict[str, object]:
     if len(payload) > maximum_bytes:
         raise ProviderError(f"JSON input exceeds {maximum_bytes} bytes.")
     try:
-        value = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        value = json.loads(
+            payload,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_non_finite_json,
+        )
+    except (RecursionError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise ProviderError("Input must be one UTF-8 JSON object.") from error
     if not isinstance(value, dict):
         raise ProviderError("Input must be one JSON object.")
     return value
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key.")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json(value: str) -> object:
+    raise ValueError("Non-finite JSON number.")
 
 
 def _run_tool(args: argparse.Namespace) -> int:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -98,6 +99,9 @@ class AgentRunner:
         cancellation: CancellationToken,
         memory_mode: str = "auto",
         context_max_characters: int = 12_000,
+        session_mode: str = "agent",
+        trusted_system: str | None = None,
+        output_handler: Callable[[str], None] | None = None,
     ) -> AgentRunResult:
         """Execute one request with exact call hashes and provider-reported usage."""
 
@@ -105,11 +109,13 @@ class AgentRunner:
             raise ValueError("memory_mode must be auto, off, or required.")
         if not 512 <= context_max_characters <= 64_000:
             raise ValueError("context_max_characters must be between 512 and 64000.")
+        if session_mode not in {"agent", "plan-proposal"}:
+            raise ValueError("session_mode must be agent or plan-proposal.")
 
         profile = self.providers.get(provider_name)
         session = self.state.create_session(
             metadata={
-                "mode": "agent",
+                "mode": session_mode,
                 "model": profile.model,
                 "provider": profile.name,
             }
@@ -126,6 +132,7 @@ class AgentRunner:
                 session.session_id, "required context unavailable"
             )
             raise
+        system = _combine_system_instructions(trusted_system, system)
         request = InferenceRequest(
             prompt=prompt,
             system=system,
@@ -211,6 +218,14 @@ class AgentRunner:
             result_payload,
             causation_id=requested.event_id,
         )
+        if output_handler is not None:
+            try:
+                output_handler(result.text)
+            except Exception:
+                self.state.cancel_session(
+                    session.session_id, "provider output was not accepted"
+                )
+                raise
         self.state.complete_session(session.session_id, "model response returned")
         return AgentRunResult(
             session_id=session.session_id,
@@ -296,3 +311,16 @@ def _bounded_memory_query(prompt: str) -> str:
         + _MEMORY_QUERY_SEPARATOR
         + prompt[-tail_characters:]
     )
+
+
+def _combine_system_instructions(
+    trusted: str | None,
+    project_context: str | None,
+) -> str | None:
+    """Keep trusted protocol instructions before explicitly untrusted project data."""
+
+    if trusted is None:
+        return project_context
+    if project_context is None:
+        return trusted
+    return f"{trusted}\n\n{project_context}"
