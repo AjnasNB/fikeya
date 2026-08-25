@@ -65,6 +65,10 @@ Download the Windows Desktop installer, focused VSIX, and CLI wheel bundle from 
 
 If Fikeya is useful to you, [sponsor its continued development](https://github.com/sponsors/AjnasNB).
 
+## Contributors
+
+Fikeya is maintained by **Ajnas N B (`AjnasNB`)**, with pull-request review from the `cognifyrdotco` repository collaborator. The desktop foundation remains credited to the Code OSS community through Git history and the retained third-party notices. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the explicit attribution boundary.
+
 ## Development
 
 Fikeya's public-beta bootstrap validates the checkout, creates a per-checkout Python environment in the current user's cache, installs the matched Agent Core and Runtime with Azure identity support, and verifies the locked protocol and Qarinah sidecar components. It never requests provider credentials.
