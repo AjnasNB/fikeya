@@ -124,6 +124,33 @@ img {
 	backdrop-filter: blur(18px);
 }
 
+.free-banner {
+	border-bottom: 1px solid #8ff0cb;
+	color: var(--accent-ink);
+	background: var(--accent);
+}
+
+.free-banner-layout {
+	display: grid;
+	grid-template-columns: auto minmax(240px, 1fr) auto;
+	align-items: center;
+	gap: 20px;
+	min-height: 52px;
+	font-size: 12px;
+}
+
+.free-banner-layout strong {
+	font-size: 13px;
+}
+
+.free-banner-layout span {
+	color: #174c3a;
+}
+
+.free-banner-layout a {
+	font-weight: 750;
+}
+
 .nav-shell {
 	display: grid;
 	grid-template-columns: auto 1fr auto;
@@ -883,6 +910,50 @@ h1 span {
 	font-size: 14px;
 }
 
+.contributors-section {
+	background: #0d1211;
+}
+
+.contributors-layout {
+	display: grid;
+	grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+	gap: 72px;
+}
+
+.people-list {
+	border-top: 1px solid var(--line-strong);
+}
+
+.people-list article {
+	display: grid;
+	grid-template-columns: 160px minmax(150px, 0.48fr) minmax(240px, 1fr);
+	gap: 24px;
+	padding: 24px 0;
+	border-bottom: 1px solid var(--line-strong);
+}
+
+.people-list span {
+	color: var(--accent);
+	font-family: var(--mono);
+	font-size: 10px;
+	text-transform: uppercase;
+}
+
+.people-list h3,
+.people-list p {
+	margin: 0;
+}
+
+.people-list h3 {
+	font-size: 20px;
+	font-weight: 600;
+}
+
+.people-list p {
+	color: var(--muted);
+	font-size: 13px;
+}
+
 .install-layout {
 	align-items: center;
 }
@@ -977,6 +1048,7 @@ h1 span {
 	.models-layout,
 	.receipt-layout,
 	.context-layout,
+	.contributors-layout,
 	.install-layout,
 	.closing-layout {
 		grid-template-columns: 1fr;
@@ -1050,6 +1122,10 @@ h1 span {
 	.footer-layout {
 		grid-template-columns: 1fr;
 	}
+
+	.people-list article {
+		grid-template-columns: 130px minmax(140px, 0.5fr) minmax(220px, 1fr);
+	}
 }
 
 @media (max-width: 600px) {
@@ -1059,6 +1135,16 @@ h1 span {
 
 	.nav-shell {
 		min-height: 64px;
+	}
+
+	.free-banner-layout {
+		grid-template-columns: 1fr auto;
+		padding-block: 10px;
+	}
+
+	.free-banner-layout span {
+		grid-column: 1 / -1;
+		grid-row: 2;
 	}
 
 	.hero {
@@ -1114,6 +1200,7 @@ h1 span {
 	.models-layout,
 	.receipt-layout,
 	.context-layout,
+	.contributors-layout,
 	.install-layout,
 	.closing-layout {
 		gap: 44px;
@@ -1165,6 +1252,11 @@ h1 span {
 
 	.tool-ledger article {
 		min-height: 220px;
+	}
+
+	.people-list article {
+		grid-template-columns: 1fr;
+		gap: 8px;
 	}
 
 	.install-commands pre {

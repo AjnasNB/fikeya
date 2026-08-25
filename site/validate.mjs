@@ -57,6 +57,8 @@ assert(!html.match(/\bsrc=["']https?:\/\//i), 'Remote asset found');
 assert(html.includes('href="#main"'), 'Missing skip link');
 assert(html.includes('id="main"'), 'Missing main target');
 assert(html.includes('<h1>Build with your model.<span>Spend fewer tokens.</span></h1>'), 'Token-focused hero text is missing');
+assert(html.includes('A completely free code editor.'), 'Free editor banner is missing');
+assert(html.includes('provider usage remains between you and the provider you choose'), 'Provider-cost boundary is missing from the free editor banner');
 assert(!html.match(/\bany model\b/i), 'Unsupported any-model claim found');
 assert(html.includes('selects task-relevant project evidence instead of replaying the whole repository'), 'Task-relevant context positioning is missing');
 assert(html.includes('inspect measured token and verification receipts'), 'Measured receipt wording is missing');
@@ -87,6 +89,8 @@ assert(!html.includes('install surfaces'), 'Generic install-surface count is sti
 assert(!html.includes('provider paths</span>'), 'Generic provider-path count is still present');
 assert(html.includes('The companion editor extension stays intentionally smaller'), 'Extension and Desktop boundary is missing');
 assert(html.includes('https://github.com/sponsors/AjnasNB'), 'GitHub Sponsors link is missing');
+assert(html.includes('id="contributors"'), 'Contributor attribution section is missing');
+assert(html.includes('Fikeya-owned product code is AGPL-3.0-or-later'), 'Mixed-license attribution is missing');
 assert(html.includes('FikeyaSetup-0.1.0-beta.1-win32-x64.exe'), 'Windows beta download is missing');
 assert(html.includes('fikeya-desktop-0.1.0-win32-x64.vsix'), 'VSIX beta download is missing');
 assert(html.includes('fikeya-cli-0.1.0-beta.1.zip'), 'CLI beta download is missing');
