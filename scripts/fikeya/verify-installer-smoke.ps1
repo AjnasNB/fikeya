@@ -37,6 +37,7 @@ try {
 		"/SUPPRESSMSGBOXES",
 		"/NORESTART",
 		"/SP-",
+		"/MERGETASKS=`"!runcode`"",
 		"/DIR=`"$installRoot`""
 	)
 	$installProcess = Start-Process -FilePath $installer -ArgumentList $installArguments -Wait -PassThru -WindowStyle Hidden
