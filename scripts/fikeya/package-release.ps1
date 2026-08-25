@@ -88,6 +88,10 @@ $cliInstall | Set-Content -LiteralPath $cliInstallPath -Encoding utf8
 $cliBundle = Join-Path $outputPath "fikeya-cli-$releaseVersion.zip"
 $cliFiles = Get-ChildItem -LiteralPath $outputPath -File | Where-Object { $_.Extension -eq ".whl" -or $_.Name -eq "FIKEYA-CLI-INSTALL.txt" }
 Compress-Archive -LiteralPath $cliFiles.FullName -DestinationPath $cliBundle -CompressionLevel Optimal
+& (Join-Path $PSScriptRoot "verify-cli-bundle.ps1") `
+	-BundlePath $cliBundle `
+	-PublicVersion $releaseVersion `
+	-PythonVersion $runtimeVersion
 
 if (-not $SkipDesktop) {
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "compile-build-without-mangling")
