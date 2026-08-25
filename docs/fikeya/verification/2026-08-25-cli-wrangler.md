@@ -1,7 +1,9 @@
 # Installed CLI to live Wrangler deployment proof
 
-Date: 2026-08-25  
-Fikeya surface: installed Windows CLI  
+Date: 2026-08-25
+
+Fikeya surface: installed Windows CLI
+
 Result: passed
 
 This proof used the installed `fikeya.exe`, a deterministic local test provider, a fresh initialized workspace, and an authenticated Wrangler installation. It did not call a paid model or expose a provider credential.
