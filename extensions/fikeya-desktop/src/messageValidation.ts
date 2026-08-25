@@ -17,12 +17,22 @@ export type FikeyaWebviewMessage =
 export type FikeyaCommand =
 	| 'fikeya.configureProvider'
 	| 'fikeya.initializeWorkspace'
-	| 'fikeya.runDoctor';
+	| 'fikeya.runDoctor'
+	| 'fikeya.mode.editor'
+	| 'fikeya.mode.agent'
+	| 'fikeya.mode.terminal'
+	| 'fikeya.mode.review'
+	| 'fikeya.mode.lab';
 
 const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.configureProvider',
 	'fikeya.initializeWorkspace',
-	'fikeya.runDoctor'
+	'fikeya.runDoctor',
+	'fikeya.mode.editor',
+	'fikeya.mode.agent',
+	'fikeya.mode.terminal',
+	'fikeya.mode.review',
+	'fikeya.mode.lab'
 ];
 
 const maximumPromptBytes = 262_144;

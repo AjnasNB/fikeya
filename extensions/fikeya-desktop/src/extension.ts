@@ -71,6 +71,7 @@ interface StatisticsSurfaceState {
 }
 
 interface DashboardState {
+	readonly isDesktop: boolean;
 	readonly workspaceName: string;
 	readonly providersStatus: 'not-loaded' | 'loading' | 'ready' | 'unavailable';
 	readonly providers: readonly FikeyaProviderProfile[];
@@ -86,7 +87,7 @@ interface DashboardState {
 
 export function activate(context: vscode.ExtensionContext): void {
 	const provider = new FikeyaWebviewViewProvider(context);
-	const isFikeyaDesktop = vscode.env.appName === 'Fikeya';
+	const isFikeyaDesktop = vscode.env.appName === 'Fikeya' || vscode.env.appName === 'Fikeya Dev';
 	void vscode.commands.executeCommand('setContext', 'fikeya.isDesktop', isFikeyaDesktop);
 	context.subscriptions.push(provider);
 	context.subscriptions.push(vscode.window.registerWebviewViewProvider(FikeyaWebviewViewProvider.viewType, provider));
@@ -121,6 +122,7 @@ async function runDesktopOnboarding(context: vscode.ExtensionContext, provider: 
 	if (context.globalState.get<boolean>(onboardingKey)) {
 		return;
 	}
+	await vscode.workspace.getConfiguration('workbench').update('colorTheme', 'Fikeya Dark', vscode.ConfigurationTarget.Global);
 	const selection = await vscode.window.showQuickPick([
 		{
 			label: vscode.l10n.t('Agent workspace'),
@@ -161,6 +163,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 	public constructor(private readonly context: vscode.ExtensionContext) {
 		this.state = {
+			isDesktop: vscode.env.appName === 'Fikeya' || vscode.env.appName === 'Fikeya Dev',
 			workspaceName: getWorkspaceName(),
 			providersStatus: 'not-loaded',
 			providers: [],
@@ -837,7 +840,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.run-metric.provider { grid-column: 1 / -1; }
 		.run-metric span { display: block; color: var(--vscode-descriptionForeground); font-size: 10px; }
 		.run-metric strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 12px; font-variant-numeric: tabular-nums; }
-			.usage-basis { color: var(--vscode-descriptionForeground); font-size: 10px; }
+		.usage-basis { color: var(--vscode-descriptionForeground); font-size: 10px; }
+		.mode-switcher { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--vscode-widget-border); background: var(--vscode-widget-border); gap: 1px; }
+		.mode-switcher button { min-width: 0; border: 0; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background); font-size: 11px; }
+		.mode-switcher button:hover { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 			.statistics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--vscode-widget-border); }
 			.statistics-metric { min-width: 0; padding: 9px; background: var(--vscode-editorWidget-background); }
 			.statistics-metric span { display: block; color: var(--vscode-descriptionForeground); font-size: 10px; }
@@ -924,6 +930,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			<div class="product-heading"><img class="product-mark" src="${logoUri}" alt=""><div><p class="eyebrow">${escapeHtml(strings.providerNeutralEditor)}</p><h1>${escapeHtml(strings.fikeya)}</h1></div><span class="workspace-label" title="${escapeHtml(strings.workspace)}">${escapeHtml(this.state.workspaceName)}</span></div>
 			<p class="subtitle">${escapeHtml(strings.subtitle)}</p>
 		</header>
+		${this.state.isDesktop ? `<nav class="mode-switcher" aria-label="${escapeHtml(strings.workspaceModes)}"><button data-command="fikeya.mode.editor" type="button">${escapeHtml(strings.editorMode)}</button><button data-command="fikeya.mode.agent" type="button">${escapeHtml(strings.agentMode)}</button><button data-command="fikeya.mode.terminal" type="button">${escapeHtml(strings.terminalMode)}</button><button data-command="fikeya.mode.review" type="button">${escapeHtml(strings.reviewMode)}</button><button data-command="fikeya.mode.lab" type="button">${escapeHtml(strings.labMode)}</button></nav>` : ''}
 		<section class="run-strip" aria-label="${escapeHtml(strings.runContext)}">
 			<div class="run-metric provider"><span>${escapeHtml(strings.providerAndModel)}</span><strong>${escapeHtml(providerSummary)}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.runtime)}</span><strong>${escapeHtml(runtimeLabel(this.state.runtime, strings))}</strong></div>
@@ -1336,6 +1343,12 @@ function providerStatusSummary(state: DashboardState, strings: WebviewStrings): 
 interface WebviewStrings {
 	readonly fikeya: string;
 	readonly providerNeutralEditor: string;
+	readonly workspaceModes: string;
+	readonly editorMode: string;
+	readonly agentMode: string;
+	readonly terminalMode: string;
+	readonly reviewMode: string;
+	readonly labMode: string;
 	readonly subtitle: string;
 	readonly runContext: string;
 	readonly providerAndModel: string;
@@ -1477,6 +1490,12 @@ function getWebviewStrings(): WebviewStrings {
 	return {
 		fikeya: vscode.l10n.t('Fikeya'),
 		providerNeutralEditor: vscode.l10n.t('AI Coding-Agent Workspace'),
+		workspaceModes: vscode.l10n.t('Fikeya workspace modes'),
+		editorMode: vscode.l10n.t('Editor'),
+		agentMode: vscode.l10n.t('Agent'),
+		terminalMode: vscode.l10n.t('Terminal'),
+		reviewMode: vscode.l10n.t('Review'),
+		labMode: vscode.l10n.t('Lab'),
 		subtitle: vscode.l10n.t('Configure the model you choose, run reviewed coding work, inspect the Qarinah graph, and verify exact provider usage from one workspace.'),
 		runContext: vscode.l10n.t('Active Run Context'),
 		providerAndModel: vscode.l10n.t('Provider / Model'),
