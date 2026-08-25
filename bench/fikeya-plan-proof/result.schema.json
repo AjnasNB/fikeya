@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fikeya.com/schemas/plan-proof-evaluation-v1.json",
+  "title": "Fikeya plan-to-proof evaluation result",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "fixture",
+    "implementation",
+    "baseline",
+    "context",
+    "plan",
+    "verification",
+    "modelExecution",
+    "checks",
+    "overallPassed",
+    "limitations"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "fikeya.plan-proof-evaluation.v1" },
+    "overallPassed": { "type": "boolean" },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "passed"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "passed": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "modelExecution": {
+      "type": "object",
+      "required": ["performed", "providerCalls", "tokenMeasurement"],
+      "properties": {
+        "performed": { "const": false },
+        "providerCalls": { "const": 0 },
+        "tokenMeasurement": { "const": "not-measured-no-model-was-run" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

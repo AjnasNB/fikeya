@@ -1,0 +1,4 @@
+{
+  "quantity": "positive integer",
+  "sku": "trimmed uppercase string"
+}
