@@ -13,7 +13,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
-from .errors import CancellationError, ConfigurationError, ProviderError
+from .errors import CancellationError, ConfigurationError, ProviderError, ProviderHttpError
 from .providers import ProviderKind, ProviderProfile, provider_headers
 from .util import sha256_bytes, stable_json
 
@@ -181,9 +181,7 @@ class UrllibJsonTransport:
                 status = int(response.status)
         except urllib.error.HTTPError as error:
             error.close()
-            raise ProviderError(
-                f"Provider returned HTTP {error.code}; response body was not retained."
-            ) from error
+            raise ProviderHttpError(int(error.code)) from error
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
             raise ProviderError(
                 "Provider request failed before a response was received."
@@ -272,9 +270,7 @@ class ProviderExecutor:
         if len(response.raw_body) > maximum_response_bytes:
             raise ProviderError("Provider response exceeds the configured byte limit.")
         if response.status_code < 200 or response.status_code >= 300:
-            raise ProviderError(
-                f"Provider returned HTTP {response.status_code}; response body was not retained."
-            )
+            raise ProviderHttpError(response.status_code)
         text = _response_text(profile.api_mode, response.body)
         usage = _provider_usage(profile.api_mode, response.body)
         return ProviderCallResult(

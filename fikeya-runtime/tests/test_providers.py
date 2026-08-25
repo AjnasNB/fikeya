@@ -45,6 +45,8 @@ def test_registry_contains_all_first_party_provider_shapes() -> None:
         "anthropic",
         "azure-openai",
         "google-gemini",
+        "groq",
+        "hugging-face",
         "nvidia-nim",
         "ollama",
         "openai",
@@ -62,6 +64,20 @@ def test_registry_contains_all_first_party_provider_shapes() -> None:
     )
     assert gemini.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
     assert gemini.api_mode == "chat-completions"
+
+    hugging_face = build_profile(
+        name="hugging-face",
+        kind=ProviderKind.HUGGING_FACE,
+        model="openai/gpt-oss-120b:cheapest",
+    )
+    assert hugging_face.base_url == "https://router.huggingface.co/v1"
+
+    groq = build_profile(
+        name="groq",
+        kind=ProviderKind.GROQ,
+        model="openai/gpt-oss-120b",
+    )
+    assert groq.base_url == "https://api.groq.com/openai/v1"
 
 
 def test_provider_secret_never_enters_metadata_and_rotation_deletes_old_ref(

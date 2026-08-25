@@ -86,6 +86,8 @@ interface DashboardState {
 
 export function activate(context: vscode.ExtensionContext): void {
 	const provider = new FikeyaWebviewViewProvider(context);
+	const isFikeyaDesktop = vscode.env.appName === 'Fikeya';
+	void vscode.commands.executeCommand('setContext', 'fikeya.isDesktop', isFikeyaDesktop);
 	context.subscriptions.push(provider);
 	context.subscriptions.push(vscode.window.registerWebviewViewProvider(FikeyaWebviewViewProvider.viewType, provider));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.open', () => provider.openWorkspacePanel()));
@@ -98,6 +100,53 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.runDoctor', async () => {
 		await provider.runRuntimeCommand('doctor');
 	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.editor', async () => {
+		await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.agent', () => provider.openWorkspacePanel()));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.terminal', async () => {
+		await vscode.commands.executeCommand('workbench.action.terminal.toggleTerminal');
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.review', async () => {
+		await vscode.commands.executeCommand('workbench.view.scm');
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.lab', () => provider.openWorkspacePanel()));
+	if (isFikeyaDesktop) {
+		void runDesktopOnboarding(context, provider);
+	}
+}
+
+async function runDesktopOnboarding(context: vscode.ExtensionContext, provider: FikeyaWebviewViewProvider): Promise<void> {
+	const onboardingKey = 'fikeya.desktop.onboarding.v1';
+	if (context.globalState.get<boolean>(onboardingKey)) {
+		return;
+	}
+	const selection = await vscode.window.showQuickPick([
+		{
+			label: vscode.l10n.t('Agent workspace'),
+			description: vscode.l10n.t('Start with Fikeya Agent, providers, Qarinah memory, and local usage statistics.'),
+			mode: 'agent'
+		},
+		{
+			label: vscode.l10n.t('Code workspace'),
+			description: vscode.l10n.t('Start with the familiar editor, Explorer, source control, and terminal.'),
+			mode: 'editor'
+		}
+	], {
+		title: vscode.l10n.t('Choose your Fikeya workspace'),
+		placeHolder: vscode.l10n.t('You can switch modes later from the Command Palette.'),
+		ignoreFocusOut: true
+	});
+	if (!selection) {
+		return;
+	}
+	await context.globalState.update(onboardingKey, true);
+	if (selection.mode === 'agent') {
+		provider.openWorkspacePanel();
+		await provider.configureProvider();
+	} else {
+		await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+	}
 }
 
 class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -130,7 +179,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.viewBinding?.dispose();
 		this.view = webviewView;
 		webviewView.webview.options = {
-			enableScripts: true
+			enableScripts: true,
+			localResourceRoots: [this.context.extensionUri]
 		};
 		const messageSubscription = this.bindWebview(webviewView.webview);
 		const disposeSubscription = webviewView.onDidDispose(() => {
@@ -159,6 +209,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			{ viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
 			{
 				enableScripts: true,
+				localResourceRoots: [this.context.extensionUri],
 				retainContextWhenHidden: true
 			}
 		);
@@ -453,7 +504,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		prompt: string,
 		maxOutputTokens: number,
 		contextMaxCharacters: number,
-		memoryMode: FikeyaMemoryMode
+		memoryMode: FikeyaMemoryMode,
+		attemptedProviderNames: ReadonlySet<string> = new Set()
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
@@ -488,6 +540,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.activeAgentRun = undefined;
 		if (!result.ok || !result.value) {
 			const cancelled = result.failure === 'cancelled';
+			const attempted = new Set(attemptedProviderNames).add(providerName);
 			this.state = {
 				...this.state,
 				agent: {
@@ -499,6 +552,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				}
 			};
 			this.refresh();
+			if (result.failure === 'quota') {
+				await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, attempted);
+			}
 			return;
 		}
 
@@ -536,6 +592,64 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if (capture.ok) {
 			await this.refreshMemory(false);
 		}
+	}
+
+	private async offerProviderHandoff(
+		prompt: string,
+		maxOutputTokens: number,
+		contextMaxCharacters: number,
+		memoryMode: FikeyaMemoryMode,
+		attemptedProviderNames: ReadonlySet<string>
+	): Promise<void> {
+		const alternatives = this.state.providers.filter(provider => !attemptedProviderNames.has(provider.name));
+		if (alternatives.length === 0) {
+			const configure = vscode.l10n.t('Configure Provider');
+			const selected = await vscode.window.showWarningMessage(
+				vscode.l10n.t('The provider reported that its current quota or rate limit is exhausted. Configure another model to continue with the same Qarinah project context.'),
+				configure
+			);
+			if (selected === configure) {
+				await this.configureProvider();
+			}
+			return;
+		}
+		const automaticKey = 'fikeya.agent.alwaysSwitchOnQuota.v1';
+		let shouldSwitch = this.context.globalState.get<boolean>(automaticKey) === true;
+		if (!shouldSwitch) {
+			const choose = vscode.l10n.t('Choose Another Model');
+			const always = vscode.l10n.t('Always Switch');
+			const selected = await vscode.window.showWarningMessage(
+				vscode.l10n.t('This model has reached a quota or rate limit. Continue with another configured model and retrieve the same Qarinah project context?'),
+				{ modal: true },
+				choose,
+				always
+			);
+			if (selected !== choose && selected !== always) {
+				return;
+			}
+			shouldSwitch = true;
+			if (selected === always) {
+				await this.context.globalState.update(automaticKey, true);
+			}
+		}
+		if (!shouldSwitch) {
+			return;
+		}
+		const target = alternatives.length === 1
+			? alternatives[0]
+			: (await vscode.window.showQuickPick(alternatives.map(provider => ({
+				label: provider.name,
+				description: `${provider.kind} · ${provider.model}`,
+				provider
+			})), {
+				title: vscode.l10n.t('Continue with another configured model'),
+				placeHolder: vscode.l10n.t('Fikeya will recompile the same task-relevant Qarinah context for this model.')
+			}))?.provider;
+		if (!target) {
+			return;
+		}
+		void vscode.window.showInformationMessage(vscode.l10n.t('Continuing with {0} ({1}).', target.name, target.model));
+		await this.runAgent(target.name, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, attemptedProviderNames);
 	}
 
 	private async approveAgentTool(request: FikeyaAgentApproval): Promise<FikeyaAgentApprovalDecision> {
@@ -686,13 +800,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const providerSummary = selectedProvider ? `${selectedProvider.name} / ${selectedProvider.model}` : strings.noProviderSelected;
 		const usageBasis = this.state.agent.usage?.measurement ?? strings.noUsageRecorded;
 		const contextStatus = formatContextStatus(this.state.agent.memory, strings);
+		const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'fikeya.svg'));
 
 		return `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 	<title>${escapeHtml(strings.fikeya)}</title>
 	<style nonce="${nonce}">
 		:root { color-scheme: light dark; }
@@ -711,7 +826,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		body[data-surface="editor"] h1 { font-size: 26px; }
 		.masthead { display: grid; gap: 7px; padding: 12px; border-top: 2px solid var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); }
 		.product-heading { display: flex; align-items: center; gap: 9px; }
-		.product-mark { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--vscode-focusBorder); color: var(--vscode-focusBorder); font-family: var(--vscode-editor-font-family); font-size: 10px; font-weight: 700; }
+		.product-mark { display: block; width: 32px; height: 32px; object-fit: contain; }
 		.workspace-label { min-width: 0; margin-left: auto; overflow: hidden; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 		.eyebrow { margin: 0; color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 		h1 { margin: 1px 0 0; font-size: 18px; line-height: 1.1; }
@@ -806,7 +921,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		<body data-surface="${surface}">
 	<main class="shell">
 		<header class="masthead">
-			<div class="product-heading"><span class="product-mark" aria-hidden="true">&lt;/&gt;</span><div><p class="eyebrow">${escapeHtml(strings.providerNeutralEditor)}</p><h1>${escapeHtml(strings.fikeya)}</h1></div><span class="workspace-label" title="${escapeHtml(strings.workspace)}">${escapeHtml(this.state.workspaceName)}</span></div>
+			<div class="product-heading"><img class="product-mark" src="${logoUri}" alt=""><div><p class="eyebrow">${escapeHtml(strings.providerNeutralEditor)}</p><h1>${escapeHtml(strings.fikeya)}</h1></div><span class="workspace-label" title="${escapeHtml(strings.workspace)}">${escapeHtml(this.state.workspaceName)}</span></div>
 			<p class="subtitle">${escapeHtml(strings.subtitle)}</p>
 		</header>
 		<section class="run-strip" aria-label="${escapeHtml(strings.runContext)}">
@@ -1556,6 +1671,24 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 			secretPrompt: vscode.l10n.t('Enter the Google Gemini API Key')
 		},
 		{
+			id: 'hugging-face',
+			label: vscode.l10n.t('Hugging Face Inference Providers'),
+			detail: vscode.l10n.t('Use routed open models, including fastest or cheapest provider policies.'),
+			runtimeKind: 'hugging-face',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://router.huggingface.co/v1',
+			secretPrompt: vscode.l10n.t('Enter the Hugging Face Token')
+		},
+		{
+			id: 'groq',
+			label: vscode.l10n.t('Groq'),
+			detail: vscode.l10n.t('Use Groq models through the OpenAI-compatible chat endpoint.'),
+			runtimeKind: 'groq',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://api.groq.com/openai/v1',
+			secretPrompt: vscode.l10n.t('Enter the Groq API Key')
+		},
+		{
 			id: 'ollama',
 			label: vscode.l10n.t('Ollama'),
 			detail: vscode.l10n.t('Use a model running on this device.'),
@@ -1622,6 +1755,12 @@ function runtimeFailureMessage(failure: FikeyaRuntimeResult['failure']): string 
 			return vscode.l10n.t('Fikeya CLI returned more output than the safe limit.');
 		case 'invalid-json':
 			return vscode.l10n.t('Fikeya CLI returned an invalid JSON report.');
+		case 'quota':
+			return vscode.l10n.t('The provider reported that its quota or rate limit is exhausted.');
+		case 'authentication':
+			return vscode.l10n.t('The provider rejected its credential. Update this provider in Fikeya settings.');
+		case 'provider-error':
+			return vscode.l10n.t('The provider rejected the request without returning a retained response body.');
 		default:
 			return vscode.l10n.t('Fikeya CLI reported a problem.');
 	}

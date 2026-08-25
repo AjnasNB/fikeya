@@ -34,6 +34,8 @@ class ProviderKind(str, enum.Enum):
     OPENROUTER = "openrouter"
     NVIDIA_NIM = "nvidia-nim"
     GOOGLE_GEMINI = "google-gemini"
+    HUGGING_FACE = "hugging-face"
+    GROQ = "groq"
     OLLAMA = "ollama"
     OPENAI_COMPATIBLE = "openai-compatible"
 
@@ -94,6 +96,22 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
     ProviderKind.GOOGLE_GEMINI: ProviderDefinition(
         kind=ProviderKind.GOOGLE_GEMINI,
         default_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        default_credential_type="bearer",
+        secret_required=True,
+        default_api_mode="chat-completions",
+        supported_api_modes=("chat-completions",),
+    ),
+    ProviderKind.HUGGING_FACE: ProviderDefinition(
+        kind=ProviderKind.HUGGING_FACE,
+        default_base_url="https://router.huggingface.co/v1",
+        default_credential_type="bearer",
+        secret_required=True,
+        default_api_mode="chat-completions",
+        supported_api_modes=("chat-completions",),
+    ),
+    ProviderKind.GROQ: ProviderDefinition(
+        kind=ProviderKind.GROQ,
+        default_base_url="https://api.groq.com/openai/v1",
         default_credential_type="bearer",
         secret_required=True,
         default_api_mode="chat-completions",

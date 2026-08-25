@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from fikeya_runtime.errors import CancellationError, ProviderError
+from fikeya_runtime.errors import CancellationError, ProviderError, ProviderHttpError
 from fikeya_runtime.inference import (
     CancellationToken,
     InferenceRequest,
@@ -43,6 +43,20 @@ class FakeTransport:
         )
         raw = json.dumps(self.body, separators=(",", ":")).encode()
         return JsonResponse(status_code=200, body=self.body, raw_body=raw)
+
+
+class StatusTransport(FakeTransport):
+    def __init__(self, status_code: int) -> None:
+        super().__init__({"error": "not retained by Fikeya"})
+        self.status_code = status_code
+
+    def post(self, *args: object, **kwargs: object) -> JsonResponse:
+        response = super().post(*args, **kwargs)
+        return JsonResponse(
+            status_code=self.status_code,
+            body=response.body,
+            raw_body=response.raw_body,
+        )
 
 
 def test_azure_responses_execution_normalizes_usage_and_url() -> None:
@@ -132,6 +146,25 @@ def test_execution_requires_opt_in_and_honors_preflight_cancellation() -> None:
             cancellation=cancellation,
         )
     assert transport.calls == []
+
+
+def test_http_quota_failure_is_typed_without_retaining_the_body() -> None:
+    profile = build_profile(
+        name="work",
+        kind=ProviderKind.OPENAI,
+        model="gpt-example",
+    )
+    with pytest.raises(ProviderHttpError) as failure:
+        ProviderExecutor(StatusTransport(429)).execute(
+            profile,
+            "credential",
+            InferenceRequest("request"),
+            allow_network=True,
+        )
+    assert failure.value.status_code == 429
+    assert failure.value.kind == "quota"
+    assert failure.value.retryable is True
+    assert "not retained" in str(failure.value)
 
 
 def test_anthropic_messages_execution_uses_native_contract_and_usage() -> None:

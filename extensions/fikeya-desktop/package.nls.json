@@ -9,5 +9,10 @@
 	"command.open.title": "Open Fikeya",
 	"command.configureProvider.title": "Configure Provider",
 	"command.initializeWorkspace.title": "Initialize Workspace",
-	"command.runDoctor.title": "Run Doctor"
+	"command.runDoctor.title": "Run Doctor",
+	"command.mode.editor.title": "Open Editor Mode",
+	"command.mode.agent.title": "Open Agent Mode",
+	"command.mode.terminal.title": "Open Terminal Mode",
+	"command.mode.review.title": "Open Review Mode",
+	"command.mode.lab.title": "Open Lab Mode"
 }

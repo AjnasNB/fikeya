@@ -18,12 +18,30 @@ import {
 	parseAgentTurn,
 	parseProviderList,
 	parseProviderProbe,
+	parseProtocolFailure,
 	parseRuntimeReport,
 	parseStatistics,
 	resolveFikeyaCli
 } from '../runtime';
 
 describe('Fikeya runtime protocol', () => {
+	test('classifies quota handoff messages without accepting unbounded data', () => {
+		assert.strictEqual(parseProtocolFailure({
+			kind: 'quota',
+			message: 'Provider returned HTTP 429; response body was not retained.',
+			retryable: true,
+			statusCode: 429,
+			type: 'error'
+		}), 'quota');
+		assert.strictEqual(parseProtocolFailure({
+			kind: 'quota',
+			message: '',
+			retryable: true,
+			statusCode: 429,
+			type: 'error'
+		}), undefined);
+	});
+
 	test('prefers the absolute extension-owned runtime over PATH', async () => {
 		const extensionPath = path.join(tmpdir(), `fikeya-desktop-runtime-${process.pid}-${Date.now()}`);
 		const runtimeDirectory = path.join(extensionPath, 'runtime');

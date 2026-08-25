@@ -24,6 +24,24 @@ class ProviderError(FikeyaError):
     """Raised for invalid provider configuration or connectivity."""
 
 
+class ProviderHttpError(ProviderError):
+    """Raised for an HTTP response without retaining provider body content."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        self.kind = (
+            "quota"
+            if status_code == 429
+            else "authentication"
+            if status_code in {401, 403}
+            else "provider"
+        )
+        self.retryable = status_code in {408, 409, 425, 429} or status_code >= 500
+        super().__init__(
+            f"Provider returned HTTP {status_code}; response body was not retained."
+        )
+
+
 class CancellationError(FikeyaError):
     """Raised when a person cancels a bounded runtime operation."""
 

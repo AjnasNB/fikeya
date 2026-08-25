@@ -1,0 +1,67 @@
+{
+	"$schema": "vscode://schemas/color-theme",
+	"name": "Fikeya Dark",
+	"type": "dark",
+	"colors": {
+		"activityBar.background": "#0B0F0E",
+		"activityBar.foreground": "#EAF7F1",
+		"activityBar.inactiveForeground": "#7F928B",
+		"activityBarBadge.background": "#65E6B4",
+		"activityBarBadge.foreground": "#08251B",
+		"badge.background": "#65E6B4",
+		"badge.foreground": "#08251B",
+		"button.background": "#65E6B4",
+		"button.foreground": "#08251B",
+		"button.hoverBackground": "#81EDC4",
+		"editor.background": "#0B0F0E",
+		"editor.foreground": "#E7ECE9",
+		"editorCursor.foreground": "#65E6B4",
+		"editorGroupHeader.tabsBackground": "#0B0F0E",
+		"editorLineNumber.activeForeground": "#A7B8B1",
+		"editorLineNumber.foreground": "#53615C",
+		"editorSelection.background": "#245A4780",
+		"focusBorder": "#65E6B4",
+		"input.background": "#111716",
+		"input.border": "#34443E",
+		"input.foreground": "#E7ECE9",
+		"panel.background": "#0B0F0E",
+		"panel.border": "#293531",
+		"sideBar.background": "#101513",
+		"sideBar.foreground": "#C7D2CD",
+		"sideBarSectionHeader.background": "#151C1A",
+		"statusBar.background": "#102B22",
+		"statusBar.foreground": "#DDF8EC",
+		"statusBar.noFolderBackground": "#102B22",
+		"tab.activeBackground": "#111716",
+		"tab.activeBorderTop": "#65E6B4",
+		"tab.inactiveBackground": "#0B0F0E",
+		"terminal.background": "#090D0C",
+		"terminal.foreground": "#DCE6E2",
+		"titleBar.activeBackground": "#0B0F0E",
+		"titleBar.activeForeground": "#F1F3EE",
+		"titleBar.inactiveBackground": "#0B0F0E",
+		"window.activeBorder": "#293531"
+	},
+	"tokenColors": [
+		{
+			"scope": ["comment", "punctuation.definition.comment"],
+			"settings": { "foreground": "#73827C", "fontStyle": "italic" }
+		},
+		{
+			"scope": ["keyword", "storage.type", "storage.modifier"],
+			"settings": { "foreground": "#65E6B4" }
+		},
+		{
+			"scope": ["string", "constant.other.symbol"],
+			"settings": { "foreground": "#D6BD78" }
+		},
+		{
+			"scope": ["entity.name.function", "support.function"],
+			"settings": { "foreground": "#A9D9FF" }
+		},
+		{
+			"scope": ["variable", "meta.object-literal.key"],
+			"settings": { "foreground": "#E7ECE9" }
+		}
+	]
+}

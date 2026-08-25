@@ -16,7 +16,7 @@ const maximumProtocolLineBytes = 1024 * 1024;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
-export type FikeyaRuntimeFailure = 'none' | 'not-found' | 'timeout' | 'output-limit' | 'runtime-error' | 'invalid-json' | 'cancelled';
+export type FikeyaRuntimeFailure = 'none' | 'not-found' | 'timeout' | 'output-limit' | 'runtime-error' | 'provider-error' | 'authentication' | 'quota' | 'invalid-json' | 'cancelled';
 
 export type FikeyaRuntimeCommand = 'doctor' | 'init';
 
@@ -39,7 +39,7 @@ export interface FikeyaRuntimeReport {
 
 export interface FikeyaProviderConfiguration {
 	readonly name: string;
-	readonly kind: 'azure-openai' | 'openai' | 'anthropic' | 'openrouter' | 'nvidia-nim' | 'google-gemini' | 'ollama' | 'openai-compatible';
+	readonly kind: 'azure-openai' | 'openai' | 'anthropic' | 'openrouter' | 'nvidia-nim' | 'google-gemini' | 'hugging-face' | 'groq' | 'ollama' | 'openai-compatible';
 	readonly model: string;
 	readonly baseUrl: string;
 	readonly credentialType: 'api-key' | 'bearer' | 'entra-id' | 'none';
@@ -1008,6 +1008,7 @@ function startAgentProtocolCli(
 		let buffered = Buffer.alloc(0);
 		let outputBytes = 0;
 		let finalValue: FikeyaAgentTurn | undefined;
+		let protocolFailure: FikeyaRuntimeFailure | undefined;
 		let settled = false;
 		let timeout: NodeJS.Timeout | undefined;
 		let processing = Promise.resolve();
@@ -1078,6 +1079,13 @@ function startAgentProtocolCli(
 				}
 				return;
 			}
+			if (record?.type === 'error') {
+				if (protocolFailure || !parseProtocolFailure(record)) {
+					throw new Error('Fikeya coding error did not match the bounded schema.');
+				}
+				protocolFailure = parseProtocolFailure(record);
+				return;
+			}
 			throw new Error('Fikeya coding protocol emitted an unknown message.');
 		};
 
@@ -1136,7 +1144,7 @@ function startAgentProtocolCli(
 					return;
 				}
 				if (exitCode !== 0) {
-					finish({ ok: false, exitCode, failure: 'runtime-error' });
+					finish({ ok: false, exitCode, failure: protocolFailure ?? 'runtime-error' });
 					return;
 				}
 				if (!finalValue) {
@@ -1151,6 +1159,25 @@ function startAgentProtocolCli(
 		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
 	});
 	return { result, cancel: () => cancelOperation() };
+}
+
+export function parseProtocolFailure(record: Record<string, unknown>): FikeyaRuntimeFailure | undefined {
+	if (record.type !== 'error'
+		|| !boundedString(record.message, 2_048)
+		|| !isBoundedInteger(record.statusCode, 100, 599)
+		|| typeof record.retryable !== 'boolean') {
+		return undefined;
+	}
+	switch (record.kind) {
+		case 'quota':
+			return 'quota';
+		case 'authentication':
+			return 'authentication';
+		case 'provider':
+			return 'provider-error';
+		default:
+			return undefined;
+	}
 }
 
 function parseAgentProgress(record: Record<string, unknown>): boolean {

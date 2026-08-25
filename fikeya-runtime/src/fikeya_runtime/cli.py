@@ -22,6 +22,7 @@ from .errors import (
     CancellationError,
     FikeyaError,
     ProviderError,
+    ProviderHttpError,
     SecretStoreUnavailable,
 )
 from .inference import MAX_REQUEST_BYTES, CancellationToken
@@ -649,6 +650,17 @@ def _run_coding_agent(
                     context_max_characters=args.context_max_characters,
                 )
             )
+    except ProviderHttpError as error:
+        _emit_protocol_message(
+            {
+                "kind": error.kind,
+                "message": str(error),
+                "retryable": error.retryable,
+                "statusCode": error.status_code,
+                "type": "error",
+            }
+        )
+        return 2
     except AgentCoreError as error:
         raise ProviderError(f"Coding loop stopped safely: {error}") from error
     _emit_protocol_message({"type": "result", **result.as_json()})

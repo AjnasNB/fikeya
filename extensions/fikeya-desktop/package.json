@@ -75,6 +75,43 @@
 				"title": "%command.runDoctor.title%",
 				"category": "%command.category%",
 				"icon": "$(pulse)"
+			},
+			{
+				"command": "fikeya.mode.editor",
+				"title": "%command.mode.editor.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.agent",
+				"title": "%command.mode.agent.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.terminal",
+				"title": "%command.mode.terminal.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.review",
+				"title": "%command.mode.review.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.lab",
+				"title": "%command.mode.lab.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			}
+		],
+		"themes": [
+			{
+				"label": "Fikeya Dark",
+				"uiTheme": "vs-dark",
+				"path": "./themes/fikeya-dark-color-theme.json"
 			}
 		],
 		"menus": {

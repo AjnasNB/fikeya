@@ -77,6 +77,7 @@ await writeJson(path.join(stagingRoot, 'package.json'), packagedManifest);
 await copyRequired('package.nls.json');
 await copyRequired('README.md');
 await copyRequired(path.join('media', 'fikeya.svg'));
+await copyRequired(path.join('themes', 'fikeya-dark-color-theme.json'));
 for (const file of ['extension.js', 'memory.js', 'messageValidation.js', 'runtime.js', 'sessionCapture.js']) {
 	await copyRequired(path.join('out', file));
 }
