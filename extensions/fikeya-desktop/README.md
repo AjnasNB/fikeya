@@ -83,7 +83,7 @@ python -m pip install -r runtime-build-requirements.txt
 npm run package:vsix
 ```
 
-The reproducible, platform-targeted build writes `artifacts/fikeya-desktop-0.1.0-<target>.vsix`. It compiles and runs the focused test suite, freezes the local Fikeya Runtime into an extension-owned executable, bundles only the reachable Qarinah 0.4.0 workspace and dashboard runtime, invokes the official pinned `@vscode/vsce` packager, and then reopens the archive to verify its allowlisted contents and hashes. A fixed `SOURCE_DATE_EPOCH` is used by default so identical inputs produce the same VSIX bytes; release automation may supply another valid epoch explicitly.
+The reproducible, platform-targeted build writes `artifacts/fikeya-desktop-<extension-version>-<target>.vsix`. It compiles and runs the focused test suite, freezes the local Fikeya Runtime into an extension-owned executable, bundles only the reachable Qarinah 0.4.0 workspace and dashboard runtime, invokes the official pinned `@vscode/vsce` packager, and then reopens the archive to verify its allowlisted contents and hashes. A fixed `SOURCE_DATE_EPOCH` is used by default so identical inputs produce the same VSIX bytes; release automation may supply another valid epoch explicitly.
 
 The package includes the extension's full AGPL-3.0-or-later license, Qarinah's Apache-2.0 license and notice, the MIT notice for the bundled ignore parser, and the embedded Python runtime's dependency licenses. It excludes TypeScript sources, tests, source maps, `node_modules`, development caches, local `.qarinah`/`.codex` state, SQLite files, event ledgers, and credential-shaped material. Both bundled runtimes carry content hashes and dependency receipts.
 

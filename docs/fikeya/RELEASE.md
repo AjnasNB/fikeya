@@ -1,6 +1,6 @@
 # Fikeya release process
 
-Fikeya `0.1.0-beta.1` is distributed as a GitHub prerelease with verifiable component artifacts:
+Fikeya `0.1.0-beta.2` is the current prerelease source candidate. When its release gates pass, the GitHub prerelease is expected to contain these verifiable component artifacts:
 
 - the Windows x64 user installer;
 - the focused Windows x64 VS Code extension;
