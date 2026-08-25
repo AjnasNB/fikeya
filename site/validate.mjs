@@ -10,6 +10,9 @@ const requiredFiles = [
 	'favicon.svg',
 	'fikeya-live-chat.png',
 	'fikeya-live-context-graph.png',
+	'fikeya-plan-awaiting-approval-real.png',
+	'fikeya-plan-draft-real.png',
+	'fikeya-plan-reviewed-real.png',
 	'docs',
 	'download',
 	'enterprise',
@@ -111,6 +114,15 @@ const proofPage = pageDocuments.get('proof/index.html') ?? '';
 assert(proofPage.includes('Plan-to-proof fixture'), 'Plan-to-proof evaluation is missing from the proof page');
 assert(proofPage.includes('3,606 of 8,000 characters used'), 'Measured Qarinah budget result is missing from the proof page');
 assert(proofPage.includes('tokens remain explicitly not measured'), 'No-model token boundary is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-draft-real.png"'), 'Real draft capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-reviewed-real.png"'), 'Real reviewed-plan capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-awaiting-approval-real.png"'), 'Real approval-boundary capture is missing from the proof page');
+assert(proofPage.includes('This capture stops here. No approval is granted, and Execute and Verify have not run.'), 'Pre-execution capture boundary is missing from the proof page');
+const productPage = pageDocuments.get('product/index.html') ?? '';
+for (const stage of ['01</span><strong>Draft', '02</span><strong>Review', '03</span><strong>Approval', '04</span><strong>Execute', '05</span><strong>Verify']) {
+	assert(productPage.includes(stage), `Product page is missing workflow stage: ${stage}`);
+}
+assert(productPage.includes('stops at Awaiting Approval'), 'Product page is missing the real-capture stopping boundary');
 assert(html.includes('fikeya provider list --json'), 'Provider discovery command is missing');
 assert(!html.includes('Keep the work between coding-agent sessions'), 'Stale session-handoff positioning found');
 assert(!html.includes('Keep the work. Change the session.'), 'Stale session-handoff closing copy found');

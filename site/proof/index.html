@@ -31,6 +31,27 @@
 
 			<section class="evidence-rail" aria-label="Proof fields"><div class="shell rail-grid"><div><span>Plan</span><strong>Ordered steps and dependencies</strong></div><div><span>Authority</span><strong>Exact one-use approvals</strong></div><div><span>Outcome</span><strong>Hashes, exit state, and checks</strong></div><div><span>Cost</span><strong>Provider-reported usage source</strong></div></div></section>
 
+			<section class="section" id="desktop-plan-proof">
+				<div class="shell">
+					<div class="section-intro workflow-intro"><p class="eyebrow">Real Desktop control boundary</p><h2>Draft, review, and approval remain visibly different states.</h2><p>These captures come from a disposable project running inside the real Fikeya Desktop extension host. They show one durable three-step plan progressing to its first exact approval boundary.</p></div>
+					<div class="capture-sequence">
+						<article>
+							<div><span>01 / Draft</span><h3>The proposal is inspectable before it becomes executable.</h3><p>Fikeya shows the ordered steps, dependencies, exact tool names, arguments, and expected checks. Every step remains pending.</p></div>
+							<figure><img src="/fikeya-plan-draft-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing a three-step draft with every step pending"><figcaption>Draft revision 1. The available action is Review immutable plan. No tool has run.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>02 / Review</span><h3>Review changes plan state, not tool authority.</h3><p>The reviewed revision stays visible with its same steps and arguments. The developer can start the approval phase or cancel the plan.</p></div>
+							<figure><img src="/fikeya-plan-reviewed-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing the reviewed plan before approval"><figcaption>Reviewed revision 2. Review does not grant blanket permission to execute.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>03 / Approval</span><h3>The exact first request is exposed before execution.</h3><p>Fikeya identifies the selected tool, dependencies, arguments, and expected verification while the step remains Awaiting Approval.</p></div>
+							<figure><img src="/fikeya-plan-awaiting-approval-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view stopped at the first exact tool approval boundary"><figcaption>Awaiting Approval, revision 3. This capture stops here. No approval is granted, and Execute and Verify have not run.</figcaption></figure>
+						</article>
+					</div>
+					<p class="capture-boundary"><strong>Capture boundary:</strong> this sequence demonstrates state separation and the pre-execution control surface. It is not an execution-result or model-quality benchmark.</p>
+				</div>
+			</section>
+
 			<section class="section"><div class="shell proof-ledger"><article><span>01 / Desktop</span><h2>Chat beside the code</h2><p>A deterministic local provider completed a real conversation inside the extension host. Qarinah supplied six cited project items, and the runtime retained provider usage without calling a paid model.</p><figure><img src="/fikeya-live-chat.png" width="1800" height="1050" loading="lazy" alt="Fikeya right-side chat completing a local deterministic task"></figure></article><article><span>02 / Context</span><h2>A graph you can interrogate</h2><p>The Context view rendered a bounded live graph from the initialized project with search, filters, source identities, pan, zoom, and drag.</p><figure><img src="/fikeya-live-context-graph.png" width="1800" height="1050" loading="lazy" alt="Fikeya live Qarinah context graph"></figure></article></div></section>
 
 			<section class="section"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Plan-to-proof fixture</p><h2>A failing cross-stack task that ends with verified evidence.</h2><p>The local evaluation begins with failing Python and TypeScript implementations. Qarinah retrieves two cited project records within an exact 8,000-character ceiling. Fikeya then stops before execution, consumes four single-use approvals, verifies both test suites, and records hash-linked outcomes.</p><p class="target-line"><strong>Measured boundary:</strong> no model is called, so provider calls are reported as zero and tokens remain explicitly not measured. The result evaluates Fikeya's workflow, not model intelligence.</p><div class="hero-actions"><a class="button button-primary" href="https://github.com/AjnasNB/fikeya/tree/main/bench/fikeya-plan-proof" rel="noopener noreferrer">Run the fixture</a><a class="button button-text" href="https://github.com/AjnasNB/fikeya/blob/main/bench/fikeya-plan-proof/results/latest.json" rel="noopener noreferrer">Inspect the JSON result</a></div></div><div class="proof-sequence"><div><span>1</span><strong>Fail first</strong><p>Both seeded language suites begin red.</p></div><div><span>2</span><strong>Retrieve</strong><p>Two cited Qarinah items, 3,606 of 8,000 characters used.</p></div><div><span>3</span><strong>Approve and run</strong><p>Four exact tool calls consume four one-use references.</p></div><div><span>4</span><strong>Verify</strong><p>Python and TypeScript pass with execution and verification hashes.</p></div></div></div></section>

@@ -1292,6 +1292,85 @@ h1 span {
 	line-height: 1.55;
 }
 
+.workflow-boundary,
+.capture-boundary {
+	max-width: 860px;
+	margin: 28px 0 0;
+	padding-left: 18px;
+	border-left: 2px solid var(--accent);
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.65;
+}
+
+.workflow-boundary a {
+	color: var(--text);
+	text-decoration-color: var(--accent);
+	text-underline-offset: 4px;
+}
+
+.capture-sequence {
+	display: grid;
+	gap: 24px;
+}
+
+.capture-sequence article {
+	display: grid;
+	grid-template-columns: minmax(230px, 0.34fr) minmax(0, 1fr);
+	align-items: center;
+	border: 1px solid var(--line-strong);
+	background: var(--bg-raised);
+}
+
+.capture-sequence article > div {
+	padding: 28px;
+}
+
+.capture-sequence article > div > span {
+	color: var(--accent);
+	font-family: var(--mono);
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+.capture-sequence h3 {
+	margin: 14px 0 12px;
+	font-size: clamp(1.3rem, 1.8vw, 1.8rem);
+	font-weight: 600;
+	letter-spacing: -0.035em;
+	line-height: 1.1;
+}
+
+.capture-sequence p {
+	margin: 0;
+	color: var(--muted);
+	font-size: 14px;
+	line-height: 1.65;
+}
+
+.capture-sequence figure {
+	margin: 0;
+	border-left: 1px solid var(--line);
+	background: #070b0b;
+}
+
+.capture-sequence img {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+.capture-sequence figcaption {
+	padding: 14px 18px 16px;
+	border-top: 1px solid var(--line);
+	color: var(--muted);
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 1.55;
+}
+
 .surface-gallery,
 .proof-ledger {
 	display: grid;
@@ -1949,8 +2028,14 @@ h1 span {
 	.surface-gallery,
 	.proof-ledger,
 	.admin-grid,
-	.proof-sequence {
+	.proof-sequence,
+	.capture-sequence article {
 		grid-template-columns: 1fr;
+	}
+
+	.capture-sequence figure {
+		border-top: 1px solid var(--line);
+		border-left: 0;
 	}
 
 	.docs-layout {
