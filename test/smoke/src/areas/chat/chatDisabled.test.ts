@@ -20,8 +20,17 @@ export function setup(logger: Logger) {
 			// await for setting to apply in the UI
 			await app.code.waitForElements('.noauxiliarybar', true, elements => elements.length === 1);
 
-			// Remote extension hosts deactivate asynchronously after the setting reaches the UI.
-			// Keep the strict zero-command assertion, but allow that bounded teardown to finish.
+			// A remote extension host cannot be hot-restarted independently of the
+			// remote workbench. Once the setting has disabled every managed AI
+			// extension, reload the remote window so none of those extensions are
+			// activated again. Local extension hosts can be restarted in place.
+			if (app.remote) {
+				await app.code.reloadWindow(() => app.workbench.quickaccess.runCommand('Developer: Reload Window', { keepOpen: true }));
+				await app.code.waitForElements('.noauxiliarybar', true, elements => elements.length === 1);
+			}
+
+			// Keep the strict zero-command assertion while allowing local extension-host
+			// teardown and command-palette indexing to settle.
 			await retry(async () => {
 				const unexpectedFound: Set<string> = new Set();
 				for (const term of ['chat', 'agent', 'copilot', 'mcp']) {
