@@ -9,6 +9,14 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$distribution = Get-Content -LiteralPath (Join-Path $repositoryRoot "fikeya-distribution.json") -Raw | ConvertFrom-Json
+$releaseVersion = [string]$distribution.version
+$componentManifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "scripts\fikeya\components.json") -Raw | ConvertFrom-Json
+$agentCoreVersion = [string](($componentManifest.components | Where-Object id -eq "agent-core").version)
+$runtimeVersion = [string](($componentManifest.components | Where-Object id -eq "runtime").version)
+$interopVersion = [string]((Get-Content -LiteralPath (Join-Path $repositoryRoot "integrations\fikeya-interop\pyproject.toml") -Raw | Select-String -Pattern '(?m)^version = "([^"]+)"$').Matches[0].Groups[1].Value)
+$extensionManifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "extensions\fikeya-desktop\package.json") -Raw | ConvertFrom-Json
+$extensionVersion = [string]$extensionManifest.version
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 	$OutputDirectory = Join-Path $repositoryRoot "release-artifacts"
 }
@@ -39,7 +47,7 @@ function Invoke-Checked {
 	}
 }
 
-Invoke-Checked $repositoryRoot "python" @("-m", "pip", "install", "--disable-pip-version-check", "--upgrade", "build")
+Invoke-Checked $repositoryRoot "python" @("-m", "pip", "install", "--disable-pip-version-check", "build==1.5.0")
 $runtimeBuildRequirements = Join-Path $repositoryRoot "extensions\fikeya-desktop\runtime-build-requirements.txt"
 Invoke-Checked $repositoryRoot "python" @(
 	"-m",
@@ -56,17 +64,18 @@ foreach ($component in @("fikeya-agent-core", "fikeya-runtime", "integrations\fi
 $extensionRoot = Join-Path $repositoryRoot "extensions\fikeya-desktop"
 Invoke-Checked $extensionRoot "npm" @("ci")
 Invoke-Checked $extensionRoot "npm" @("run", "package:vsix")
-Copy-Item -LiteralPath (Join-Path $extensionRoot "artifacts\fikeya-desktop-0.1.0-win32-x64.vsix") -Destination $outputPath
+Copy-Item -LiteralPath (Join-Path $extensionRoot "artifacts\fikeya-desktop-$extensionVersion-win32-x64.vsix") -Destination $outputPath
 
 $cliInstall = @"
-Fikeya CLI 0.1.0-beta.1
+Fikeya CLI $releaseVersion
 
 1. Extract this archive.
 2. Create and activate a Python 3.10+ virtual environment.
 3. Install the Agent Core wheel, then the Runtime wheel:
 
-   python -m pip install fikeya_agent_core-0.1.0b1-py3-none-any.whl
-   python -m pip install fikeya_runtime-0.1.0b1-py3-none-any.whl
+   python -m pip install fikeya_agent_core-$agentCoreVersion-py3-none-any.whl
+   python -m pip install fikeya_runtime-$runtimeVersion-py3-none-any.whl
+   python -m pip install fikeya_interop-$interopVersion-py3-none-any.whl
 
 4. Verify the installation:
 
@@ -76,7 +85,7 @@ Fikeya CLI 0.1.0-beta.1
 "@
 $cliInstallPath = Join-Path $outputPath "FIKEYA-CLI-INSTALL.txt"
 $cliInstall | Set-Content -LiteralPath $cliInstallPath -Encoding utf8
-$cliBundle = Join-Path $outputPath "fikeya-cli-0.1.0-beta.1.zip"
+$cliBundle = Join-Path $outputPath "fikeya-cli-$releaseVersion.zip"
 $cliFiles = Get-ChildItem -LiteralPath $outputPath -File | Where-Object { $_.Extension -eq ".whl" -or $_.Name -eq "FIKEYA-CLI-INSTALL.txt" }
 Compress-Archive -LiteralPath $cliFiles.FullName -DestinationPath $cliBundle -CompressionLevel Optimal
 
@@ -90,7 +99,7 @@ if (-not $SkipDesktop) {
 	if (-not (Test-Path -LiteralPath $setupSource)) {
 		throw "Windows installer was not produced at $setupSource"
 	}
-	$setupTarget = Join-Path $outputPath "FikeyaSetup-0.1.0-beta.1-win32-x64.exe"
+	$setupTarget = Join-Path $outputPath "FikeyaSetup-$releaseVersion-win32-x64.exe"
 	Copy-Item -LiteralPath $setupSource -Destination $setupTarget
 
 	if ($env:FIKEYA_SIGNING_PFX_BASE64 -and $env:FIKEYA_SIGNING_PFX_PASSWORD) {
@@ -106,7 +115,7 @@ if (-not $SkipDesktop) {
 }
 
 if (-not $SkipManifest) {
-	& (Join-Path $PSScriptRoot "write-release-manifest.ps1") -OutputDirectory $outputPath
+	& (Join-Path $PSScriptRoot "write-release-manifest.ps1") -OutputDirectory $outputPath -Version $releaseVersion
 }
 
 Write-Host "Fikeya release artifacts: $outputPath"
