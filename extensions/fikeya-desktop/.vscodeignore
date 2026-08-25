@@ -1,5 +1,6 @@
 .package/**
 .runtime-build/**
+.gitignore
 artifacts/**
 node_modules/**
 scripts/**
