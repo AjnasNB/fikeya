@@ -103,12 +103,27 @@ CREATE TABLE IF NOT EXISTS tool_enablements (
     enabled_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS execution_plans (
+    plan_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    status TEXT NOT NULL CHECK (status IN (
+        'draft', 'reviewed', 'awaiting_approval', 'executing', 'verifying',
+        'succeeded', 'failed', 'cancelled'
+    )),
+    document_json TEXT NOT NULL,
+    document_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS events_by_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS usage_by_session ON usage_records(session_id, created_at);
 CREATE INDEX IF NOT EXISTS receipts_by_session ON context_receipts(session_id, created_at);
 CREATE INDEX IF NOT EXISTS provider_calls_by_session
     ON provider_call_receipts(session_id, created_at);
-PRAGMA user_version = 4;
+CREATE INDEX IF NOT EXISTS execution_plans_by_updated_at
+    ON execution_plans(updated_at);
+PRAGMA user_version = 5;
 """
 
 _PROVIDER_RECEIPT_V4 = """
@@ -155,7 +170,7 @@ class StateStore:
 
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise StateError(f"Unsupported state schema version: {version}")
             # Schema v2 introduced provider_call_receipts with the original two-mode
             # CHECK constraint. Schema v3 added tool enablements but retained that table.

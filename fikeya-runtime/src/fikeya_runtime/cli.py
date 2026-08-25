@@ -36,6 +36,7 @@ from .providers import (
     ProviderTester,
     build_profile,
 )
+from .plans import PlanService, PlanStatus
 from .qarinah import qarinah_adapter_kind, select_qarinah_adapter
 from .state import StateStore
 from .tool_presets import (
@@ -202,6 +203,61 @@ def _parser() -> argparse.ArgumentParser:
     agent_receipts.add_argument("--workspace", default=".")
     agent_receipts.add_argument("--json", action="store_true")
 
+    plan = subcommands.add_parser(
+        "plan", help="Create and run durable approval-gated local plans."
+    )
+    plan_commands = plan.add_subparsers(dest="plan_command", required=True)
+
+    plan_create = plan_commands.add_parser(
+        "create", help="Create a draft plan from one bounded JSON specification."
+    )
+    plan_create.add_argument("path", nargs="?", default=".")
+    plan_create.add_argument("--spec-stdin", action="store_true")
+    plan_create.add_argument("--json", action="store_true")
+
+    plan_show = plan_commands.add_parser("show", help="Show one plan and proof receipt.")
+    plan_show.add_argument("plan_id")
+    plan_show.add_argument("--workspace", default=".")
+    plan_show.add_argument("--json", action="store_true")
+
+    plan_review = plan_commands.add_parser(
+        "review", help="Mark one immutable draft specification as reviewed."
+    )
+    plan_review.add_argument("plan_id")
+    plan_review.add_argument("--workspace", default=".")
+    plan_review.add_argument("--json", action="store_true")
+
+    plan_approve = plan_commands.add_parser(
+        "approve", help="Issue exact single-use approval references for plan steps."
+    )
+    plan_approve.add_argument("plan_id")
+    plan_approve.add_argument("--workspace", default=".")
+    approval_selection = plan_approve.add_mutually_exclusive_group(required=True)
+    approval_selection.add_argument("--step", action="append", default=[])
+    approval_selection.add_argument("--all", action="store_true")
+    plan_approve.add_argument("--json", action="store_true")
+
+    for command_name, command_help in (
+        ("run", "Run approved ordered steps until completion or the next approval."),
+        ("resume", "Resume verification or continue with newly approved steps."),
+    ):
+        plan_run = plan_commands.add_parser(command_name, help=command_help)
+        plan_run.add_argument("plan_id")
+        plan_run.add_argument("--workspace", default=".")
+        plan_run.add_argument(
+            "--allow-executable",
+            action="append",
+            default=[],
+            help="Replace the default process allowlist with this executable name.",
+        )
+        plan_run.add_argument("--json", action="store_true")
+
+    plan_cancel = plan_commands.add_parser("cancel", help="Cancel a non-terminal plan.")
+    plan_cancel.add_argument("plan_id")
+    plan_cancel.add_argument("--workspace", default=".")
+    plan_cancel.add_argument("--reason", default="person cancelled")
+    plan_cancel.add_argument("--json", action="store_true")
+
     tool = subcommands.add_parser(
         "tool", help="Inspect or explicitly enable reviewed external tools."
     )
@@ -250,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_provider(args)
         if args.command == "agent":
             return _run_agent(args)
+        if args.command == "plan":
+            return _run_plan(args)
         if args.command == "tool":
             return _run_tool(args)
         raise AssertionError("argparse accepted an unknown command")
@@ -699,6 +757,97 @@ def _emit_protocol_message(value: dict[str, object]) -> None:
         json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
         flush=True,
     )
+
+
+def _run_plan(args: argparse.Namespace) -> int:
+    workspace_path = args.path if args.plan_command == "create" else args.workspace
+    workspace = Workspace.load(workspace_path)
+    service = PlanService(workspace)
+    if args.plan_command == "create":
+        if not args.spec_stdin:
+            raise ProviderError(
+                "Plan specifications must use --spec-stdin so content stays out of process arguments."
+            )
+        specification = _read_bounded_json_object(_PLAN_SPECIFICATION_BYTES)
+        plan = service.create(specification)
+        _emit(
+            {"message": f"Created draft plan {plan.plan_id}.", "ok": True, **service.view(plan)},
+            as_json=args.json,
+        )
+        return 0
+    if args.plan_command == "show":
+        _emit({"ok": True, **service.show(args.plan_id)}, as_json=args.json)
+        return 0
+    if args.plan_command == "review":
+        plan = service.review(args.plan_id)
+        _emit(
+            {"message": f"Reviewed plan {plan.plan_id}.", "ok": True, **service.view(plan)},
+            as_json=args.json,
+        )
+        return 0
+    if args.plan_command == "approve":
+        plan, references = service.approve(
+            args.plan_id,
+            step_ids=tuple(args.step),
+            approve_all=args.all,
+        )
+        _emit(
+            {
+                "approvalReferences": [item.as_json() for item in references],
+                "message": f"Approved {len(references)} exact plan step(s).",
+                "ok": True,
+                **service.view(plan),
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.plan_command in {"run", "resume"}:
+        allowed = (
+            frozenset(args.allow_executable) if args.allow_executable else None
+        )
+        cancellation = CancellationToken()
+        with _cancellation_signals(cancellation):
+            plan = asyncio.run(
+                service.run(
+                    args.plan_id,
+                    allowed_executables=allowed,
+                    resume=args.plan_command == "resume",
+                    cancellation=cancellation,
+                )
+            )
+        _emit(
+            {
+                "message": f"Plan {plan.plan_id} is {plan.status.value}.",
+                "ok": plan.status not in {PlanStatus.FAILED, PlanStatus.CANCELLED},
+                **service.view(plan),
+            },
+            as_json=args.json,
+        )
+        return 2 if plan.status is PlanStatus.FAILED else 0
+    if args.plan_command == "cancel":
+        plan = service.cancel(args.plan_id, args.reason)
+        _emit(
+            {"message": f"Cancelled plan {plan.plan_id}.", "ok": True, **service.view(plan)},
+            as_json=args.json,
+        )
+        return 0
+    raise AssertionError("argparse accepted an unknown plan command")
+
+
+_PLAN_SPECIFICATION_BYTES = 1_048_576
+
+
+def _read_bounded_json_object(maximum_bytes: int) -> dict[str, object]:
+    payload = sys.stdin.buffer.read(maximum_bytes + 1)
+    if len(payload) > maximum_bytes:
+        raise ProviderError(f"JSON input exceeds {maximum_bytes} bytes.")
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ProviderError("Input must be one UTF-8 JSON object.") from error
+    if not isinstance(value, dict):
+        raise ProviderError("Input must be one JSON object.")
+    return value
 
 
 def _run_tool(args: argparse.Namespace) -> int:
