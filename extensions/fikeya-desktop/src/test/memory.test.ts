@@ -6,7 +6,7 @@
 import * as assert from 'node:assert/strict';
 import path from 'node:path';
 import { describe, test } from 'node:test';
-import { parseMemoryInitializationSidecarResponse, parseMemoryRecordSidecarResponse, parseMemorySidecarResponse, parseMemorySnapshot, resolveQarinahSidecarPath } from '../memory';
+import { parseMemoryInitializationSidecarResponse, parseMemoryRecordSidecarResponse, parseMemoryRunCaptureSidecarResponse, parseMemorySidecarResponse, parseMemorySnapshot, resolveQarinahSidecarPath } from '../memory';
 
 const hashA = `sha256:${'a'.repeat(64)}`;
 const hashB = `sha256:${'b'.repeat(64)}`;
@@ -118,6 +118,41 @@ describe('Fikeya Qarinah memory bridge', () => {
 		});
 		assert.strictEqual(parseMemoryRecordSidecarResponse(line.replace('decision', 'arbitrary')), undefined);
 	});
+
+		test('validates the captured turn independently from a concurrently advanced ledger head', () => {
+			const promptId = 'evt_12345678-1234-4123-8123-123456789abc';
+			const providerId = 'evt_22345678-1234-4123-8123-123456789abc';
+			const turnId = 'evt_32345678-1234-4123-8123-123456789abc';
+			const message = {
+				jsonrpc: '2.0',
+				id: 'fikeya-memory-capture-run',
+				result: {
+					schemaVersion: 'qarinah.fikeya-run-capture.v1',
+					capture: 'content',
+					eventCount: 9,
+					capturedTurnHash: hashC,
+					ledgerHeadHash: hashB,
+					graphManifestHash: hashA,
+				events: [
+					{ eventId: promptId, eventHash: hashA, kind: 'prompt.submitted' },
+					{ eventId: providerId, eventHash: hashB, kind: 'source' },
+					{ eventId: turnId, eventHash: hashC, kind: 'turn.completed' }
+					]
+				}
+			};
+			const receipt = parseMemoryRunCaptureSidecarResponse(JSON.stringify(message));
+			assert.strictEqual(receipt?.eventCount, 9);
+			assert.strictEqual(receipt?.capturedTurnHash, hashC);
+			assert.strictEqual(receipt?.ledgerHeadHash, hashB);
+			assert.strictEqual(parseMemoryRunCaptureSidecarResponse(JSON.stringify({
+				...message,
+				result: { ...message.result, capturedTurnHash: hashB }
+			})), undefined);
+			assert.strictEqual(parseMemoryRunCaptureSidecarResponse(JSON.stringify({
+				...message,
+				result: { ...message.result, ledgerHeadHash: 'not-a-hash' }
+			})), undefined);
+		});
 
 	test('rejects edges that reference nodes outside the bounded projection', () => {
 		const value = memoryView();

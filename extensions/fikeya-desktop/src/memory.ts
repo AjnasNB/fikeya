@@ -69,12 +69,86 @@ export interface FikeyaMemoryInitializationResult {
 export interface FikeyaMemoryRecord {
 	readonly eventId: string;
 	readonly eventHash: string;
-	readonly kind: 'artifact' | 'decision' | 'summary' | 'tool.completed' | 'turn.completed';
+	readonly kind: 'prompt.submitted' | 'source' | 'artifact' | 'decision' | 'summary' | 'tool.completed' | 'turn.completed';
 }
 
 export interface FikeyaMemoryRecordResult {
 	readonly ok: boolean;
 	readonly record?: FikeyaMemoryRecord;
+	readonly failure: FikeyaMemoryFailure;
+}
+
+export interface FikeyaMemoryRunCaptureRequest {
+	readonly sessionId: string;
+	readonly callId: string;
+	readonly prompt: string;
+	readonly provider: {
+		readonly name: string;
+		readonly kind: string;
+		readonly model: string;
+	};
+	readonly usage: {
+		readonly measurement: 'provider-reported' | 'unavailable';
+		readonly inputTokens: number | null;
+		readonly outputTokens: number | null;
+		readonly cachedInputTokens: number | null;
+	};
+	readonly memory: {
+		readonly status: 'off' | 'unavailable' | 'used';
+		readonly coverage: string | null;
+		readonly evidenceCount: number | null;
+		readonly receiptId: string | null;
+		readonly responseSha256: string | null;
+	};
+	readonly providerReceipts: readonly {
+		readonly apiMode: string;
+		readonly callId: string;
+		readonly createdAt: string;
+		readonly durationMs: number;
+		readonly requestBytes: number;
+		readonly requestSha256: string;
+		readonly responseBytes: number;
+		readonly responseSha256: string;
+		readonly statusCode: number;
+	}[];
+	readonly outcome: {
+		readonly status: 'completed';
+		readonly steps: number;
+		readonly planSha256: string;
+		readonly summarySha256: string;
+		readonly toolOutcomeCount: number;
+		readonly toolOutcomesTruncated: boolean;
+		readonly toolOutcomes: readonly {
+			readonly callId: string;
+			readonly name: string;
+			readonly status: 'ok' | 'error';
+			readonly outputSha256: string;
+			readonly durationMs: number | null;
+			readonly exitCode: number | null;
+			readonly test: boolean;
+		}[];
+		readonly changedFileCount: number;
+		readonly changedFilesTruncated: boolean;
+		readonly changedFiles: readonly {
+			readonly path: string;
+			readonly beforeSha256: string | null;
+			readonly afterSha256: string;
+		}[];
+	};
+}
+
+export interface FikeyaMemoryRunCaptureReceipt {
+	readonly capture: 'metadata' | 'content';
+	readonly eventCount: number;
+	readonly capturedTurnHash: string;
+	readonly ledgerHeadHash: string;
+	readonly graphManifestHash: string;
+	readonly events: readonly FikeyaMemoryRecord[];
+}
+
+export interface FikeyaMemoryRunCaptureResult {
+	readonly ok: boolean;
+	readonly receipt?: FikeyaMemoryRunCaptureReceipt;
 	readonly failure: FikeyaMemoryFailure;
 }
 
@@ -113,6 +187,31 @@ export function recordQarinahMemory(
 		},
 		parseMemoryRecordSidecarResponse,
 		record => ({ ok: true, record, failure: 'none' }),
+		failure => ({ ok: false, failure })
+	);
+}
+
+/**
+ * Records one completed Fikeya turn only when the workspace already has a valid Qarinah opt-in.
+ * Prompt content is passed over stdin to the local sidecar, where the pinned Qarinah redactor and
+ * the workspace capture policy determine what may be retained.
+ */
+export function captureQarinahRun(
+	extensionPath: string,
+	workspacePath: string,
+	request: FikeyaMemoryRunCaptureRequest
+): Promise<FikeyaMemoryRunCaptureResult> {
+	return invokeQarinahSidecar<FikeyaMemoryRunCaptureReceipt, FikeyaMemoryRunCaptureResult>(
+		extensionPath,
+		workspacePath,
+		{
+			jsonrpc: '2.0',
+			id: 'fikeya-memory-capture-run',
+			method: 'memory.captureRun',
+			params: request
+		},
+		parseMemoryRunCaptureSidecarResponse,
+		receipt => ({ ok: true, receipt, failure: 'none' }),
 		failure => ({ ok: false, failure })
 	);
 }
@@ -269,13 +368,71 @@ export function parseMemoryRecordSidecarResponse(line: string): FikeyaMemoryReco
 			|| !result || result.schemaVersion !== 'qarinah.memory-record.v1'
 			|| !eventId || !/^evt_[0-9a-f-]{36}$/.test(eventId)
 			|| !eventHash || !sha256Pattern.test(eventHash)
-			|| !kind || !['artifact', 'decision', 'summary', 'tool.completed', 'turn.completed'].includes(kind)) {
+			|| !kind || !['prompt.submitted', 'source', 'artifact', 'decision', 'summary', 'tool.completed', 'turn.completed'].includes(kind)) {
 			return undefined;
 		}
 		return { eventId, eventHash, kind: kind as FikeyaMemoryRecord['kind'] };
 	} catch {
 		return undefined;
 	}
+}
+
+export function parseMemoryRunCaptureSidecarResponse(line: string): FikeyaMemoryRunCaptureReceipt | undefined {
+	if (Buffer.byteLength(line, 'utf8') > maximumSidecarOutputBytes) {
+		return undefined;
+	}
+	try {
+		const message = asRecord(JSON.parse(line));
+		const result = asRecord(message?.result);
+		const capture = result?.capture;
+		const capturedTurnHash = strictString(result?.capturedTurnHash, 71);
+		const ledgerHeadHash = strictString(result?.ledgerHeadHash, 71);
+		const graphManifestHash = strictString(result?.graphManifestHash, 71);
+		if (!message || message.jsonrpc !== '2.0' || message.id !== 'fikeya-memory-capture-run' || message.error !== undefined
+			|| !result || result.schemaVersion !== 'qarinah.fikeya-run-capture.v1'
+			|| (capture !== 'metadata' && capture !== 'content')
+			|| !isInteger(result.eventCount, 1, 100_000_000)
+			|| !capturedTurnHash || !sha256Pattern.test(capturedTurnHash)
+			|| !ledgerHeadHash || !sha256Pattern.test(ledgerHeadHash)
+			|| !graphManifestHash || !sha256Pattern.test(graphManifestHash)
+			|| !Array.isArray(result.events) || result.events.length < 3 || result.events.length > 16) {
+			return undefined;
+		}
+		const events: FikeyaMemoryRecord[] = [];
+		for (const candidate of result.events) {
+			const event = parseMemoryRecord(candidate);
+			if (!event) {
+				return undefined;
+			}
+			events.push(event);
+		}
+		if (events.at(-1)?.eventHash !== capturedTurnHash || events.at(-1)?.kind !== 'turn.completed') {
+			return undefined;
+		}
+		return {
+			capture,
+			eventCount: result.eventCount,
+			capturedTurnHash,
+			ledgerHeadHash,
+			graphManifestHash,
+			events
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+function parseMemoryRecord(value: unknown): FikeyaMemoryRecord | undefined {
+	const record = asRecord(value);
+	const eventId = strictString(record?.eventId, 128);
+	const eventHash = strictString(record?.eventHash, 71);
+	const kind = strictString(record?.kind, 80);
+	if (!record || !eventId || !/^evt_[0-9a-f-]{36}$/.test(eventId)
+		|| !eventHash || !sha256Pattern.test(eventHash)
+		|| !kind || !['prompt.submitted', 'source', 'artifact', 'decision', 'summary', 'tool.completed', 'turn.completed'].includes(kind)) {
+		return undefined;
+	}
+	return { eventId, eventHash, kind: kind as FikeyaMemoryRecord['kind'] };
 }
 
 export function parseMemorySnapshot(value: unknown): FikeyaMemorySnapshot | undefined {
