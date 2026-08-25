@@ -184,10 +184,24 @@ describe('Fikeya runtime protocol', () => {
 
 		assert.deepStrictEqual(buildFikeyaRuntimeEnvironment(extensionPath, 'C:\\fake\\Code.exe', parentEnvironment), {
 			PATH: 'fixed-path',
+			ELECTRON_RUN_AS_NODE: '1',
 			FIKEYA_NODE_EXECUTABLE: 'C:\\fake\\Code.exe',
 			FIKEYA_QARINAH_SIDECAR: path.join(sidecarDirectory, 'qarinah-memory-view.mjs')
 		});
 		assert.deepStrictEqual(parentEnvironment, { PATH: 'fixed-path' });
+	});
+
+	test('does not force Electron Node mode for a standalone Node executable', async () => {
+		const extensionPath = path.join(tmpdir(), `fikeya-desktop-node-sidecar-${process.pid}-${Date.now()}`);
+		const sidecarDirectory = path.join(extensionPath, 'sidecar');
+		await mkdir(sidecarDirectory, { recursive: true });
+		await writeFile(path.join(sidecarDirectory, 'qarinah-memory-view.mjs'), 'fixture', 'utf8');
+
+		assert.deepStrictEqual(buildFikeyaRuntimeEnvironment(extensionPath, 'node.exe', { PATH: 'fixed-path' }), {
+			PATH: 'fixed-path',
+			FIKEYA_NODE_EXECUTABLE: 'node.exe',
+			FIKEYA_QARINAH_SIDECAR: path.join(sidecarDirectory, 'qarinah-memory-view.mjs')
+		});
 	});
 
 	test('does not invent Qarinah sidecar configuration for source-only installs', () => {

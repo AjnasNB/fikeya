@@ -217,6 +217,13 @@ export function buildFikeyaRuntimeEnvironment(
 	if (existsSync(sidecar)) {
 		result.FIKEYA_NODE_EXECUTABLE = nodeExecutable;
 		result.FIKEYA_QARINAH_SIDECAR = sidecar;
+		// Packaged extension hosts expose Electron as process.execPath. Explicitly
+		// opt that child process into Node mode before the Python runtime launches
+		// the extension-owned Qarinah sidecar. A normal node executable needs no
+		// override and remains usable in source tests and standalone hosts.
+		if (!/^node(?:\.exe)?$/i.test(path.basename(nodeExecutable))) {
+			result.ELECTRON_RUN_AS_NODE = '1';
+		}
 	}
 	return result;
 }
