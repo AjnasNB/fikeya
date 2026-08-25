@@ -23,12 +23,30 @@ The script only clears `release-artifacts` inside the repository. It builds Pyth
 
 Setting `AppPublisher` changes installer metadata but does not establish publisher trust. Windows displays a verified publisher only when the final executable carries a valid Authenticode signature chained to a trusted certificate.
 
-The release workflow signs when both repository secrets exist:
+The release workflow supports two real signing paths. The preferred path is Azure Artifact Signing with GitHub OIDC. It keeps the private signing key in Microsoft's managed signing service. Complete these one-time steps:
+
+1. create an Azure Artifact Signing account and complete its identity validation;
+2. create a public-trust certificate profile for the actual publisher name;
+3. create an Entra application with a GitHub federated credential restricted to `AjnasNB/fikeya` and the release environment or tag;
+4. grant that application `Artifact Signing Certificate Profile Signer` on the certificate profile;
+5. add these GitHub Actions secrets:
+   - `FIKEYA_AZURE_CLIENT_ID`
+   - `FIKEYA_AZURE_TENANT_ID`
+   - `FIKEYA_AZURE_SUBSCRIPTION_ID`
+6. add these GitHub Actions variables:
+   - `FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED=true`
+   - `FIKEYA_AZURE_ARTIFACT_SIGNING_ENDPOINT`
+   - `FIKEYA_AZURE_ARTIFACT_SIGNING_ACCOUNT`
+   - `FIKEYA_AZURE_ARTIFACT_SIGNING_PROFILE`
+
+The workflow signs only the final installer, verifies `Get-AuthenticodeSignature`, and then generates the checksums and release manifest. The pinned action is Microsoft's `Azure/artifact-signing-action` v2. A signed publisher identity and SmartScreen reputation are related but distinct: a new, valid publisher can still receive reputation prompts while downloads establish trust.
+
+The fallback path accepts an existing exportable code-signing certificate when both repository secrets exist:
 
 - `FIKEYA_SIGNING_PFX_BASE64`
 - `FIKEYA_SIGNING_PFX_PASSWORD`
 
-The signing certificate must belong to the actual publishing person or legal entity. Never commit the certificate or its password. After signing, the workflow verifies `Get-AuthenticodeSignature` before publishing the manifest and hashes.
+The signing certificate must belong to the actual publishing person or legal entity. Never commit the certificate or its password. Do not set the Azure toggle and PFX secrets for the same release. After signing, the workflow verifies `Get-AuthenticodeSignature` before publishing the manifest and hashes.
 
 ## Release gate
 

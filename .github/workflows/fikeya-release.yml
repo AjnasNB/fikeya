@@ -37,18 +37,41 @@ jobs:
         env:
           FIKEYA_SIGNING_PFX_BASE64: ${{ secrets.FIKEYA_SIGNING_PFX_BASE64 }}
           FIKEYA_SIGNING_PFX_PASSWORD: ${{ secrets.FIKEYA_SIGNING_PFX_PASSWORD }}
-        run: ./scripts/fikeya/package-release.ps1
+        run: ./scripts/fikeya/package-release.ps1 -SkipManifest
+      - name: Sign in to Azure for Artifact Signing
+        if: vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED == 'true'
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3
+        with:
+          client-id: ${{ secrets.FIKEYA_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.FIKEYA_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.FIKEYA_AZURE_SUBSCRIPTION_ID }}
+      - name: Sign installer with Azure Artifact Signing
+        if: vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED == 'true'
+        uses: azure/artifact-signing-action@c41ab607157e82e3ed79e291b56f9e7425818b04 # v2
+        with:
+          endpoint: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\release-artifacts
+          files-folder-filter: FikeyaSetup-*.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
       - name: Verify an Authenticode signature when signing credentials are configured
         shell: pwsh
         run: |
           $installer = Get-ChildItem release-artifacts/FikeyaSetup-*.exe | Select-Object -First 1
           $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
-          if ($env:FIKEYA_SIGNING_PFX_BASE64 -and $signature.Status -ne 'Valid') {
+          if (($env:FIKEYA_SIGNING_PFX_BASE64 -or $env:FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED -eq 'true') -and $signature.Status -ne 'Valid') {
             throw "Signing credentials were configured but the installer signature is $($signature.Status)."
           }
           Write-Host "Installer signature status: $($signature.Status)"
         env:
           FIKEYA_SIGNING_PFX_BASE64: ${{ secrets.FIKEYA_SIGNING_PFX_BASE64 }}
+          FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED }}
+      - name: Write checksums and release verification manifest
+        shell: pwsh
+        run: ./scripts/fikeya/write-release-manifest.ps1 -OutputDirectory release-artifacts
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: release-artifacts/*

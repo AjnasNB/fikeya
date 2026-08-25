@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
 	[string]$OutputDirectory = "",
-	[switch]$SkipDesktop
+	[switch]$SkipDesktop,
+	[switch]$SkipManifest
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,7 +94,9 @@ if (-not $SkipDesktop) {
 	}
 }
 
-& (Join-Path $PSScriptRoot "write-release-manifest.ps1") -OutputDirectory $outputPath
+if (-not $SkipManifest) {
+	& (Join-Path $PSScriptRoot "write-release-manifest.ps1") -OutputDirectory $outputPath
+}
 
 Write-Host "Fikeya release artifacts: $outputPath"
 Get-ChildItem -LiteralPath $outputPath -File | Sort-Object Name | Format-Table Name, Length
