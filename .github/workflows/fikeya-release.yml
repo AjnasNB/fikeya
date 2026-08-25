@@ -97,6 +97,7 @@ jobs:
           Push-Location site
           npm ci
           npm test
+          npm run build
           Pop-Location
           node --test scripts/fikeya/tests/capture_desktop_proof.test.ts
           node scripts/fikeya/capture-desktop-proof.ts --check
