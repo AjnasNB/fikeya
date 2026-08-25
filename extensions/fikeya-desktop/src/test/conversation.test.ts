@@ -6,7 +6,7 @@
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { appendConversationMessage, FikeyaConversationMessage } from '../conversation';
-import { buildPlanTimeline, buildRecordedPlanTimeline, extractPlanSteps, isChatInteractionBlocked, selectInitialPlanStepId } from '../surface';
+import { buildChatPlanSummary, buildPlanTimeline, buildRecordedPlanTimeline, extractPlanSteps, fikeyaNarrowPanelMaximumWidth, isChatInteractionBlocked, selectInitialPlanStepId } from '../surface';
 
 function message(index: number, content = `message ${index}`): FikeyaConversationMessage {
 	return {
@@ -117,5 +117,50 @@ describe('Fikeya plan surface', () => {
 			isChatInteractionBlocked({ agentRunning: false, planRunning: true, planCancellationInProgress: false }),
 			isChatInteractionBlocked({ agentRunning: false, planRunning: false, planCancellationInProgress: true })
 		], [false, true, true, true]);
+	});
+
+	test('summarizes the current or next durable step beside Chat', () => {
+		const reviewed = buildChatPlanSummary({
+			title: 'Inspect and repair',
+			status: 'reviewed',
+			steps: [
+				{ stepId: 'inspect', title: 'Inspect the project', order: 1, status: 'pending' },
+				{ stepId: 'repair', title: 'Repair the defect', order: 2, status: 'pending' }
+			]
+		});
+		const awaitingApproval = buildChatPlanSummary({
+			title: 'Inspect and repair',
+			status: 'awaiting_approval',
+			steps: [
+				{ stepId: 'inspect', title: 'Inspect the project', order: 1, status: 'succeeded' },
+				{ stepId: 'repair', title: 'Repair the defect', order: 2, status: 'awaiting_approval' }
+			]
+		});
+		const completed = buildChatPlanSummary({
+			title: 'Inspect and repair',
+			status: 'succeeded',
+			steps: [
+				{ stepId: 'inspect', title: 'Inspect the project', order: 1, status: 'succeeded' },
+				{ stepId: 'repair', title: 'Repair the defect', order: 2, status: 'succeeded' }
+			]
+		});
+
+		assert.deepStrictEqual({
+			reviewed: [reviewed.stepKind, reviewed.step?.stepId, reviewed.totalSteps],
+			approval: [awaitingApproval.stepKind, awaitingApproval.step?.stepId, awaitingApproval.totalSteps],
+			completed: [completed.stepKind, completed.step?.stepId, completed.totalSteps]
+		}, {
+			reviewed: ['next', 'inspect', 2],
+			approval: ['current', 'repair', 2],
+			completed: ['final', 'repair', 2]
+		});
+	});
+
+	test('keeps a 360 pixel beside-editor panel inside the compact layout contract', () => {
+		assert.deepStrictEqual({
+			compactAt360: 360 <= fikeyaNarrowPanelMaximumWidth,
+			compactAtBoundary: 420 <= fikeyaNarrowPanelMaximumWidth,
+			compactAboveBoundary: 421 <= fikeyaNarrowPanelMaximumWidth
+		}, { compactAt360: true, compactAtBoundary: true, compactAboveBoundary: false });
 	});
 });

@@ -37,7 +37,29 @@ export interface FikeyaChatInteractionInput {
 	readonly planCancellationInProgress: boolean;
 }
 
+export interface FikeyaChatPlanSummaryInput {
+	readonly title: string;
+	readonly status: FikeyaRecordedPlanTimelineInput['status'];
+	readonly steps: readonly {
+		readonly stepId: string;
+		readonly title: string;
+		readonly order: number;
+		readonly status: FikeyaPlanStepSelectionInput['status'];
+	}[];
+}
+
+export interface FikeyaChatPlanSummary {
+	readonly title: string;
+	readonly status: FikeyaRecordedPlanTimelineInput['status'];
+	readonly step?: FikeyaChatPlanSummaryInput['steps'][number];
+	readonly stepKind: 'current' | 'next' | 'final';
+	readonly totalSteps: number;
+}
+
 const stageIds: readonly FikeyaPlanStageId[] = ['draft', 'review', 'approval', 'execute', 'verify'];
+
+/** Width at which the beside-editor surface switches to its single-column compact layout. */
+export const fikeyaNarrowPanelMaximumWidth = 420;
 
 /**
  * Produces a deliberately coarse presentation timeline from the runtime state already exposed
@@ -86,6 +108,32 @@ export function selectInitialPlanStepId(steps: readonly FikeyaPlanStepSelectionI
 /** Keeps Chat mutually exclusive with a running or cancelling durable plan. */
 export function isChatInteractionBlocked(input: FikeyaChatInteractionInput): boolean {
 	return input.agentRunning || input.planRunning || input.planCancellationInProgress;
+}
+
+/** Builds the compact current-plan summary shown beside an active Chat conversation. */
+export function buildChatPlanSummary(plan: FikeyaChatPlanSummaryInput): FikeyaChatPlanSummary {
+	const terminal = plan.status === 'succeeded' || plan.status === 'failed' || plan.status === 'cancelled';
+	if (terminal) {
+		return {
+			title: plan.title,
+			status: plan.status,
+			step: plan.steps.find(step => step.status === 'failed' || step.status === 'cancelled') ?? plan.steps.at(-1),
+			stepKind: 'final',
+			totalSteps: plan.steps.length
+		};
+	}
+
+	const current = plan.steps.find(step => step.status === 'awaiting_approval'
+		|| step.status === 'approved'
+		|| step.status === 'executing'
+		|| step.status === 'verifying');
+	return {
+		title: plan.title,
+		status: plan.status,
+		step: current ?? plan.steps.find(step => step.status === 'pending') ?? plan.steps[0],
+		stepKind: current ? 'current' : 'next',
+		totalSteps: plan.steps.length
+	};
 }
 
 export function extractPlanSteps(plan: string | undefined, limit = 12): readonly string[] {
