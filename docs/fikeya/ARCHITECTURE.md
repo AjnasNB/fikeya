@@ -4,7 +4,7 @@ Fikeya is an AI code editor and coding-agent runtime first. Durable sessions and
 
 ## Status and reading guide
 
-Fikeya is a beta candidate. This document separates three different kinds of behavior:
+Fikeya 0.1.0-beta.1 is a public beta. This document separates three different kinds of behavior:
 
 - **Integrated now** is reachable through the current Desktop extension or `fikeya` CLI.
 - **Standalone component** has focused tests in this repository but is not yet connected to the Desktop/CLI product path.
@@ -80,7 +80,7 @@ These components have focused tests but are not yet one integrated Desktop/CLI e
 
 ## Target architecture requirements
 
-The following sections preserve the intended complete product architecture. They are release requirements, not claims about the current alpha.
+The following sections preserve the intended complete product architecture. They are stable-release requirements, not claims about the current beta.
 
 ### Target Desktop experience
 

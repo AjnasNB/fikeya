@@ -57,7 +57,7 @@ See [the security model](docs/fikeya/SECURITY.md) and [architecture](docs/fikeya
 
 ## Release status
 
-Fikeya is a public beta candidate. The current milestone covers the branded Code OSS desktop, focused VS Code extension, secure Python runtime and CLI, provider profiles, the reviewed plan-act-observe-review coding loop, exact one-use approvals, local usage statistics, Qarinah initialization and graph inspection, ACP and MCP interoperability packages, and opt-in browser and crawler presets. Stable release gates remain: signed Windows, macOS, and Linux artifacts, clean-install verification on all three platforms, and a verified Desktop update feed.
+Fikeya 0.1.0-beta.1 is the public beta. The current milestone covers the branded Code OSS desktop, focused VS Code extension, secure Python runtime and CLI, provider profiles, the reviewed plan-act-observe-review coding loop, exact one-use approvals, local usage statistics, Qarinah initialization and graph inspection, ACP and MCP interoperability packages, and opt-in browser and crawler presets. Stable release gates remain: signed Windows, macOS, and Linux artifacts, clean-install verification on all three platforms, and a verified Desktop update feed.
 
 The VS Code extension follows the host's extension update channel. Fikeya Desktop does not silently download or force an unsigned executable. A future mandatory-update policy must verify a signed release manifest before it can block an unsupported build.
 

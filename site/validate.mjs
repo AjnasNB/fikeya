@@ -62,7 +62,7 @@ assert(html.includes('selects task-relevant project evidence instead of replayin
 assert(html.includes('inspect measured token and verification receipts'), 'Measured receipt wording is missing');
 assert(html.includes('signed Desktop installers and a verified native update feed remain stable-release gates.'), 'Packaging and update release gates are missing');
 assert(!html.includes('reproducible VSIX packaging'), 'Unproven cross-platform reproducibility claim is present');
-assert(html.includes('Desktop, VS Code extension, and CLI beta candidate'), 'Public beta-candidate status is missing');
+assert(html.includes('Fikeya 0.1.0-beta.1 · Desktop, VS Code extension, and CLI'), 'Public beta status is missing');
 assert(!html.includes('stable release available'), 'The site must not claim a stable release before the release gates pass');
 assert(html.includes('src="/fikeya-desktop-beta-graph.jpg"'), 'Real memory capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-editor.jpg"'), 'Real editor capture is missing');

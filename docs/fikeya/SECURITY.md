@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Fikeya is a public beta candidate. This document distinguishes:
+Fikeya 0.1.0-beta.1 is a public beta. This document distinguishes:
 
 - **Current enforcement:** behavior enforced in the integrated Desktop/runtime path today.
 - **Standalone enforcement:** behavior implemented and tested in a component that is not yet wired into the product path.
@@ -67,7 +67,7 @@ The core exposes only an injected execution-broker interface. It does not itself
 
 The standalone interop gateway enforces root-bound shell-free stdio process specifications, command/environment allowlists, capability negotiation, cancellation, permission callbacks, bounded payloads, MCP tool allowlists, result/resource limits, and content-free receipts.
 
-It is not a sandbox or credential broker. An allowlisted child retains the operating-system permissions of the current user unless an external execution broker or OS sandbox restricts it. Remote ACP, MCP, and Codex WebSocket transports are excluded from the current alpha.
+It is not a sandbox or credential broker. An allowlisted child retains the operating-system permissions of the current user unless an external execution broker or OS sandbox restricts it. Remote ACP, MCP, and Codex WebSocket transports are excluded from the current beta.
 
 ### Protocol schemas
 
@@ -93,7 +93,7 @@ Tools must declare allowed hosts, methods, redirects, request sizes, response si
 
 A future plugin or marketplace package must declare its identifier, version, content hash, capabilities, license metadata, and signature or explicit local-trust decision. Unreviewed directories must not be auto-loaded. High-risk plugins require a sandboxed process with minimal filesystem and network policy.
 
-No general signed-plugin marketplace or production sandbox is claimed by the current alpha.
+No general signed-plugin marketplace or production sandbox is claimed by the current beta.
 
 ### Complete evidence
 

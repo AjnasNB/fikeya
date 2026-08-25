@@ -1,6 +1,6 @@
 # Provider Contract
 
-The public-alpha provider adapter contract covers profile discovery, bounded text responses, cancellation, token usage, and error classification. Streaming and tool-call normalization remain target adapter capabilities and are not represented as shipped runtime behavior.
+The public-beta provider adapter contract covers profile discovery, bounded text responses, cancellation, token usage, and error classification. Streaming and tool-call normalization remain target adapter capabilities and are not represented as shipped runtime behavior.
 
 ## Profile
 

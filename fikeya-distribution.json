@@ -1,8 +1,8 @@
 {
 	"schemaVersion": 1,
 	"name": "Fikeya",
-	"version": "0.1.0-alpha.1",
-	"status": "developer-alpha",
+	"version": "0.1.0-beta.1",
+	"status": "beta",
 	"description": "Open, provider-neutral AI code editor and coding-agent runtime for verified work with less context.",
 	"homepage": "https://fikeya.com",
 	"repository": "https://github.com/AjnasNB/fikeya",
