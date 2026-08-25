@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+	<title id="title">Fikeya</title>
+	<desc id="description">An ink F framed by mint code chevrons.</desc>
+	<path d="M31 38 16 64l15 26" fill="none" stroke="#22a97b" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+	<path d="m97 38 15 26-15 26" fill="none" stroke="#22a97b" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+	<path d="M53 24h42L84 40H65c-6 0-9 3-10 10l-1 6h27L71 71H52l-4 28-18 11 10-67c2-13 6-19 13-19Z" fill="#111716"/>
+</svg>

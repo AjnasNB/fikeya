@@ -1,0 +1,10 @@
+{
+  "$schema": "./interop-manifest.schema.json",
+  "version": 1,
+  "identifier": "codex-app-server",
+  "protocol": "codex-app-server",
+  "command": "codex",
+  "args": ["app-server", "--listen", "stdio://"],
+  "workingDirectory": ".",
+  "environment": {}
+}

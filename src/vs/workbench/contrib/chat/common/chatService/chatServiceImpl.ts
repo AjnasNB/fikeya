@@ -584,7 +584,13 @@ export class ChatService extends Disposable implements IChatService {
 		// Activate the default extension provided agent but do not wait
 		// for it to be ready so that the session can be used immediately
 		// without having to wait for the agent to be ready.
-		this.activateDefaultAgent(model.initialLocation).catch(e => this.logService.error(e));
+		this.activateDefaultAgent(model.initialLocation).catch(e => {
+			// A provider-neutral product can have contributed session agents without a
+			// global default. That is an expected state, not an initialization error.
+			if (!(e instanceof ErrorNoTelemetry && e.message === 'No default agent contributed')) {
+				this.logService.error(e);
+			}
+		});
 	}
 
 	async activateDefaultAgent(location: ChatAgentLocation): Promise<void> {
@@ -1113,7 +1119,15 @@ export class ChatService extends Disposable implements IChatService {
 		const location = options?.location ?? model.initialLocation;
 		const attempt = options?.attempt ?? 0;
 		const enableCommandDetection = !options?.noCommandDetection;
-		const defaultAgent = this.chatAgentService.getDefaultAgent(location, options?.modeInfo?.kind)!;
+		const requestedAgentId = options?.agentIdSilent ?? options?.agentId;
+		const requestedAgent = requestedAgentId ? this.chatAgentService.getAgent(requestedAgentId) : undefined;
+		const parsedAgent = request.message.parts.find((part): part is ChatRequestAgentPart => part instanceof ChatRequestAgentPart)?.agent;
+		const responseAgent = request.response?.agent;
+		const agent = requestedAgent ?? parsedAgent ?? responseAgent ?? this.chatAgentService.getDefaultAgent(location, options?.modeInfo?.kind);
+		if (!agent) {
+			this.logService.warn('resendRequest', `No agent for location ${location}`);
+			return;
+		}
 
 		model.removeRequest(request.id, ChatRequestRemovalReason.Resend);
 
@@ -1122,7 +1136,7 @@ export class ChatService extends Disposable implements IChatService {
 			locationData: request.locationData,
 			attachedContext: request.attachedContext,
 		};
-		await this._sendRequestAsync(model, model.sessionResource, request.message, attempt, enableCommandDetection, defaultAgent, location, resendOptions).responseCompletePromise;
+		await this._sendRequestAsync(model, model.sessionResource, request.message, attempt, enableCommandDetection, agent, location, resendOptions).responseCompletePromise;
 	}
 
 	private queuePendingRequest(model: ChatModel, sessionResource: URI, request: string, options: IChatSendRequestOptions): ChatSendResultQueued {
@@ -1236,14 +1250,15 @@ export class ChatService extends Disposable implements IChatService {
 		const location = options?.location ?? model.initialLocation;
 		const attempt = options?.attempt ?? 0;
 		const defaultAgent = this.chatAgentService.getDefaultAgent(location, options?.modeInfo?.kind);
-		if (!defaultAgent) {
-			this.logService.warn('sendRequest', `No default agent for location ${location}`);
-			return { kind: 'rejected', reason: 'No default agent available' };
-		}
-
 		const parsedRequest = this.parseChatRequest(sessionResource, request, location, options);
 		const silentAgent = options?.agentIdSilent ? this.chatAgentService.getAgent(options.agentIdSilent) : undefined;
-		const agent = silentAgent ?? parsedRequest.parts.find((r): r is ChatRequestAgentPart => r instanceof ChatRequestAgentPart)?.agent ?? defaultAgent;
+		const parsedAgent = parsedRequest.parts.find((r): r is ChatRequestAgentPart => r instanceof ChatRequestAgentPart)?.agent;
+		const agent = silentAgent ?? parsedAgent ?? defaultAgent;
+		if (!agent) {
+			this.logService.warn('sendRequest', `No agent for location ${location}`);
+			return { kind: 'rejected', reason: 'No agent available' };
+		}
+
 		const agentSlashCommandPart = parsedRequest.parts.find((r): r is ChatRequestAgentSubcommandPart => r instanceof ChatRequestAgentSubcommandPart);
 
 		// This method is only returning whether the request was accepted - don't block on the actual request
@@ -1251,7 +1266,7 @@ export class ChatService extends Disposable implements IChatService {
 			kind: 'sent',
 			newSessionResource,
 			data: {
-				...this._sendRequestAsync(model, sessionResource, parsedRequest, attempt, !options?.noCommandDetection, silentAgent ?? defaultAgent, location, options),
+				...this._sendRequestAsync(model, sessionResource, parsedRequest, attempt, !options?.noCommandDetection, agent, location, options),
 				agent,
 				slashCommand: agentSlashCommandPart?.command,
 			},
@@ -1950,13 +1965,6 @@ export class ChatService extends Disposable implements IChatService {
 
 		const location = sendOptions.location ?? sendOptions.locationData?.type ?? model.initialLocation;
 		const defaultAgent = this.chatAgentService.getDefaultAgent(location, sendOptions.modeInfo?.kind);
-		if (!defaultAgent) {
-			this.logService.warn('processNextPendingRequest', `No default agent for location ${location}`);
-			for (const deferred of deferreds) {
-				deferred.complete({ kind: 'rejected', reason: 'No default agent available' });
-			}
-			return;
-		}
 
 		// For multiple steering requests, combine texts and re-parse; otherwise use as-is
 		let parsedRequest: IParsedChatRequest;
@@ -1983,10 +1991,18 @@ export class ChatService extends Disposable implements IChatService {
 		}
 
 		const silentAgent = sendOptions.agentIdSilent ? this.chatAgentService.getAgent(sendOptions.agentIdSilent) : undefined;
-		const agent = silentAgent ?? parsedRequest.parts.find((r): r is ChatRequestAgentPart => r instanceof ChatRequestAgentPart)?.agent ?? defaultAgent;
+		const parsedAgent = parsedRequest.parts.find((r): r is ChatRequestAgentPart => r instanceof ChatRequestAgentPart)?.agent;
+		const agent = silentAgent ?? parsedAgent ?? defaultAgent;
+		if (!agent) {
+			this.logService.warn('processNextPendingRequest', `No agent for location ${location}`);
+			for (const deferred of deferreds) {
+				deferred.complete({ kind: 'rejected', reason: 'No agent available' });
+			}
+			return;
+		}
 		const agentSlashCommandPart = parsedRequest.parts.find((r): r is ChatRequestAgentSubcommandPart => r instanceof ChatRequestAgentSubcommandPart);
 
-		const responseState = this._sendRequestAsync(model, model.sessionResource, parsedRequest, firstRequest.request.attempt, !sendOptions.noCommandDetection, silentAgent ?? defaultAgent, location, sendOptions);
+		const responseState = this._sendRequestAsync(model, model.sessionResource, parsedRequest, firstRequest.request.attempt, !sendOptions.noCommandDetection, agent, location, sendOptions);
 
 		const result: ChatSendResultSent = {
 			kind: 'sent',

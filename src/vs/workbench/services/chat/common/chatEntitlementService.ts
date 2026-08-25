@@ -384,6 +384,9 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 
 	readonly context: Lazy<ChatEntitlementContext> | undefined;
 	readonly requests: Lazy<ChatEntitlementRequests> | undefined;
+	private fallbackHiddenContextKey: IContextKey<boolean> | undefined;
+	private environmentHidden = false;
+	private forceHidden = false;
 
 	constructor(
 		@IInstantiationService instantiationService: IInstantiationService,
@@ -448,12 +451,16 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 		this.sentimentObs = observableFromEvent(this.onDidChangeSentiment, () => this.sentiment);
 
 		if ((isWeb && !environmentService.remoteAuthority && !environmentService.isSessionsWindow)) {
-			ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService).set(true); // hide copilot UI on web if unsupported
+			this.initializeFallbackHiddenContext(true); // hide AI UI on web if unsupported
 			return;
 		}
 
 		if (!productService.defaultChatAgent) {
-			return; // we need a default chat agent configured going forward from here
+			// A product without a configured first-party chat agent must not inherit
+			// provider-specific setup, quota, or Copilot surfaces from the upstream
+			// workbench. Fikeya supplies its own provider-neutral runtime and panel.
+			this.initializeFallbackHiddenContext(true);
+			return; // provider-specific entitlement requests require a default chat agent
 		}
 
 		const context = this.context = new Lazy(() => this._register(instantiationService.createInstance(ChatEntitlementContext)));
@@ -730,11 +737,25 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 	setForceHidden(hidden: boolean): void {
 		if (this.context) {
 			this.context.value.setForceHidden(hidden);
-		} else {
-			// No ChatEntitlementContext (e.g. no defaultChatAgent in product.json).
-			// Set the context key directly as a fallback.
-			ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService).set(hidden);
+		} else if (this.forceHidden !== hidden) {
+			this.forceHidden = hidden;
+			this.updateFallbackHiddenContext();
 		}
+	}
+
+	private updateFallbackHiddenContext(): void {
+		this.fallbackHiddenContextKey?.set(this.environmentHidden || this.forceHidden || this.configurationService.getValue(ChatAIDisabledSettingId) === true);
+	}
+
+	private initializeFallbackHiddenContext(environmentHidden: boolean): void {
+		this.environmentHidden = environmentHidden;
+		this.fallbackHiddenContextKey = ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService);
+		this.updateFallbackHiddenContext();
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(ChatAIDisabledSettingId)) {
+				this.updateFallbackHiddenContext();
+			}
+		}));
 	}
 
 	async update(token: CancellationToken): Promise<void> {

@@ -63,10 +63,30 @@ async function ensureCompiled() {
 	}
 }
 
+async function ensureWindowsConptyRuntime() {
+	if (process.platform !== 'win32') {
+		return;
+	}
+
+	const architecture = process.arch === 'arm64' ? 'arm64' : 'x64';
+	const source = path.join(rootDir, 'node_modules', 'node-pty', 'prebuilds', `win32-${architecture}`, 'conpty');
+	const destination = path.join(rootDir, 'node_modules', 'node-pty', 'build', 'Release', 'conpty');
+
+	try {
+		await fs.access(source);
+		await fs.cp(source, destination, { recursive: true, force: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+			throw error;
+		}
+	}
+}
+
 async function main() {
 	await ensureNodeModules();
 	await getElectron();
 	await ensureCompiled();
+	await ensureWindowsConptyRuntime();
 
 	// Can't require this until after dependencies are installed
 	const { getBuiltInExtensions } = await import('./builtInExtensions.ts');

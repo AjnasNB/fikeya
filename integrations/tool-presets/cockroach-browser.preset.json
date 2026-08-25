@@ -1,0 +1,80 @@
+{
+  "$schema": "./preset.schema.json",
+  "schemaVersion": "fikeya.tool-preset.v1",
+  "id": "cockroach-browser",
+  "displayName": "Cockroach Browser",
+  "summary": "Observe authorized browser sessions and prepare canonical action proposals through an installed Cockroach Browser MCP server.",
+  "enabledByDefault": false,
+  "enablement": {
+    "mode": "explicit-user",
+    "scope": "workspace",
+    "confirmation": "required"
+  },
+  "transport": {
+    "type": "stdio",
+    "command": "cockroach-browser",
+    "args": [
+      "mcp"
+    ],
+    "shell": false
+  },
+  "dependency": {
+    "package": "cockroach-browser",
+    "versionRange": ">=0.2.1 <0.3.0",
+    "license": "AGPL-3.0-or-later",
+    "source": "https://github.com/AjnasNB/cockroach-browser",
+    "homepage": "https://cockroachbrowser.com"
+  },
+  "capabilities": {
+    "effect": "read-and-propose",
+    "allowedTools": [
+      "browser_capabilities",
+      "browser_health",
+      "browser_sessions",
+      "browser_snapshot",
+      "browser_capture",
+      "browser_network",
+      "browser_audit",
+      "browser_propose_action"
+    ],
+    "deniedCapabilities": [
+      "direct action dispatch",
+      "session creation",
+      "profile or login management",
+      "origin authority expansion"
+    ]
+  },
+  "environment": {
+    "fixed": {},
+    "configuration": [
+      {
+        "name": "COCKROACH_BROWSER_URL",
+        "required": false,
+        "format": "http-or-https-url-without-credentials"
+      }
+    ],
+    "secretReferences": [
+      {
+        "name": "COCKROACH_BROWSER_TOKEN",
+        "required": true,
+        "source": "os-credential-store"
+      }
+    ]
+  },
+  "limits": {
+    "startupTimeoutMs": 10000,
+    "requestTimeoutMs": 60000,
+    "shutdownTimeoutMs": 5000,
+    "maxConcurrentRequests": 1,
+    "maxRequestsPerSession": 100,
+    "maxSessionDurationMs": 1800000,
+    "maxRequestBytes": 1048576,
+    "maxResponseBytes": 8388608
+  },
+  "upstreamPolicyRequirements": [
+    "The browser daemon must authenticate the operator-selected token.",
+    "Every browser session must define explicit allowed origins and finite resource budgets.",
+    "Action proposals require a separate approval and dispatch path; this MCP preset does not execute them.",
+    "Login, consent, CAPTCHA, and access challenges require human handoff."
+  ]
+}

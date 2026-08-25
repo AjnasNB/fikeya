@@ -1,0 +1,3 @@
+state.sqlite3
+state.sqlite3-*
+*.tmp

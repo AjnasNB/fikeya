@@ -1,0 +1,25 @@
+{
+  "name": "@fikeya/protocol",
+  "version": "0.1.0",
+  "description": "Canonical typed interoperability contract for Fikeya component adapters.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "private": true,
+  "files": [
+    "dist",
+    "schema"
+  ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
+

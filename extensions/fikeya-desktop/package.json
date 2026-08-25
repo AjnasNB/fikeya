@@ -1,0 +1,164 @@
+{
+	"name": "fikeya-desktop",
+	"displayName": "%displayName%",
+	"description": "%description%",
+	"version": "0.1.0",
+	"publisher": "fikeya",
+	"license": "AGPL-3.0-or-later",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AjnasNB/fikeya.git",
+		"directory": "extensions/fikeya-desktop"
+	},
+	"engines": {
+		"vscode": "^1.110.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": false,
+			"description": "%capabilities.untrustedWorkspaces%"
+		}
+	},
+	"activationEvents": [
+		"onView:fikeya.dashboard",
+		"onCommand:fikeya.open",
+		"onCommand:fikeya.configureProvider",
+		"onCommand:fikeya.initializeWorkspace",
+		"onCommand:fikeya.runDoctor",
+		"onCommand:fikeya.mode.research"
+	],
+	"main": "./out/extension",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "fikeya",
+					"icon": "media/fikeya.svg",
+					"title": "%container.title%"
+				}
+			]
+		},
+		"views": {
+			"fikeya": [
+				{
+					"id": "fikeya.dashboard",
+					"name": "%view.dashboard.name%",
+					"type": "webview",
+					"contextualTitle": "%view.dashboard.contextualTitle%"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "fikeya.open",
+				"title": "%command.open.title%",
+				"category": "%command.category%",
+				"icon": "$(sparkle)"
+			},
+			{
+				"command": "fikeya.configureProvider",
+				"title": "%command.configureProvider.title%",
+				"category": "%command.category%",
+				"icon": "$(key)"
+			},
+			{
+				"command": "fikeya.initializeWorkspace",
+				"title": "%command.initializeWorkspace.title%",
+				"category": "%command.category%",
+				"icon": "$(database)"
+			},
+			{
+				"command": "fikeya.runDoctor",
+				"title": "%command.runDoctor.title%",
+				"category": "%command.category%",
+				"icon": "$(pulse)"
+			},
+			{
+				"command": "fikeya.mode.editor",
+				"title": "%command.mode.editor.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.agent",
+				"title": "%command.mode.agent.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.terminal",
+				"title": "%command.mode.terminal.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.review",
+				"title": "%command.mode.review.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.lab",
+				"title": "%command.mode.lab.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			},
+			{
+				"command": "fikeya.mode.research",
+				"title": "%command.mode.research.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.isDesktop"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "fikeya.open",
+				"key": "ctrl+alt+l",
+				"mac": "cmd+alt+l"
+			},
+			{
+				"command": "fikeya.mode.lab",
+				"key": "ctrl+alt+g",
+				"mac": "cmd+alt+g"
+			}
+		],
+		"themes": [
+			{
+				"label": "Fikeya Dark",
+				"uiTheme": "vs-dark",
+				"path": "./themes/fikeya-dark-color-theme.json"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "fikeya.runDoctor",
+					"when": "view == fikeya.dashboard",
+					"group": "navigation@1"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"compile": "npx gulp compile-extension:fikeya-desktop",
+		"watch": "npx gulp watch-extension:fikeya-desktop",
+		"typecheck": "tsc --project ./tsconfig.json --noEmit",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
+		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
+		"check:vsix": "node ./scripts/inspect-vsix.mjs",
+		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",
+		"package:vsix": "npm run build:vsix && npm run check:vsix && npm run test:isolated-vsix"
+	},
+	"devDependencies": {
+		"@types/node": "24.x",
+		"@vscode/vsce": "3.9.2",
+		"esbuild": "0.28.1",
+		"qarinah": "0.4.0",
+		"typescript": "^5.9.3",
+		"yauzl": "3.2.1"
+	}
+}

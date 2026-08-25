@@ -1,0 +1,102 @@
+[CmdletBinding()]
+param(
+	[string]$OutputDirectory = "",
+	[switch]$SkipDesktop,
+	[switch]$SkipManifest
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+	$OutputDirectory = Join-Path $repositoryRoot "release-artifacts"
+}
+$outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
+$rootPrefix = $repositoryRoot.TrimEnd('\') + '\'
+if (-not $outputPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+	throw "Release output must remain inside the repository: $outputPath"
+}
+if ($outputPath -eq $repositoryRoot) {
+	throw "Release output cannot be the repository root."
+}
+
+if (Test-Path -LiteralPath $outputPath) {
+	Remove-Item -LiteralPath $outputPath -Recurse -Force
+}
+New-Item -ItemType Directory -Path $outputPath | Out-Null
+
+function Invoke-Checked {
+	param([string]$WorkingDirectory, [string]$FilePath, [string[]]$Arguments)
+	Push-Location $WorkingDirectory
+	try {
+		& $FilePath @Arguments
+		if ($LASTEXITCODE -ne 0) {
+			throw "$FilePath failed with exit code $LASTEXITCODE in $WorkingDirectory"
+		}
+	} finally {
+		Pop-Location
+	}
+}
+
+Invoke-Checked $repositoryRoot "python" @("-m", "pip", "install", "--disable-pip-version-check", "--upgrade", "build")
+foreach ($component in @("fikeya-agent-core", "fikeya-runtime", "integrations\fikeya-interop")) {
+	Invoke-Checked (Join-Path $repositoryRoot $component) "python" @("-m", "build", "--outdir", $outputPath)
+}
+
+$extensionRoot = Join-Path $repositoryRoot "extensions\fikeya-desktop"
+Invoke-Checked $extensionRoot "npm" @("ci")
+Invoke-Checked $extensionRoot "npm" @("run", "package:vsix")
+Copy-Item -LiteralPath (Join-Path $extensionRoot "artifacts\fikeya-desktop-0.1.0-win32-x64.vsix") -Destination $outputPath
+
+$cliInstall = @"
+Fikeya CLI 0.1.0-beta.1
+
+1. Extract this archive.
+2. Create and activate a Python 3.10+ virtual environment.
+3. Install the Agent Core wheel, then the Runtime wheel:
+
+   python -m pip install fikeya_agent_core-0.1.0b1-py3-none-any.whl
+   python -m pip install fikeya_runtime-0.1.0b1-py3-none-any.whl
+
+4. Verify the installation:
+
+   fikeya --help
+   fikeya init .
+   fikeya doctor .
+"@
+$cliInstallPath = Join-Path $outputPath "FIKEYA-CLI-INSTALL.txt"
+$cliInstall | Set-Content -LiteralPath $cliInstallPath -Encoding utf8
+$cliBundle = Join-Path $outputPath "fikeya-cli-0.1.0-beta.1.zip"
+$cliFiles = Get-ChildItem -LiteralPath $outputPath -File | Where-Object { $_.Extension -eq ".whl" -or $_.Name -eq "FIKEYA-CLI-INSTALL.txt" }
+Compress-Archive -LiteralPath $cliFiles.FullName -DestinationPath $cliBundle -CompressionLevel Optimal
+
+if (-not $SkipDesktop) {
+	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "compile-build-without-mangling")
+	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64")
+	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64-user-setup")
+	$setupSource = Join-Path $repositoryRoot ".build\win32-x64\user-setup\FikeyaSetup.exe"
+	if (-not (Test-Path -LiteralPath $setupSource)) {
+		throw "Windows installer was not produced at $setupSource"
+	}
+	$setupTarget = Join-Path $outputPath "FikeyaSetup-0.1.0-beta.1-win32-x64.exe"
+	Copy-Item -LiteralPath $setupSource -Destination $setupTarget
+
+	if ($env:FIKEYA_SIGNING_PFX_BASE64 -and $env:FIKEYA_SIGNING_PFX_PASSWORD) {
+		$pfxPath = Join-Path $env:TEMP "fikeya-release-signing.pfx"
+		try {
+			[System.IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:FIKEYA_SIGNING_PFX_BASE64))
+			& signtool sign /f $pfxPath /p $env:FIKEYA_SIGNING_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $setupTarget
+			if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE" }
+		} finally {
+			if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
+		}
+	}
+}
+
+if (-not $SkipManifest) {
+	& (Join-Path $PSScriptRoot "write-release-manifest.ps1") -OutputDirectory $outputPath
+}
+
+Write-Host "Fikeya release artifacts: $outputPath"
+Get-ChildItem -LiteralPath $outputPath -File | Sort-Object Name | Format-Table Name, Length

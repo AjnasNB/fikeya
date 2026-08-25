@@ -1,0 +1,33 @@
+# Fikeya memory indexes product-owned code and integration boundaries.
+# The imported Code OSS base remains available to the editor, but indexing its
+# upstream implementation would exceed the reviewed bounded scanner budget.
+.agents/
+.config/
+.devcontainer/
+.eslint-plugin-local/
+.pytest_cache/
+.ruff_cache/
+.vscode/
+build/
+cli/
+node_modules/
+remote/
+resources/
+src/
+test/
+
+# Keep only Fikeya-owned slices inside large upstream directories.
+docs/*
+!docs/fikeya/
+extensions/*
+!extensions/fikeya-desktop/
+packages/*
+!packages/fikeya-protocol/
+scripts/*
+!scripts/fikeya/
+
+# Keep only Fikeya's focused automation.
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/fikeya-components.yml

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fikeya-runtime"
+version = "0.1.0b1"
+description = "Provider-neutral runtime, bounded-context compiler, and safety boundary for the Fikeya AI code editor."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+authors = [
+  { name = "Ajnas N B" },
+]
+dependencies = [
+  "fikeya-agent-core==0.1.0b1",
+  "keyring>=25.6,<27",
+]
+keywords = ["ai", "ai-code-editor", "coding-agent", "context-management", "developer-tools", "provider-neutral"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development",
+]
+
+[project.optional-dependencies]
+azure = [
+  "azure-identity>=1.20,<2",
+]
+test = [
+  "pytest>=8.3,<10",
+]
+
+[project.scripts]
+fikeya = "fikeya_runtime.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fikeya_runtime = ["py.typed", "presets/*.preset.json"]
+
+[tool.uv.sources]
+fikeya-agent-core = { path = "../fikeya-agent-core" }
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]

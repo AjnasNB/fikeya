@@ -1,0 +1,8 @@
+Fikeya Agent Core
+Copyright (C) 2026 Fikeya contributors
+
+This package is licensed under the GNU Affero General Public License,
+version 3 or (at your option) any later version. See LICENSE.
+
+The package does not include model-provider credentials, a shell, an execution
+broker, LangGraph, Deep Agents, or provider SDKs.

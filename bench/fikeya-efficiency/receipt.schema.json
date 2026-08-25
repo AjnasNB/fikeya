@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fikeya.com/schemas/efficiency-run-receipt-1.0.0.json",
+  "title": "Fikeya efficiency benchmark run receipt",
+  "description": "One completed, independently gradeable task attempt. JSONL inputs contain one receipt per line.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "arm",
+    "runId",
+    "task",
+    "model",
+    "agent",
+    "conditions",
+    "environment",
+    "limits",
+    "pricing",
+    "outcome",
+    "usage",
+    "timing"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "arm": { "enum": ["baseline", "fikeya"] },
+    "runId": { "type": "string", "minLength": 1 },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suite", "suiteVersion", "taskId", "trial", "promptSha256", "startingStateSha256", "graderSha256"],
+      "properties": {
+        "suite": { "type": "string", "minLength": 1 },
+        "suiteVersion": { "type": "string", "minLength": 1 },
+        "taskId": { "type": "string", "minLength": 1 },
+        "trial": { "type": "integer", "minimum": 1 },
+        "promptSha256": { "$ref": "#/$defs/sha256" },
+        "startingStateSha256": { "$ref": "#/$defs/sha256" },
+        "graderSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "name", "apiVersion", "reasoningEffort", "temperature", "maxOutputTokens"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "apiVersion": { "type": "string", "minLength": 1 },
+        "reasoningEffort": { "type": "string", "minLength": 1 },
+        "temperature": { "type": "number", "minimum": 0 },
+        "maxOutputTokens": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "configSha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "configSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolContractSha256", "networkAllowlistSha256"],
+      "properties": {
+        "toolContractSha256": { "$ref": "#/$defs/sha256" },
+        "networkAllowlistSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["imageDigest", "os", "architecture", "networkPolicy"],
+      "properties": {
+        "imageDigest": { "type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$" },
+        "os": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "networkPolicy": { "enum": ["disabled", "allowlist", "unrestricted"] }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wallClockMs", "maxTurns", "maxToolCalls", "maxRetries"],
+      "properties": {
+        "wallClockMs": { "type": "integer", "minimum": 1 },
+        "maxTurns": { "type": "integer", "minimum": 1 },
+        "maxToolCalls": { "type": "integer", "minimum": 1 },
+        "maxRetries": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "snapshotDate", "uncachedInputPerMillion", "cachedInputPerMillion", "outputPerMillion"],
+      "properties": {
+        "currency": { "const": "USD" },
+        "snapshotDate": { "type": "string", "format": "date" },
+        "uncachedInputPerMillion": { "type": "number", "minimum": 0 },
+        "cachedInputPerMillion": { "type": "number", "minimum": 0 },
+        "outputPerMillion": { "type": "number", "minimum": 0 }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verified", "testsPassed", "testsTotal"],
+      "properties": {
+        "verified": { "type": "boolean" },
+        "testsPassed": { "type": "integer", "minimum": 0 },
+        "testsTotal": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uncachedInputTokens", "cachedInputTokens", "outputTokens", "reasoningTokens", "toolFeesUsd"],
+      "properties": {
+        "uncachedInputTokens": { "type": "integer", "minimum": 0 },
+        "cachedInputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "reasoningTokens": { "type": "integer", "minimum": 0 },
+        "toolFeesUsd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs"],
+      "properties": {
+        "durationMs": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    }
+  }
+}

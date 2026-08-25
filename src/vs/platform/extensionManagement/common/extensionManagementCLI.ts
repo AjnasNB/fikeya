@@ -386,7 +386,7 @@ export class ExtensionManagementCLI {
 	}
 
 	private validateBuiltinExtensionEnabledWithAutoUpdates(extension: ILocalExtension): string | undefined {
-		if (extension.isBuiltin && this.productService.builtInExtensionsEnabledWithAutoUpdates.some(e => e.toLowerCase() === extension.identifier.id.toLowerCase()) && !extension.forceAutoUpdate) {
+		if (extension.isBuiltin && this.productService.builtInExtensionsEnabledWithAutoUpdates?.some(e => e.toLowerCase() === extension.identifier.id.toLowerCase()) && !extension.forceAutoUpdate) {
 			return localize('builtinAutoUpdate', "Extension '{0}' is a built-in extension and not allowed to be updated in the current product quality '{1}'.", extension.identifier.id, this.productService.quality);
 		}
 		return undefined;

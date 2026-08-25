@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Application, Logger } from '../../../../automation';
-import { installAllHandlers } from '../../utils';
+import { installAllHandlers, retry } from '../../utils';
 
 export function setup(logger: Logger) {
 	describe('Chat Disabled', () => {
@@ -20,30 +20,32 @@ export function setup(logger: Logger) {
 			// await for setting to apply in the UI
 			await app.code.waitForElements('.noauxiliarybar', true, elements => elements.length === 1);
 
-			// assert that AI related commands are not present
-			let expectedFound = false;
-			const unexpectedFound: Set<string> = new Set();
-			for (const term of ['chat', 'agent', 'copilot', 'mcp']) {
-				const commands = await app.workbench.quickaccess.getVisibleCommandNames(term);
-				for (const command of commands) {
-					if (command === 'Chat: Use AI Features with Copilot for free...') {
-						expectedFound = true;
-						continue;
-					}
+			// A remote extension host cannot be hot-restarted independently of the
+			// remote workbench. Once the setting has disabled every managed AI
+			// extension, reload the remote window so none of those extensions are
+			// activated again. Local extension hosts can be restarted in place.
+			if (app.remote) {
+				await app.code.reloadWindow(() => app.workbench.quickaccess.runCommand('Developer: Reload Window', { keepOpen: true }));
+				await app.code.waitForElements('.noauxiliarybar', true, elements => elements.length === 1);
+			}
 
-					if (command.includes('Chat') || command.includes('Agent') || command.includes('Copilot') || command.includes('MCP')) {
-						unexpectedFound.add(command);
+			// Keep the strict zero-command assertion while allowing local extension-host
+			// teardown and command-palette indexing to settle.
+			await retry(async () => {
+				const unexpectedFound: Set<string> = new Set();
+				for (const term of ['chat', 'agent', 'copilot', 'mcp']) {
+					const commands = await app.workbench.quickaccess.getVisibleCommandNames(term);
+					for (const command of commands) {
+						if (command.includes('Chat') || command.includes('Agent') || command.includes('Copilot') || command.includes('MCP')) {
+							unexpectedFound.add(command);
+						}
 					}
 				}
-			}
 
-			if (!expectedFound) {
-				throw new Error(`Expected AI related command not found`);
-			}
-
-			if (unexpectedFound.size > 0) {
-				throw new Error(`Unexpected AI related commands found after having disabled AI features: ${JSON.stringify(Array.from(unexpectedFound), undefined, 0)}`);
-			}
+				if (unexpectedFound.size > 0) {
+					throw new Error(`Unexpected AI related commands found after having disabled AI features: ${JSON.stringify(Array.from(unexpectedFound), undefined, 0)}`);
+				}
+			}, 500, 60);
 		});
 	});
 }

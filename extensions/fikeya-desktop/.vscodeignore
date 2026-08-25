@@ -1,0 +1,12 @@
+.package/**
+.runtime-build/**
+.gitignore
+artifacts/**
+node_modules/**
+scripts/**
+src/**
+out/test/**
+*.vsix
+package-lock.json
+runtime-build-requirements.txt
+tsconfig.json

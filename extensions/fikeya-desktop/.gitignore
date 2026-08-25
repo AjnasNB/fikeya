@@ -1,0 +1,4 @@
+.package/
+artifacts/
+.qarinah-bundle-*
+.runtime-build/

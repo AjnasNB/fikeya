@@ -54,3 +54,15 @@ dist
 .v[0-9]*/
 # Local agent validation evidence
 .agent-validation/
+
+# Python component build and test caches
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Generated packaged runtime used by local VSIX verification
+/extensions/fikeya-desktop/runtime/
+
+# Generated release bundles are attached to GitHub releases, not committed.
+/release-artifacts/

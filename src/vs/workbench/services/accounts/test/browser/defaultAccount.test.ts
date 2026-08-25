@@ -25,8 +25,28 @@ import { AuthenticationSession, IAuthenticationExtensionsService, IAuthenticatio
 import { IWorkbenchEnvironmentService } from '../../../environment/common/environmentService.js';
 import { IExtensionService } from '../../../extensions/common/extensions.js';
 import { IHostService } from '../../../host/browser/host.js';
-import { DefaultAccountProvider } from '../../browser/defaultAccount.js';
+import { DefaultAccountProvider, DefaultAccountService } from '../../browser/defaultAccount.js';
 import { TestProductService } from '../../../../test/common/workbenchTestServices.js';
+
+suite('DefaultAccountService provider-neutral product', () => {
+
+	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('stays available without a provider-specific default chat agent', async () => {
+		const service = disposables.add(new DefaultAccountService({
+			...TestProductService,
+			defaultChatAgent: undefined,
+		}));
+
+		assert.deepStrictEqual(service.getDefaultAccountAuthenticationProvider(), {
+			id: '',
+			name: '',
+			enterprise: false,
+		});
+		assert.strictEqual(await service.getDefaultAccount(), null);
+		assert.strictEqual(await service.signIn(), null);
+	});
+});
 
 suite('DefaultAccountProvider managed settings', () => {
 

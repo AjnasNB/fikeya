@@ -1,0 +1,6 @@
+-c ../../scripts/fikeya/runtime-constraints.txt
+azure-identity==1.25.3
+setuptools==80.9.0
+pyinstaller==6.22.2
+keyring==25.7.0
+pywin32-ctypes==0.2.3; sys_platform == "win32"

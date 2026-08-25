@@ -1,0 +1,279 @@
+name: Fikeya components
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/fikeya-components.yml'
+      - 'bench/fikeya-efficiency/**'
+      - 'build/filters.ts'
+      - 'build/gulpfile.hygiene.ts'
+      - 'extensions/fikeya-desktop/**'
+      - 'fikeya-agent-core/**'
+      - 'fikeya-runtime/**'
+      - 'integrations/fikeya-interop/**'
+      - 'integrations/qarinah-sidecar/**'
+      - 'integrations/tool-presets/**'
+      - 'packages/fikeya-protocol/**'
+      - 'product.json'
+      - 'LICENSE.txt'
+      - 'scripts/fikeya/**'
+      - 'site/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/fikeya-components.yml'
+      - 'bench/fikeya-efficiency/**'
+      - 'build/filters.ts'
+      - 'build/gulpfile.hygiene.ts'
+      - 'extensions/fikeya-desktop/**'
+      - 'fikeya-agent-core/**'
+      - 'fikeya-runtime/**'
+      - 'integrations/fikeya-interop/**'
+      - 'integrations/qarinah-sidecar/**'
+      - 'integrations/tool-presets/**'
+      - 'packages/fikeya-protocol/**'
+      - 'product.json'
+      - 'LICENSE.txt'
+      - 'scripts/fikeya/**'
+      - 'site/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fikeya-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-foundation:
+    name: Desktop product foundation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify product identity, license boundaries, and package inputs
+        run: python scripts/fikeya/verify_desktop_foundation.py
+
+  bootstrap-preflight:
+    name: Bootstrap preflight / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: '3.10'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: macos-latest
+            python: '3.13'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify bootstrap parsing and path safety
+        run: python -m unittest discover -s scripts/fikeya/tests -v
+      - name: Run Windows preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/fikeya/bootstrap.ps1 -CheckOnly
+      - name: Run macOS and Linux preflight
+        if: runner.os != 'Windows'
+        shell: sh
+        run: sh scripts/fikeya/bootstrap.sh --check-only
+
+  protocol:
+    name: Protocol / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: packages/fikeya-protocol
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: packages/fikeya-protocol/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+
+  efficiency-benchmark:
+    name: Efficiency benchmark contract / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: bench/fikeya-efficiency
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - run: npm run compare:fixtures
+
+  memory-sidecar:
+    name: Qarinah sidecar / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: integrations/qarinah-sidecar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: integrations/qarinah-sidecar/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+
+  interop:
+    name: ACP, Codex, and MCP interoperability
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/fikeya-interop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the lockfile-compatible uv client
+        run: python -m pip install --disable-pip-version-check uv==0.7.8
+      - name: Install the locked test environment
+        run: uv sync --locked --extra test
+      - run: uv run ruff check src tests
+      - run: uv run pytest
+
+  tool-presets:
+    name: Opt-in tool preset contracts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/tool-presets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm run check
+      - run: npm test
+
+  runtime:
+    name: Runtime / ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: '3.10'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: macos-latest
+            python: '3.13'
+    defaults:
+      run:
+        working-directory: fikeya-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            fikeya-runtime/pyproject.toml
+            fikeya-agent-core/pyproject.toml
+      - run: python -m pip install --disable-pip-version-check --upgrade pip
+      - name: Install the runtime and its source agent core
+        run: python -m pip install -e ../fikeya-agent-core -e ".[test,azure]"
+      - run: python -m pytest
+
+  agent-core:
+    name: Agent core / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    defaults:
+      run:
+        working-directory: fikeya-agent-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: fikeya-agent-core/pyproject.toml
+      - run: python -m pip install --disable-pip-version-check --upgrade pip build
+      - run: python -m pip install -e ".[test]"
+      - run: python -m ruff check .
+      - run: python -m pytest
+      - run: python -m build --wheel
+      - run: python -m pip install --force-reinstall dist/*.whl
+      - run: python -c "import fikeya_agent_core; print(fikeya_agent_core.__file__)"
+
+  desktop-extension:
+    name: Desktop extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/fikeya-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: extensions/fikeya-desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --ignore-scripts
+      - name: Install pinned standalone-runtime build dependencies
+        run: python -m pip install --disable-pip-version-check -r runtime-build-requirements.txt
+      - name: Test and package an isolated VSIX
+        run: npm run package:vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fikeya-desktop-linux-x64-vsix
+          path: extensions/fikeya-desktop/artifacts/*.vsix
+          if-no-files-found: error
+
+  public-site:
+    name: Public site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test

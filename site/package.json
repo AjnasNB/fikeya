@@ -1,0 +1,17 @@
+{
+	"name": "fikeya-site",
+	"private": true,
+	"type": "module",
+	"version": "0.0.0",
+	"scripts": {
+		"build": "node build.mjs",
+		"test": "node validate.mjs",
+		"deploy": "npm run build && wrangler pages deploy dist --project-name fikeya-site",
+		"deploy:worker": "npm run build && wrangler deploy --config wrangler.worker.jsonc"
+	},
+	"devDependencies": {
+		"@fontsource/ibm-plex-mono": "^5.3.0",
+		"@fontsource/ibm-plex-sans": "^5.3.0",
+		"wrangler": "^4.83.0"
+	}
+}

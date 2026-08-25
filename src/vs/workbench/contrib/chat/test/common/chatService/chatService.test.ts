@@ -2243,6 +2243,58 @@ suite('ChatService', () => {
 		]);
 	});
 
+	test('silent non-default agents can send, queue, and resend without a mode default', async () => {
+		const agentId = 'agent-host-copilotcli';
+		const invokedMessages: string[] = [];
+		const agentModeInfo = {
+			kind: ChatModeKind.Agent,
+			isBuiltin: true,
+			modeInstructions: undefined,
+			telemetryModeId: 'agent' as const,
+			applyCodeBlockSuggestionId: undefined,
+		};
+
+		testDisposables.add(chatAgentService.registerAgent(agentId, {
+			...getAgentData(agentId),
+			modes: [ChatModeKind.Agent],
+			isDefault: false,
+		}));
+		testDisposables.add(chatAgentService.registerAgentImplementation(agentId, {
+			async invoke(request) {
+				invokedMessages.push(request.message);
+				return {};
+			},
+		}));
+
+		assert.strictEqual(chatAgentService.getDefaultAgent(ChatAgentLocation.Chat, ChatModeKind.Agent), undefined);
+
+		const testService = createChatService();
+		const directModel = startSessionModel(testService).object;
+		const direct = await testService.sendRequest(directModel.sessionResource, 'direct request', {
+			agentIdSilent: agentId,
+			modeInfo: agentModeInfo,
+		});
+		ChatSendResult.assertSent(direct);
+		await direct.data.responseCompletePromise;
+
+		const firstRequest = directModel.getRequests()[0];
+		assert.ok(firstRequest);
+		await testService.resendRequest(firstRequest);
+
+		const queuedModel = startSessionModel(testService).object;
+		const queued = await testService.sendRequest(queuedModel.sessionResource, 'queued request', {
+			agentIdSilent: agentId,
+			modeInfo: agentModeInfo,
+			queue: ChatRequestQueueKind.Queued,
+		});
+		assert.ok(ChatSendResult.isQueued(queued));
+		const queuedResult = await queued.deferred;
+		ChatSendResult.assertSent(queuedResult);
+		await queuedResult.data.responseCompletePromise;
+
+		assert.deepStrictEqual(invokedMessages, ['direct request', 'direct request', 'queued request']);
+	});
+
 	test('loadRemoteSession passes agent host session capabilities to the request parser', async () => {
 		const sessionType = 'agent-host-copilot';
 		const sessionResource = URI.from({ scheme: sessionType, path: '/session-with-history' });

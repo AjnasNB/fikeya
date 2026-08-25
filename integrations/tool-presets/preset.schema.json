@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fikeya.dev/schemas/tool-preset.v1.json",
+  "title": "Fikeya external tool preset",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "displayName",
+    "summary",
+    "enabledByDefault",
+    "enablement",
+    "transport",
+    "dependency",
+    "capabilities",
+    "environment",
+    "limits",
+    "upstreamPolicyRequirements"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": "fikeya.tool-preset.v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,63}$"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "enabledByDefault": {
+      "const": false
+    },
+    "enablement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "scope",
+        "confirmation"
+      ],
+      "properties": {
+        "mode": {
+          "const": "explicit-user"
+        },
+        "scope": {
+          "const": "workspace"
+        },
+        "confirmation": {
+          "const": "required"
+        }
+      }
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "command",
+        "args",
+        "shell"
+      ],
+      "properties": {
+        "type": {
+          "const": "stdio"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "shell": {
+          "const": false
+        }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "versionRange",
+        "license",
+        "source",
+        "homepage"
+      ],
+      "properties": {
+        "package": {
+          "type": "string"
+        },
+        "versionRange": {
+          "type": "string"
+        },
+        "license": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "format": "uri"
+        },
+        "homepage": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect",
+        "allowedTools",
+        "deniedCapabilities"
+      ],
+      "properties": {
+        "effect": {
+          "enum": [
+            "read-only",
+            "read-and-propose"
+          ]
+        },
+        "allowedTools": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,63}$"
+          }
+        },
+        "deniedCapabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixed",
+        "configuration",
+        "secretReferences"
+      ],
+      "properties": {
+        "fixed": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "configuration": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "required",
+              "format"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{1,79}$"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "format": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "secretReferences": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "required",
+              "source"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{1,79}$"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "os-credential-store",
+                  "session-secret"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startupTimeoutMs",
+        "requestTimeoutMs",
+        "shutdownTimeoutMs",
+        "maxConcurrentRequests",
+        "maxRequestsPerSession",
+        "maxSessionDurationMs",
+        "maxRequestBytes",
+        "maxResponseBytes"
+      ],
+      "properties": {
+        "startupTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 30000
+        },
+        "requestTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        },
+        "shutdownTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 30000
+        },
+        "maxConcurrentRequests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxRequestsPerSession": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "maxSessionDurationMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        },
+        "maxRequestBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 8388608
+        },
+        "maxResponseBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 8388608
+        }
+      }
+    },
+    "upstreamPolicyRequirements": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      }
+    }
+  }
+}

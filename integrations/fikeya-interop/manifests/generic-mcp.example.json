@@ -1,0 +1,11 @@
+{
+  "$schema": "./interop-manifest.schema.json",
+  "version": 1,
+  "identifier": "example-mcp-server",
+  "protocol": "mcp",
+  "command": "your-mcp-server",
+  "args": ["--stdio"],
+  "workingDirectory": ".",
+  "environment": {},
+  "toolAllowlist": ["example-mcp-server/read_*"]
+}

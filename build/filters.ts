@@ -22,6 +22,14 @@ export const all = Object.freeze<string[]>([
 	'scripts/**/*',
 	'src/**/*',
 	'test/**/*',
+	// Fikeya-owned packages run their own format, SPDX, and component checks.
+	// Keep the upstream Code OSS hygiene policy scoped to upstream sources.
+	'!bench/fikeya-efficiency/**',
+	'!extensions/fikeya-desktop/**',
+	'!integrations/**',
+	'!packages/fikeya-protocol/**',
+	'!site/**',
+	'!scripts/fikeya/**',
 	'!cli/**/*',
 	'!out*/**',
 	'!extensions/**/out*/**',
@@ -102,6 +110,9 @@ export const indentationFilter = Object.freeze<string[]>([
 	'!build/ext.js',
 	'!build/darwin/patch-dmg.py',
 	'!build/npm/gyp/patches/gyp_spectre_mitigation_support.patch',
+	// Fikeya-owned Python uses PEP 8 indentation and its own SPDX license headers.
+	'!scripts/fikeya/**/*.py',
+	'!extensions/fikeya-desktop/**/*.py',
 	'!product.overrides.json',
 	'!src/vs/platform/endpoint/common/licenseAgreement.ts',
 
@@ -202,6 +213,10 @@ export const copyrightFilter = Object.freeze<string[]>([
 	'!**/*.provisionprofile',
 	'!build/**/*.init',
 	'!build/darwin/patch-dmg.py',
+	// Fikeya-owned Python files retain AGPL SPDX headers instead of the Code OSS MIT header.
+	'!scripts/fikeya/**/*.py',
+	// The built-in Fikeya product extension is AGPL-3.0-or-later and retains its SPDX header.
+	'!extensions/fikeya-desktop/**',
 	'!build/linux/libcxx-fetcher.*',
 	'!build/npm/gyp/custom-headers/**',
 	'!resources/linux/snap/snapcraft.yaml',
