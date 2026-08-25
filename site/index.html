@@ -3,38 +3,38 @@
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<meta name="description" content="Fikeya is an open AI code editor for planning, editing, running, and reviewing code with the model provider you choose and a smaller, evidence-linked context budget.">
+		<meta name="description" content="Fikeya is an open AI code editor and coding agent that uses measured, task-relevant context so your model can spend fewer tokens without hiding the evidence.">
 		<meta name="robots" content="index, follow, max-image-preview:large">
 		<meta name="theme-color" content="#0b0f0e">
 		<meta name="color-scheme" content="dark">
 		<meta property="og:type" content="website">
 		<meta property="og:site_name" content="Fikeya">
 		<meta property="og:title" content="Fikeya | The open AI code editor for supported providers">
-		<meta property="og:description" content="Choose the model. Control the context. Inspect the result. Fikeya brings editor, agent, terminal, review, usage receipts, and Qarinah project intelligence into one open workbench.">
+		<meta property="og:description" content="Bring your model, use fewer tokens, and inspect every provider, context, tool, and verification receipt in one open coding workbench.">
 		<meta property="og:url" content="https://fikeya.com/">
-		<meta property="og:image" content="https://fikeya.com/fikeya-live-editor.png">
-		<meta property="og:image:alt" content="Fikeya Desktop running the real provider-neutral Agent surface with bounded Qarinah context controls.">
+		<meta property="og:image" content="https://fikeya.com/fikeya-desktop-editor.png">
+		<meta property="og:image:alt" content="Fikeya Desktop editing a real source repository in the full Code OSS workbench.">
 		<meta name="twitter:card" content="summary_large_image">
 		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
 		<title>Fikeya | The open AI code editor for supported providers</title>
 		<link rel="canonical" href="https://fikeya.com/">
-		<link rel="icon" href="favicon.svg?v=20260825g" type="image/svg+xml">
+		<link rel="icon" href="favicon.svg?v=20260825h" type="image/svg+xml">
 		<link rel="manifest" href="site.webmanifest">
-		<link rel="stylesheet" href="styles.css?v=20260825g">
-		<script src="app.js?v=20260825g" defer></script>
+		<link rel="stylesheet" href="styles.css?v=20260825j">
+		<script src="app.js?v=20260825j" defer></script>
 	</head>
 	<body>
 		<a class="skip-link" href="#main">Skip to content</a>
 		<header class="site-header">
 			<div class="shell nav-shell">
 				<a class="brand" href="#top" aria-label="Fikeya home">
-					<img src="favicon.svg?v=20260825g" width="30" height="30" alt="">
+					<img src="favicon.svg?v=20260825h" width="30" height="30" alt="">
 					<span>Fikeya</span>
 				</a>
 				<nav aria-label="Primary navigation">
 					<ul class="nav-links">
 						<li><a href="#product">Product</a></li>
-						<li><a href="#modes">Modes</a></li>
+						<li><a href="#surfaces">Surfaces</a></li>
 						<li><a href="#models">Models</a></li>
 						<li><a href="#context">Context</a></li>
 						<li><a href="#evidence">Evidence</a></li>
@@ -49,44 +49,45 @@
 			<section class="hero" id="top">
 				<div class="shell hero-layout">
 					<div class="hero-copy">
-						<p class="release-line"><span aria-hidden="true"></span>Open-source editor extension and CLI alpha</p>
-						<h1>Code with your model.<span>Spend less context.</span></h1>
-						<p class="hero-summary">Fikeya is an open AI code editor that brings planning, editing, terminal work, and review into one workbench. Choose from the supported providers. The public alpha runs one bounded model turn at a time and returns an inspectable provider receipt, including provider-reported usage when available. When Qarinah supplies cited project context, Fikeya adds a separate context receipt.</p>
+						<p class="release-line"><span aria-hidden="true"></span>Desktop, VS Code extension, and CLI beta candidate</p>
+						<h1>Build with your model.<span>Spend fewer tokens.</span></h1>
+						<p class="hero-summary">Fikeya is an AI code editor and coding agent that selects task-relevant project evidence instead of replaying the whole repository on every turn. Bring your own provider, approve tools, run code, and inspect measured token and verification receipts from one local workbench.</p>
 						<div class="hero-actions">
-							<a class="button button-primary" href="#install">Run the alpha</a>
+							<a class="button button-primary" href="#install">Try the beta candidate</a>
 							<a class="button button-text" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Read the source</a>
 						</div>
-						<ul class="hero-proof" aria-label="Current alpha capabilities">
-							<li><strong>4</strong><span>work modes</span></li>
-							<li><strong>7</strong><span>provider types</span></li>
-							<li><strong>Local</strong><span>secrets and project graph</span></li>
+						<ul class="hero-proof" aria-label="Current beta capabilities">
+							<li><strong>3</strong><span>install surfaces</span></li>
+							<li><strong>9</strong><span>provider paths</span></li>
+							<li><strong>Exact</strong><span>local usage receipts</span></li>
 						</ul>
 					</div>
 					<figure class="product-shot">
 						<div class="product-shot-bar">
-							<span>Fikeya editor extension</span>
-							<span>captured on Windows</span>
+							<span>Fikeya Desktop</span>
+							<span>real Windows workspace</span>
 						</div>
-						<img src="/fikeya-live-editor.png" width="1920" height="1032" alt="Fikeya editor extension showing Editor, Agent, Terminal, and Review modes with provider selection, bounded Qarinah context, output limits, and per-run network consent">
-						<figcaption>Captured from the real desktop extension. No simulated provider result or credential is shown.</figcaption>
+					<img src="/fikeya-desktop-editor.png" width="1440" height="900" alt="Fikeya Desktop editing the real Fikeya repository inside its full Code OSS workbench">
+						<figcaption>Desktop keeps the full editor. The extension adds only the focused agent, memory, provider, and usage surfaces to an existing VS Code window.</figcaption>
 					</figure>
 				</div>
 			</section>
 
 			<section class="evidence-rail" id="product" aria-label="What Fikeya puts in one workbench">
 				<div class="shell rail-grid">
-					<div><span>Choose</span><strong>Provider and model</strong></div>
-					<div><span>Bound</span><strong>Context and output budget</strong></div>
-					<div><span>Work</span><strong>Editor, agent, terminal, review</strong></div>
-					<div><span>Inspect</span><strong>Usage, evidence, tests, result</strong></div>
+					<div><span>Choose</span><strong>Your provider and model</strong></div>
+					<div><span>Retrieve</span><strong>Only task-relevant evidence</strong></div>
+					<div><span>Execute</span><strong>Approved tools in the workspace</strong></div>
+					<div><span>Measure</span><strong>Tokens, context, tests, and outcomes</strong></div>
 				</div>
 			</section>
 
-			<section class="section modes-section" id="modes">
+			<section class="section modes-section" id="surfaces">
 				<div class="shell section-shell">
 					<div class="section-intro">
-						<h2>One editor. Four ways to work.</h2>
-						<p>Switch the surface without moving the project. Code OSS supplies the mature editor, terminal, debugger, Git, language services, and extension host. Fikeya adds the model runtime, receipts, and project intelligence around them.</p>
+						<p class="eyebrow">Desktop workbench</p>
+						<h2>Everything needed to plan, build, run, and review.</h2>
+						<p>Fikeya Desktop includes the complete editor, terminal, debugger, Git, language services, and extension host. The VS Code extension stays intentionally smaller: one Agent workspace for providers, Qarinah memory, approvals, receipts, and local usage statistics.</p>
 					</div>
 					<div class="mode-workbench">
 						<div class="tab-list" role="tablist" aria-label="Fikeya work modes">
@@ -101,11 +102,11 @@
 								<ul><li>Monaco and language servers</li><li>Git and merge tools</li><li>Debugger, tasks, and extensions</li></ul>
 							</article>
 							<article id="agent-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="agent-tab" data-layout-panel="agent" hidden>
-								<div><span class="mode-number">02</span><h3>Agent Mode</h3><p>Run a bounded provider turn, choose the model, set output limits, cancel work, and inspect exact receipts. The checkpointed plan and approval core is shipping as a tested component while desktop wiring continues.</p></div>
+								<div><span class="mode-number">02</span><h3>Agent Mode</h3><p>Run the tested plan-act-observe-review loop, choose the model, set limits, approve each exact tool request, cancel work, and inspect provider and execution receipts.</p></div>
 								<ul><li>Provider-neutral execution</li><li>Cancellable network calls</li><li>Durable usage receipts</li></ul>
 							</article>
 							<article id="terminal-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="terminal-tab" data-layout-panel="terminal" hidden>
-								<div><span class="mode-number">03</span><h3>Terminal Mode</h3><p>Use the full integrated shell directly. Automated commands remain behind the separate execution broker and exact approval contract until that path is connected to the desktop.</p></div>
+								<div><span class="mode-number">03</span><h3>Terminal Mode</h3><p>Use the full integrated shell directly. Agent-requested processes run through the root-bound broker and require an exact one-use approval before execution.</p></div>
 								<ul><li>Persistent integrated shells</li><li>Tasks and process output</li><li>Root-bound broker contract</li></ul>
 							</article>
 							<article id="review-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="review-tab" data-layout-panel="review" hidden>
@@ -120,9 +121,20 @@
 			<section class="section models-section" id="models">
 				<div class="shell models-layout">
 					<div class="section-intro compact">
-						<h2>Bring the model that fits the job.</h2>
-						<p>Fikeya keeps provider metadata inspectable and credential bytes in the operating-system keyring. The current runtime executes Azure OpenAI, OpenAI, Anthropic Messages, OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible calls.</p>
+						<p class="eyebrow">Bring your own key or local model</p>
+						<h2>Use the model that fits the job.</h2>
+						<p>Fikeya keeps provider metadata inspectable and credential bytes in the operating-system keyring. Use OpenAI API models, including Codex-capable models available to your API account, Azure OpenAI with Entra ID or a key, Anthropic, OpenRouter, NVIDIA NIM, Ollama, Google Gemini, Vertex AI, or another OpenAI-compatible endpoint.</p>
+						<p class="scope-note">Bring your own API credential or local model. Fikeya does not reuse a ChatGPT, Codex, Claude, Gemini, or other consumer subscription as API access. Vertex uses a short-lived Google Cloud token today; automatic ADC refresh is a release follow-up.</p>
 						<p class="scope-note">Automatic model routing remains a target. Today, the developer selects the exact profile and model.</p>
+						<ul class="provider-badges" aria-label="Supported provider paths">
+							<li>OpenAI / Codex models</li><li>Azure OpenAI</li><li>Anthropic</li><li>Google Gemini</li><li>Vertex AI</li><li>OpenRouter</li><li>NVIDIA NIM</li><li>Ollama</li><li>OpenAI compatible</li>
+						</ul>
+						<pre class="provider-cli"><code>fikeya provider configure work \
+			  --kind google-gemini \
+  --model gemini-2.5-pro \
+  --credential-type api-key
+
+fikeya provider list --json</code></pre>
 					</div>
 					<div class="provider-console" aria-label="Current provider profile controls">
 						<div class="provider-console-head"><strong>Provider profiles</strong><span>credentials: local vault</span></div>
@@ -133,6 +145,7 @@
 								<button type="button" class="provider-item" aria-pressed="false" data-model="Your selected model" data-storage="OS vault" data-usage="Provider response" data-fallback="Disabled">OpenRouter / NVIDIA<span>Executable</span></button>
 								<button type="button" class="provider-item" aria-pressed="false" data-model="Your local model" data-storage="No secret required" data-usage="Local runtime" data-fallback="Disabled">Ollama<span>Executable</span></button>
 								<button type="button" class="provider-item" aria-pressed="false" data-model="Your Anthropic model" data-storage="OS vault" data-usage="Provider response" data-fallback="Disabled">Anthropic<span>Executable</span></button>
+								<button type="button" class="provider-item" aria-pressed="false" data-model="Your Gemini or Vertex model" data-storage="OS vault / short-lived token" data-usage="Provider response" data-fallback="Disabled">Gemini / Vertex<span>Compatible API</span></button>
 							</div>
 							<dl class="provider-detail">
 								<div><dt>Model</dt><dd id="provider-model">Your Azure deployment</dd></div>
@@ -148,7 +161,8 @@
 			<section class="section context-section" id="context">
 				<div class="shell context-layout">
 					<div class="context-copy">
-						<h2>Context selected, not dumped.</h2>
+					<p class="eyebrow">Qarinah project intelligence</p>
+					<h2>Retrieve the evidence this task needs.</h2>
 						<p>Qarinah is the local context engine under Fikeya. It retrieves task-specific, evidence-linked project records within a bounded budget. The graph remains searchable and inspectable so the developer can see what exists and where it came from.</p>
 						<dl class="context-facts">
 							<div><dt>Graph</dt><dd>Files, worktrees, decisions, references, and evidence identities</dd></div>
@@ -157,8 +171,8 @@
 						</dl>
 					</div>
 					<figure class="graph-shot">
-						<img src="/fikeya-live-editor-graph.png" width="1920" height="1032" loading="lazy" alt="The real Fikeya Qarinah graph with circular nodes, relationships, search, node filters, pan, zoom, and evidence details">
-						<figcaption>Real project data rendered locally. Drag, pan, zoom, search, and filter are implemented in the desktop panel.</figcaption>
+						<img src="/fikeya-desktop-memory.png" width="1440" height="900" loading="lazy" alt="The real Fikeya Qarinah workspace with provider-reported usage and a verified circular project graph">
+						<figcaption>Real local data from this repository: provider-reported token totals, a verified Qarinah ledger, and an interactive graph with search, filters, pan, and zoom.</figcaption>
 					</figure>
 				</div>
 			</section>
@@ -206,11 +220,12 @@
 			<section class="section install-section" id="install">
 				<div class="shell install-layout">
 					<div class="install-copy">
-						<h2>Run the extension and CLI alpha.</h2>
-						<p>The repository currently ships the source runtime, CLI, Code OSS editor extension, pinned deterministic VSIX packaging, and Windows alpha verification. The VSIX is unsigned and intended for source-based evaluation. Signed native Windows, macOS, and Linux installers remain release gates.</p>
+						<p class="eyebrow">Choose your surface</p>
+						<h2>Use the extension today. Build Desktop beta from source.</h2>
+						<p>The repository ships the runtime, CLI, focused VS Code extension, deterministic VSIX packaging, and a locally verified Windows Desktop beta candidate. The extension uses the host's update channel. Signed native Windows, macOS, and Linux installers plus a verified Desktop update feed remain stable-release gates.</p>
 						<a class="button button-primary" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Open the repository</a>
 					</div>
-					<div class="install-commands" aria-label="Fikeya alpha setup commands">
+					<div class="install-commands" aria-label="Fikeya beta setup commands">
 						<div class="command-head"><span>PowerShell</span><span>source setup</span></div>
 						<pre><code>git clone https://github.com/AjnasNB/fikeya.git
 cd fikeya/fikeya-runtime
@@ -224,15 +239,15 @@ fikeya doctor .</code></pre>
 
 			<section class="closing-section">
 				<div class="shell closing-layout">
-					<h2>Your model should spend tokens on the code, not on rediscovering the project.</h2>
-					<div><p>Fikeya is building the open workbench, context compiler, and receipt system needed to measure that difference honestly.</p><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Follow the build on GitHub</a></div>
+					<h2>Spend tokens on the work, not on replaying the repository.</h2>
+					<div><p>Fikeya combines an open coding workbench, a task-aware context engine, exact local usage statistics, and inspectable execution receipts.</p><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Follow the build on GitHub</a></div>
 				</div>
 			</section>
 		</main>
 
 		<footer class="site-footer">
 			<div class="shell footer-layout">
-				<div class="brand footer-brand"><img src="favicon.svg?v=20260825g" width="28" height="28" alt=""><span>Fikeya</span></div>
+				<div class="brand footer-brand"><img src="favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div>
 				<p>Open AI code editor, local context engine, and inspectable provider receipts.</p>
 				<div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="#install">Install</a><a href="#top">Back to top</a></div>
 			</div>
