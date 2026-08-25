@@ -2,9 +2,11 @@
 
 Fikeya Desktop is the focused coding-agent workspace for the local Fikeya runtime. It keeps reviewed agent controls, provider setup, workspace diagnostics, the Qarinah graph, and exact receipts together without duplicating the editor, terminal, or source-control navigation already provided by the full desktop product.
 
-## One agent workspace
+## Chat beside the editor
 
-Use **Fikeya: Open Fikeya** for the full-width editor-area panel, or open the Fikeya activity-bar view for the compact sidebar. Both surfaces share the same live state and expose the agent run, configured provider profiles, workspace setup, Qarinah memory graph, and durable receipts. Reopening the command reveals the existing panel rather than creating duplicate sessions or message listeners. A webview message cannot invoke arbitrary workbench commands: every command and action is validated against a fixed allowlist.
+Use **Fikeya: Open Fikeya Chat** (`Ctrl+Alt+I` or `Ctrl+Alt+L`, `Cmd` on macOS) to open a conversation in the editor group beside the active code. The compact activity-bar view is a launcher with direct routes to Chat, the Qarinah context graph, and local usage. The full panel has dedicated Chat, Research, Context, Usage, and Setup destinations; Code, Terminal, and Review route to the existing native workbench surfaces instead of recreating them inside a dashboard.
+
+Chat keeps a bounded, process-local conversation visible while the extension host is running. Each submitted turn executes through the same reviewed Fikeya Runtime protocol, recompiles task-relevant Qarinah evidence, pauses for exact tool approvals, and attaches receipts to the latest run. Conversation bodies are not written to extension settings or analytics. Durable project evidence belongs to Qarinah, while Fikeya Runtime stores only its documented session and receipt records. Reopening the command reveals the existing panel rather than creating duplicate sessions or message listeners. A webview message cannot invoke arbitrary workbench commands: every command and action is validated against a fixed allowlist.
 
 ## Runtime setup
 
@@ -33,7 +35,7 @@ Azure OpenAI defaults to Entra ID and sends no credential payload. Ollama is cre
 
 ## Live beta-candidate surfaces
 
-The Agent surface reads configured profiles from `fikeya provider list --json` and runs the reviewed plan-act-observe-review loop through `fikeya agent execute`. Prompts and approval decisions travel over a private JSON Lines stdin protocol and never enter process arguments. Every workspace read, edit, or process request pauses for an exact **Allow Once**, **Deny Once**, or **Cancel Run** decision. Completed runs show the plan, result, changed files, tool and test outcomes, provider-reported usage, and Qarinah evidence. Content-free call and session receipts can be refreshed from local runtime state; provider response bodies and stderr are not persisted as error details.
+The Chat surface reads configured profiles from `fikeya provider list --json` and runs each turn through the reviewed plan-act-observe-review loop in `fikeya agent execute`. Prompts and approval decisions travel over a private JSON Lines stdin protocol and never enter process arguments. Every workspace read, edit, or process request pauses for an exact **Allow Once**, **Deny Once**, or **Cancel Run** decision. Completed runs show the plan, result, changed files, tool and test outcomes, provider-reported usage, and Qarinah evidence. Content-free call and session receipts can be refreshed from local runtime state; provider response bodies and stderr are not persisted as error details. The visible transcript is a bounded local view, not provider-native session replay: each turn retrieves current project evidence instead of silently resending prior response bodies.
 
 The workspace also reads a compact, bounded graph from the pinned Qarinah package through a local JSON-RPC adapter. Search, type filters, node dragging, canvas pan and zoom are local. Node evidence hashes, graph manifest, and ledger head are displayed when present. If Qarinah is missing, uninitialized, invalid, too large, or times out, the graph says it is unavailable; it never substitutes sample data.
 
