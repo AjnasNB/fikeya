@@ -16,7 +16,7 @@ authors = [
 dependencies = []
 keywords = ["ai", "coding-agent", "orchestration", "checkpointing", "developer-tools"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",

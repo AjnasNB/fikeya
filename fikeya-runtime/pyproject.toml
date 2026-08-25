@@ -18,7 +18,7 @@ dependencies = [
 ]
 keywords = ["ai", "ai-code-editor", "coding-agent", "context-management", "developer-tools", "provider-neutral"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
