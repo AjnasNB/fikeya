@@ -22,6 +22,14 @@ export const all = Object.freeze<string[]>([
 	'scripts/**/*',
 	'src/**/*',
 	'test/**/*',
+	// Fikeya-owned packages run their own format, SPDX, and component checks.
+	// Keep the upstream Code OSS hygiene policy scoped to upstream sources.
+	'!bench/fikeya-efficiency/**',
+	'!extensions/fikeya-desktop/**',
+	'!integrations/**',
+	'!packages/fikeya-protocol/**',
+	'!site/**',
+	'!scripts/fikeya/**',
 	'!cli/**/*',
 	'!out*/**',
 	'!extensions/**/out*/**',
