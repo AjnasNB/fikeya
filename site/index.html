@@ -12,8 +12,8 @@
 		<meta property="og:title" content="Fikeya | The open AI code editor for supported providers">
 		<meta property="og:description" content="Bring your model, use fewer tokens, and inspect every provider, context, tool, and verification receipt in one open coding workbench.">
 		<meta property="og:url" content="https://fikeya.com/">
-		<meta property="og:image" content="https://fikeya.com/fikeya-desktop-editor.png">
-		<meta property="og:image:alt" content="Fikeya Desktop editing a real source repository in the full Code OSS workbench.">
+		<meta property="og:image" content="https://fikeya.com/fikeya-desktop-beta-editor.jpg">
+		<meta property="og:image:alt" content="Fikeya Desktop editing a real source repository in the complete Fikeya workbench.">
 		<meta name="twitter:card" content="summary_large_image">
 		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
 		<title>Fikeya | The open AI code editor for supported providers</title>
@@ -64,7 +64,7 @@
 							<span>Fikeya Desktop</span>
 							<span>real Windows workspace</span>
 						</div>
-					<img src="/fikeya-desktop-editor.png" width="1440" height="900" alt="Fikeya Desktop editing the real Fikeya repository inside its full Code OSS workbench">
+					<img src="/fikeya-desktop-beta-editor.jpg" width="1202" height="801" alt="Fikeya Desktop editing the real Fikeya repository inside the full Fikeya workbench">
 						<figcaption>Desktop keeps the full editor. The extension adds only the focused agent, memory, provider, and usage surfaces to an existing VS Code window.</figcaption>
 					</figure>
 				</div>
@@ -84,7 +84,7 @@
 					<div class="section-intro">
 						<p class="eyebrow">Desktop workbench</p>
 						<h2>Everything needed to plan, build, run, and review.</h2>
-						<p>Fikeya Desktop includes the complete editor, terminal, debugger, Git, language services, and extension host. The VS Code extension stays intentionally smaller: one Agent workspace for providers, Qarinah memory, approvals, receipts, and local usage statistics.</p>
+						<p>Fikeya Desktop includes the complete editor, terminal, debugger, Git, language services, and extension host. The companion editor extension stays intentionally smaller: one Agent workspace for providers, Qarinah memory, approvals, receipts, and local usage statistics.</p>
 					</div>
 					<div class="mode-workbench">
 						<div class="tab-list" role="tablist" aria-label="Fikeya work modes">
@@ -96,24 +96,24 @@
 						</div>
 						<div class="mode-stage">
 							<article id="editor-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="editor-tab" data-layout-panel="editor">
-								<div><span class="mode-number">01</span><h3>Editor Mode</h3><p>Navigate, refactor, debug, search, and write inside a complete Code OSS workbench. Provider and context status stay visible without replacing the editor.</p></div>
-								<ul><li>Monaco and language servers</li><li>Git and merge tools</li><li>Debugger, tasks, and extensions</li></ul>
+								<div><span class="mode-number">01</span><h3>Editor Mode</h3><p>Navigate, refactor, debug, search, and write inside the complete Fikeya workbench. Provider and context status stay visible without replacing the editor.</p></div>
+								<figure class="mode-shot"><img src="/fikeya-desktop-beta-editor.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Editor mode editing the real Fikeya repository"></figure>
 							</article>
 							<article id="agent-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="agent-tab" data-layout-panel="agent" hidden>
 								<div><span class="mode-number">02</span><h3>Agent Mode</h3><p>Run the tested plan-act-observe-review loop, choose the model, set limits, approve each exact tool request, cancel work, and inspect provider and execution receipts.</p></div>
-								<ul><li>Provider-neutral execution</li><li>Cancellable network calls</li><li>Durable usage receipts</li></ul>
+								<figure class="mode-shot"><img src="/fikeya-desktop-beta-agent.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Agent mode with provider, prompt, Qarinah context, and token controls"></figure>
 							</article>
 							<article id="terminal-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="terminal-tab" data-layout-panel="terminal" hidden>
 								<div><span class="mode-number">03</span><h3>Terminal Mode</h3><p>Use the full integrated shell directly. Agent-requested processes run through the root-bound broker and require an exact one-use approval before execution.</p></div>
-								<ul><li>Persistent integrated shells</li><li>Tasks and process output</li><li>Root-bound broker contract</li></ul>
+								<figure class="mode-shot"><img src="/fikeya-desktop-beta-terminal.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Terminal mode listing the supported provider kinds from the installed CLI"></figure>
 							</article>
 							<article id="review-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="review-tab" data-layout-panel="review" hidden>
 								<div><span class="mode-number">04</span><h3>Review Mode</h3><p>Move from the model answer to the evidence: provider usage, request and response digests, project graph identities, Git changes, and test output.</p></div>
-								<ul><li>Source control review</li><li>Provider and evidence receipts</li><li>Verification status</li></ul>
+								<figure class="mode-shot"><img src="/fikeya-desktop-beta-review.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Review mode showing real Git changes and command evidence"></figure>
 							</article>
 							<article id="lab-panel" class="layout-panel mode-panel" role="tabpanel" aria-labelledby="lab-tab" data-layout-panel="lab" hidden>
 								<div><span class="mode-number">05</span><h3>Lab Mode</h3><p>Compare configured models on the same bounded task, inspect usage and verification receipts, and keep experiments separate from normal coding work.</p></div>
-								<ul><li>Same-task provider trials</li><li>Local token statistics</li><li>Evidence-linked results</li></ul>
+								<figure class="mode-shot"><img src="/fikeya-desktop-beta-graph.jpg" width="1202" height="801" loading="lazy" alt="Fikeya Lab mode showing measured local usage and the verified Qarinah project graph"></figure>
 							</article>
 						</div>
 					</div>
@@ -175,7 +175,7 @@ fikeya provider list --json</code></pre>
 						</dl>
 					</div>
 					<figure class="graph-shot">
-						<img src="/fikeya-desktop-memory.png" width="1440" height="900" loading="lazy" alt="The real Fikeya Qarinah workspace with provider-reported usage and a verified circular project graph">
+						<img src="/fikeya-desktop-beta-graph.jpg" width="1202" height="801" loading="lazy" alt="The real Fikeya Qarinah workspace with provider-reported usage and a verified circular project graph">
 						<figcaption>Real local data from this repository: provider-reported token totals, a verified Qarinah ledger, and an interactive graph with search, filters, pan, and zoom.</figcaption>
 					</figure>
 				</div>

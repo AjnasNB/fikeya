@@ -471,16 +471,17 @@ h1 span {
 }
 
 .mode-stage {
-	min-height: 350px;
+	min-height: 390px;
 }
 
 .mode-panel {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(200px, 0.65fr);
+	grid-template-columns: minmax(190px, 0.52fr) minmax(0, 1.48fr);
 	align-content: space-between;
-	gap: 50px;
-	min-height: 350px;
-	padding: 38px;
+	align-items: center;
+	gap: 28px;
+	min-height: 390px;
+	padding: 28px;
 }
 
 .mode-panel[hidden] {
@@ -521,6 +522,21 @@ h1 span {
 	border-bottom: 1px solid var(--line);
 	color: #c5cdc9;
 	font-size: 13px;
+}
+
+.mode-shot {
+	margin: 0;
+	border: 1px solid var(--line-strong);
+	background: #080d0c;
+	overflow: hidden;
+}
+
+.mode-shot img {
+	display: block;
+	width: 100%;
+	height: auto;
+	aspect-ratio: 1202 / 801;
+	object-fit: cover;
 }
 
 .models-section,
