@@ -61,9 +61,13 @@ Fikeya 0.1.0-beta.1 is the public beta. The current milestone covers the branded
 
 The VS Code extension follows the host's extension update channel. Fikeya Desktop does not silently download or force an unsigned executable. A future mandatory-update policy must verify a signed release manifest before it can block an unsupported build.
 
+Download the Windows Desktop installer, focused VSIX, and CLI wheel bundle from the [0.1.0-beta.1 release](https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1). Every release includes SHA-256 checksums, a machine-readable verification manifest, and GitHub artifact provenance. The current Windows beta is not Authenticode-signed, so Windows will show an unknown-publisher warning until a trusted signing certificate is configured. See the [release process](docs/fikeya/RELEASE.md) for the exact signing and promotion gates.
+
+If Fikeya is useful to you, [sponsor its continued development](https://github.com/sponsors/AjnasNB).
+
 ## Development
 
-Fikeya's developer-alpha bootstrap validates the checkout, creates a per-checkout Python environment in the current user's cache, installs the matched Agent Core and Runtime with Azure identity support, and verifies the locked protocol and Qarinah sidecar components. It never requests provider credentials.
+Fikeya's public-beta bootstrap validates the checkout, creates a per-checkout Python environment in the current user's cache, installs the matched Agent Core and Runtime with Azure identity support, and verifies the locked protocol and Qarinah sidecar components. It never requests provider credentials.
 
 ```powershell
 pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1 -CheckOnly

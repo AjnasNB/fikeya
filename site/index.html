@@ -42,7 +42,7 @@
 						<li><a href="#install">Install</a></li>
 					</ul>
 				</nav>
-				<a class="nav-source" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">GitHub</a>
+				<div class="nav-actions"><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a class="nav-source" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">GitHub</a></div>
 			</div>
 		</header>
 
@@ -56,6 +56,7 @@
 						<div class="hero-actions">
 							<a class="button button-primary" href="#install">Try the public beta</a>
 							<a class="button button-text" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Read the source</a>
+							<a class="button button-text" href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor development</a>
 						</div>
 						<p class="hero-note">Bring your own API key or local model. Fikeya keeps secrets in the operating-system vault and records provider-reported token usage locally.</p>
 					</div>
@@ -175,8 +176,8 @@ fikeya provider list --json</code></pre>
 						</dl>
 					</div>
 					<figure class="graph-shot">
-						<img src="/fikeya-desktop-beta-graph.jpg" width="1202" height="801" loading="lazy" alt="The real Fikeya Qarinah workspace with provider-reported usage and a verified circular project graph">
-						<figcaption>Real local data from this repository: provider-reported token totals, a verified Qarinah ledger, and an interactive graph with search, filters, pan, and zoom.</figcaption>
+						<img src="/qarinah-standalone-graph.png" width="1265" height="712" loading="lazy" alt="The standalone Qarinah viewer rendering Fikeya's real circular worktree graph and selected evidence details">
+						<figcaption>Real local data from this repository in Qarinah's standalone viewer: a bounded 80-node, 167-link visual projection from the 270-node, 1,018-relationship index, with ranked search, filters, draggable nodes, and source evidence hashes.</figcaption>
 					</figure>
 				</div>
 			</section>
@@ -227,8 +228,14 @@ fikeya provider list --json</code></pre>
 					<div class="install-copy">
 						<p class="eyebrow">Choose your surface</p>
 					<h2>Choose the focused extension or the full Desktop.</h2>
-						<p>The VS Code extension adds the focused Agent workspace without duplicating your editor. Fikeya Desktop adds the branded editor, five native work modes, screenshot and recording commands, and first-run workspace selection. The extension follows its host update channel; signed Desktop installers and a verified native update feed remain stable-release gates.</p>
-						<a class="button button-primary" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Open the repository</a>
+						<p>The VS Code extension adds the focused Agent workspace without duplicating your editor. Fikeya Desktop adds the branded editor, five native work modes, screenshot and recording commands, and first-run workspace selection. Every beta artifact ships with a SHA-256 verification file and GitHub build provenance.</p>
+						<div class="download-grid">
+							<a class="download-card" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/FikeyaSetup-0.1.0-beta.1-win32-x64.exe"><span>Windows x64</span><strong>Download Desktop</strong><small>EXE user installer</small></a>
+							<a class="download-card" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-desktop-0.1.0-win32-x64.vsix"><span>VS Code</span><strong>Download extension</strong><small>Focused Agent workspace</small></a>
+							<a class="download-card" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-cli-0.1.0-beta.1.zip"><span>Python 3.10+</span><strong>Download CLI</strong><small>Runtime and Agent Core wheels</small></a>
+						</div>
+						<p class="release-warning">Beta note: publisher metadata is Ajnas N B, but Windows will continue to show an unknown-publisher warning until the installer is Authenticode-signed with a trusted certificate. Verify the included SHA-256 file before installing.</p>
+						<div class="install-links"><a href="https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1" rel="noopener noreferrer">Release notes and checksums</a><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor Fikeya</a></div>
 					</div>
 					<div class="install-commands" aria-label="Fikeya beta setup commands">
 						<div class="command-head"><span>PowerShell</span><span>source setup</span></div>
@@ -254,7 +261,7 @@ fikeya doctor .</code></pre>
 			<div class="shell footer-layout">
 				<div class="brand footer-brand"><img src="favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div>
 				<p>Open AI code editor, local context engine, and inspectable provider receipts.</p>
-				<div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="#install">Install</a><a href="#top">Back to top</a></div>
+				<div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a href="#install">Install</a><a href="#top">Back to top</a></div>
 			</div>
 		</footer>
 	</body>

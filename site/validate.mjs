@@ -60,11 +60,11 @@ assert(html.includes('<h1>Build with your model.<span>Spend fewer tokens.</span>
 assert(!html.match(/\bany model\b/i), 'Unsupported any-model claim found');
 assert(html.includes('selects task-relevant project evidence instead of replaying the whole repository'), 'Task-relevant context positioning is missing');
 assert(html.includes('inspect measured token and verification receipts'), 'Measured receipt wording is missing');
-assert(html.includes('signed Desktop installers and a verified native update feed remain stable-release gates.'), 'Packaging and update release gates are missing');
+assert(html.includes('Windows will continue to show an unknown-publisher warning until the installer is Authenticode-signed with a trusted certificate.'), 'Authenticode release gate is missing');
 assert(!html.includes('reproducible VSIX packaging'), 'Unproven cross-platform reproducibility claim is present');
 assert(html.includes('Fikeya 0.1.0-beta.1 · Desktop, VS Code extension, and CLI'), 'Public beta status is missing');
 assert(!html.includes('stable release available'), 'The site must not claim a stable release before the release gates pass');
-assert(html.includes('src="/fikeya-desktop-beta-graph.jpg"'), 'Real memory capture is missing');
+assert(html.includes('src="/qarinah-standalone-graph.png"'), 'Standalone Qarinah graph capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-editor.jpg"'), 'Real editor capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-agent.jpg"'), 'Real agent capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-terminal.jpg"'), 'Real terminal capture is missing');
@@ -86,6 +86,11 @@ assert(html.includes('href="#top">Home</a>'), 'Home navigation is missing');
 assert(!html.includes('install surfaces'), 'Generic install-surface count is still present');
 assert(!html.includes('provider paths</span>'), 'Generic provider-path count is still present');
 assert(html.includes('The companion editor extension stays intentionally smaller'), 'Extension and Desktop boundary is missing');
+assert(html.includes('https://github.com/sponsors/AjnasNB'), 'GitHub Sponsors link is missing');
+assert(html.includes('FikeyaSetup-0.1.0-beta.1-win32-x64.exe'), 'Windows beta download is missing');
+assert(html.includes('fikeya-desktop-0.1.0-win32-x64.vsix'), 'VSIX beta download is missing');
+assert(html.includes('fikeya-cli-0.1.0-beta.1.zip'), 'CLI beta download is missing');
+assert(html.includes('unknown-publisher warning until the installer is Authenticode-signed'), 'Unsigned beta warning is missing');
 assert(!html.includes('npm run setup'), 'Unsupported setup command found');
 assert(!html.includes('fikeya run '), 'Unsupported run command found');
 assert(!html.includes('fikeya receipt '), 'Unsupported receipt command found');
@@ -135,6 +140,11 @@ const ids = new Set(Array.from(html.matchAll(/\bid=["']([^"']+)["']/g), match =>
 const allowedExternalLinks = new Set([
 	'https://fikeya.com/',
 	'https://github.com/AjnasNB/fikeya',
+	'https://github.com/sponsors/AjnasNB',
+	'https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1',
+	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/FikeyaSetup-0.1.0-beta.1-win32-x64.exe',
+	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-desktop-0.1.0-win32-x64.vsix',
+	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-cli-0.1.0-beta.1.zip',
 	'https://qarinah.io/docs/benchmarks/'
 ]);
 for (const href of hrefs) {
