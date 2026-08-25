@@ -456,7 +456,10 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 		}
 
 		if (!productService.defaultChatAgent) {
-			this.initializeFallbackHiddenContext(false);
+			// A product without a configured first-party chat agent must not inherit
+			// provider-specific setup, quota, or Copilot surfaces from the upstream
+			// workbench. Fikeya supplies its own provider-neutral runtime and panel.
+			this.initializeFallbackHiddenContext(true);
 			return; // provider-specific entitlement requests require a default chat agent
 		}
 

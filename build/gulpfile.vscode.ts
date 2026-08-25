@@ -44,6 +44,7 @@ const glob = promisify(globCallback);
 const rcedit = promisify(rceditCallback);
 const root = path.dirname(import.meta.dirname);
 const commit = getVersion(root);
+const includeCopilot = product.builtInAiExtensions.length > 0;
 const packageLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8')) as {
 	readonly packages?: Readonly<Record<string, { readonly version?: string }>>;
 };
@@ -385,8 +386,10 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 			.pipe(filter(depFilterPattern))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, '.moduleignore')))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, `.moduleignore.${process.platform}`)));
-		ensureCopilotPlatformPackage(platform, arch);
-		const copilotRuntimePrebuilds = gulp.src(getCopilotRuntimePrebuildFiles(platform, arch), { base: '.', dot: true, allowEmpty: true });
+		if (includeCopilot) {
+			ensureCopilotPlatformPackage(platform, arch);
+		}
+		const copilotRuntimePrebuilds = gulp.src(includeCopilot ? getCopilotRuntimePrebuildFiles(platform, arch) : [], { base: '.', dot: true, allowEmpty: true });
 		ensureOSProxyResolverPlatformPackage(platform, arch);
 		const osProxyResolverPlatformPackage = gulp.src(getOSProxyResolverPlatformFiles(platform, arch), { base: '.', dot: true, allowEmpty: true });
 		const deps = es.merge(cleanedDeps, copilotRuntimePrebuilds, osProxyResolverPlatformPackage)
@@ -716,7 +719,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 			compileNativeExtensionsBuildTask,
 			util.rimraf(path.join(buildRoot, destinationFolderName)),
 			packageTask(platform, arch, sourceFolderName, destinationFolderName, opts),
-			prepareCopilotRipgrepShimTask(platform, arch, destinationFolderName)
+			...(includeCopilot ? [prepareCopilotRipgrepShimTask(platform, arch, destinationFolderName)] : [])
 		];
 
 		if (platform === 'win32') {
@@ -742,7 +745,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 				copyCodiconsTask,
 				cleanExtensionsBuildTask,
 				compileNonNativeExtensionsBuildTask,
-				compileCopilotExtensionBuildTask,
+				...(includeCopilot ? [compileCopilotExtensionBuildTask] : []),
 				compileExtensionMediaBuildTask,
 				writeISODate('out-build'),
 				esbuildBundleTask,
@@ -753,7 +756,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 				minified ? compileBuildWithManglingTask : compileBuildWithoutManglingTask,
 				cleanExtensionsBuildTask,
 				compileNonNativeExtensionsBuildTask,
-				compileCopilotExtensionBuildTask,
+				...(includeCopilot ? [compileCopilotExtensionBuildTask] : []),
 				compileExtensionMediaBuildTask,
 				minified ? minifyVSCodeTask : bundleVSCodeTask,
 				vscodeTaskCI
