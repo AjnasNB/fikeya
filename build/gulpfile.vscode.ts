@@ -690,6 +690,36 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 	};
 }
 
+function patchWin32ProductExecutableTask(destinationFolderName: string) {
+	const cwd = path.join(path.dirname(root), destinationFolderName);
+
+	return async () => {
+		const executablePath = path.join(cwd, `${product.nameShort}.exe`);
+		const numericVersion = fikeyaDistribution.desktopNumericVersion;
+
+		await stripAuthenticodeSignature(executablePath);
+		// rcedit overwrites the public ProductVersion string when numeric and
+		// display values are supplied together. Patch the numeric PE resources
+		// first, then restore the human-facing prerelease string separately.
+		await rcedit(executablePath, {
+			'file-version': numericVersion,
+			'product-version': numericVersion,
+		});
+		await rcedit(executablePath, {
+			'version-string': {
+				'CompanyName': 'Ajnas N B',
+				'FileDescription': product.nameLong,
+				'FileVersion': numericVersion,
+				'InternalName': `${product.nameShort}.exe`,
+				'LegalCopyright': 'Copyright (C) 2026 Ajnas N B and Fikeya contributors',
+				'OriginalFilename': `${product.nameShort}.exe`,
+				'ProductName': product.nameLong,
+				'ProductVersion': fikeyaDistribution.version,
+			}
+		});
+	};
+}
+
 function prepareCopilotRipgrepShimTask(platform: string, arch: string, destinationFolderName: string) {
 	const outputDir = path.join(path.dirname(root), destinationFolderName);
 
@@ -736,6 +766,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 		];
 
 		if (platform === 'win32') {
+			packageTasks.push(patchWin32ProductExecutableTask(destinationFolderName));
 			packageTasks.push(patchWin32DependenciesTask(destinationFolderName));
 		}
 
