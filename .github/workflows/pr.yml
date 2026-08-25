@@ -108,6 +108,10 @@ jobs:
 
   linux-cli-tests:
     name: Linux
+    # This inherited workflow targets Microsoft's private 1ES runner pool.
+    # Keep it available for upstream synchronization without leaving forks in
+    # an impossible queue. Fikeya's hosted CLI/runtime gates run separately.
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-linux-cli-test.yml
     with:
       job_name: CLI
@@ -161,6 +165,10 @@ jobs:
 
   windows-electron-tests:
     name: Windows
+    # The reusable Windows suites target Microsoft's private 1ES runners.
+    # Fikeya verifies Windows through its hosted bootstrap, runtime, VSIX, and
+    # packaging gates instead of scheduling jobs no public runner can claim.
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Electron
@@ -169,6 +177,7 @@ jobs:
 
   windows-browser-tests:
     name: Windows
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Browser
@@ -176,6 +185,7 @@ jobs:
 
   windows-remote-tests:
     name: Windows
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Remote
