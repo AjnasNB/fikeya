@@ -33,7 +33,7 @@
 
 			<section class="section" id="desktop-plan-proof">
 				<div class="shell">
-					<div class="section-intro workflow-intro"><p class="eyebrow">Real Desktop control boundary</p><h2>Draft, review, and approval remain visibly different states.</h2><p>These captures come from a disposable project running inside the real Fikeya Desktop extension host. They show one durable three-step plan progressing to its first exact approval boundary.</p></div>
+					<div class="section-intro workflow-intro"><p class="eyebrow">Real Desktop lifecycle</p><h2>Draft, review, approval, execution, and verification stay inspectable.</h2><p>These captures come from a disposable project running inside the real Fikeya Desktop extension host. One durable plan uses three read-only workspace tools. Each step receives its own expiring, single-use approval before Fikeya executes it and records linked result and verification hashes.</p><div class="hero-actions"><a class="button button-text" href="/fikeya-plan-lifecycle-proof.json">Download the content-free receipt</a></div></div>
 					<div class="capture-sequence">
 						<article>
 							<div><span>01 / Draft</span><h3>The proposal is inspectable before it becomes executable.</h3><p>Fikeya shows the ordered steps, dependencies, exact tool names, arguments, and expected checks. Every step remains pending.</p></div>
@@ -45,10 +45,22 @@
 						</article>
 						<article>
 							<div><span>03 / Approval</span><h3>The exact first request is exposed before execution.</h3><p>Fikeya identifies the selected tool, dependencies, arguments, and expected verification while the step remains Awaiting Approval.</p></div>
-							<figure><img src="/fikeya-plan-awaiting-approval-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view stopped at the first exact tool approval boundary"><figcaption>Awaiting Approval, revision 3. This capture stops here. No approval is granted, and Execute and Verify have not run.</figcaption></figure>
+							<figure><img src="/fikeya-plan-awaiting-approval-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view stopped at the first exact tool approval boundary"><figcaption>Awaiting Approval, revision 3. At this point no authority has been issued and no tool has run.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>04 / Exact authority</span><h3>The selected read-only call receives one expiring reference.</h3><p>The approval is visibly bound to the selected step and its tool-call evidence hash. It remains unused until the developer resumes that exact work.</p></div>
+							<figure><img src="/fikeya-plan-exact-approval-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing an unused exact approval and expiry"><figcaption>The first step is Approved. Its approval reference and expiry are visible while execution and verification receipts are still absent.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>05 / Execute and verify</span><h3>A safe tool result becomes linked proof.</h3><p>After resume, the first read-only operation succeeds. Fikeya records the consumed approval, execution hash, verification hash, and passing tool-status check before stopping at the next approval.</p></div>
+							<figure><img src="/fikeya-plan-executed-verified-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing a succeeded read-only step with execution and verification hashes"><figcaption>One step is executed and verified; the next remains Awaiting Approval. Authority does not spill across steps.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>06 / Succeeded</span><h3>All three receipt chains agree.</h3><p>The final state retains three consumed approval references and the tool-call, result, execution, and verification SHA-256 values for every safe operation.</p></div>
+							<figure><img src="/fikeya-plan-succeeded-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing the completed succeeded plan and hash-linked receipts"><figcaption>Succeeded after three exact approvals. The downloadable content-free receipt records the final plan and record digests.</figcaption></figure>
 						</article>
 					</div>
-					<p class="capture-boundary"><strong>Capture boundary:</strong> this sequence demonstrates state separation and the pre-execution control surface. It is not an execution-result or model-quality benchmark.</p>
+					<p class="capture-boundary"><strong>Capture boundary:</strong> this sequence proves the real Desktop lifecycle with disposable, read-only project inspection. It does not test model quality, mutate source files, invoke a shell, or authorize network access.</p>
 				</div>
 			</section>
 

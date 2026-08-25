@@ -12,7 +12,11 @@ const requiredFiles = [
 	'fikeya-live-context-graph.png',
 	'fikeya-plan-awaiting-approval-real.png',
 	'fikeya-plan-draft-real.png',
+	'fikeya-plan-exact-approval-real.png',
+	'fikeya-plan-executed-verified-real.png',
+	'fikeya-plan-lifecycle-proof.json',
 	'fikeya-plan-reviewed-real.png',
+	'fikeya-plan-succeeded-real.png',
 	'docs',
 	'download',
 	'enterprise',
@@ -124,12 +128,16 @@ assert(proofPage.includes('tokens remain explicitly not measured'), 'No-model to
 assert(proofPage.includes('src="/fikeya-plan-draft-real.png"'), 'Real draft capture is missing from the proof page');
 assert(proofPage.includes('src="/fikeya-plan-reviewed-real.png"'), 'Real reviewed-plan capture is missing from the proof page');
 assert(proofPage.includes('src="/fikeya-plan-awaiting-approval-real.png"'), 'Real approval-boundary capture is missing from the proof page');
-assert(proofPage.includes('This capture stops here. No approval is granted, and Execute and Verify have not run.'), 'Pre-execution capture boundary is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-exact-approval-real.png"'), 'Real exact-approval receipt capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-executed-verified-real.png"'), 'Real execution-and-verification capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-succeeded-real.png"'), 'Real succeeded-plan capture is missing from the proof page');
+assert(proofPage.includes('href="/fikeya-plan-lifecycle-proof.json"'), 'Content-free Desktop plan receipt download is missing');
+assert(proofPage.includes('three read-only workspace tools'), 'Safe Desktop proof tool boundary is missing');
 const productPage = pageDocuments.get('product/index.html') ?? '';
 for (const stage of ['01</span><strong>Draft', '02</span><strong>Review', '03</span><strong>Approval', '04</span><strong>Execute', '05</span><strong>Verify']) {
 	assert(productPage.includes(stage), `Product page is missing workflow stage: ${stage}`);
 }
-assert(productPage.includes('stops at Awaiting Approval'), 'Product page is missing the real-capture stopping boundary');
+assert(productPage.includes('three read-only workspace tools reached Succeeded'), 'Product page is missing the verified safe-capture boundary');
 assert(html.includes('fikeya provider list --json'), 'Provider discovery command is missing');
 assert(!html.includes('Keep the work between coding-agent sessions'), 'Stale session-handoff positioning found');
 assert(!html.includes('Keep the work. Change the session.'), 'Stale session-handoff closing copy found');
