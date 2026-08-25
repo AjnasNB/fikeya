@@ -12,7 +12,6 @@ import re
 import sqlite3
 import uuid
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import cast
 
 from fikeya_agent_core import CancellationToken, ToolCall
@@ -90,9 +89,11 @@ class FileHashExpectation:
         item = _object(value, "file verification")
         _exact_keys(item, {"path", "sha256"}, "file verification")
         path = _string(item, "path", "file verification")
-        path_parts = Path(path).parts
+        path_parts = path.split("/")
         if (
-            Path(path).is_absolute()
+            "\\" in path
+            or path.startswith("/")
+            or re.match(r"^[a-zA-Z]:", path)
             or path in {"", "."}
             or ".." in path_parts
             or any(part.casefold() == ".fikeya" for part in path_parts)
@@ -144,7 +145,11 @@ class VerificationSpec:
             optional={"expectedExitCode", "expectedOutputSha256", "expectedStatus", "files"},
         )
         exit_code = item.get("expectedExitCode")
-        if exit_code is not None and (isinstance(exit_code, bool) or not isinstance(exit_code, int)):
+        if exit_code is not None and (
+            isinstance(exit_code, bool)
+            or not isinstance(exit_code, int)
+            or not -65_535 <= exit_code <= 2_147_483_647
+        ):
             raise ConfigurationError("expectedExitCode must be an integer or null.")
         output_sha256 = item.get("expectedOutputSha256")
         if output_sha256 is not None and not isinstance(output_sha256, str):
@@ -1083,7 +1088,12 @@ def _parse_specification(
         "plan specification",
         optional={"schemaVersion"},
     )
-    if specification.get("schemaVersion", _PLAN_SCHEMA_VERSION) != _PLAN_SCHEMA_VERSION:
+    schema_version = specification.get("schemaVersion", _PLAN_SCHEMA_VERSION)
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != _PLAN_SCHEMA_VERSION
+    ):
         raise ConfigurationError("Unsupported plan specification schema version.")
     title = _bounded_title(_string(specification, "title", "plan specification"))
     values = specification["steps"]
@@ -1184,7 +1194,7 @@ def _tool_call(value: object) -> ToolCall:
         raise ConfigurationError("Tool-call arguments must be a JSON object.")
     try:
         encoded = stable_json(arguments)
-    except (TypeError, ValueError) as error:
+    except (RecursionError, TypeError, ValueError) as error:
         raise ConfigurationError("Tool-call arguments must be finite JSON values.") from error
     if len(encoded.encode("utf-8")) > 65_536:
         raise ConfigurationError("Tool-call arguments exceed 65536 UTF-8 bytes.")

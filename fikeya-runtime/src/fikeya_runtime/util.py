@@ -33,6 +33,7 @@ def stable_json(value: object) -> str:
 
     return json.dumps(
         value,
+        allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,

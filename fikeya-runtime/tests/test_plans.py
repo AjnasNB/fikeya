@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from fikeya_runtime.cli import main
-from fikeya_runtime.errors import StateError
+from fikeya_runtime.errors import ConfigurationError, StateError
 from fikeya_runtime.plans import (
     PlanService,
     PlanStatus,
@@ -169,6 +169,36 @@ def test_plan_fails_closed_when_file_verification_disagrees(
     assert failed.steps[0].verification is not None
     assert failed.steps[0].verification.status is VerificationStatus.FAILED
     assert failed.steps[1].status is PlanStepStatus.APPROVED
+
+
+@pytest.mark.parametrize(
+    ("path", "exit_code"),
+    [
+        (".fikeya/state.sqlite3", 0),
+        ("nested\\proof.txt", 0),
+        ("C:/proof.txt", 0),
+        ("proof.txt", 2_147_483_648),
+    ],
+)
+def test_plan_rejects_nonportable_verification_paths_and_exit_codes(
+    tmp_path: Path,
+    path: str,
+    exit_code: int,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    service = PlanService(workspace)
+    specification = _two_step_specification()
+    first_step = specification["steps"][0]
+    assert isinstance(first_step, dict)
+    verification = first_step["verify"]
+    assert isinstance(verification, dict)
+    verification["files"] = [{"path": path, "sha256": _sha256("proof\n")}]
+    verification["expectedExitCode"] = exit_code
+
+    with pytest.raises(ConfigurationError):
+        service.create(specification)
 
 
 def test_cli_create_review_approve_run_and_show_plan(
