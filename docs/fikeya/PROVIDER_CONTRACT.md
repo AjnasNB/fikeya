@@ -70,7 +70,11 @@ The public-alpha provider adapter contract covers profile discovery, bounded tex
 
 - OpenRouter: `https://openrouter.ai/api/v1`
 - Anthropic Messages: `https://api.anthropic.com/v1/messages`
+- Hugging Face Inference Providers: `https://router.huggingface.co/v1`
+- Groq: `https://api.groq.com/openai/v1`
 - NVIDIA hosted NIM: user-configured OpenAI-compatible endpoint
 - Ollama: `http://127.0.0.1:11434/v1`
 
 Azure and generic endpoints have no hard-coded resource name. The setup flow validates HTTPS for remote endpoints and allows HTTP only for loopback local providers.
+
+Provider HTTP failures cross the local protocol only as bounded structured metadata: category, status code, retryability, and a local error message. Response bodies are not retained in the error event. A `429` response is classified as `quota`, while `401` and `403` are classified as `authentication`. This lets Desktop offer a deliberate handoff to another configured model without leaking provider response content or silently changing models.

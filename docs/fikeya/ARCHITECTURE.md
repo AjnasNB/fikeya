@@ -19,7 +19,8 @@ Only the first category should be treated as current end-user behavior.
 Fikeya Desktop is a branded Code OSS workbench with the existing editor, terminal, source-control, debugging, task, language-service, and extension-host surfaces. The built-in Fikeya extension adds one focused coding-agent workspace rather than duplicating those native surfaces. The same extension can be packaged as a VSIX for VS Code-compatible hosts.
 
 - **Editor** is the native workbench editor and its language services.
-- **Agent** exposes provider selection, Qarinah context controls, the reviewed coding loop, exact approvals, cancellation, outcomes, and receipts.
+  - **Agent** exposes provider selection, Qarinah context controls, the reviewed coding loop, exact approvals, cancellation, outcomes, and receipts.
+  - **Lab** opens the same verified provider, usage, and graph surface for controlled model experiments without duplicating the editor inside the extension.
 - **Terminal** is the native integrated terminal; agent-requested processes remain separate approval-gated operations.
 - **Review** uses native source control plus the Fikeya execution and evidence receipts.
 
@@ -40,7 +41,7 @@ The current runtime provides:
 - content-free provider and Qarinah receipts; and
 - a process-only `ToolBroker` that accepts an executable and argument vector, starts disabled, and requires an exact one-use approval before real execution.
 
-Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Google Gemini, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Vertex AI is available through the compatible profile with a regional endpoint and a short-lived Google Cloud token; automatic ADC refresh remains a release follow-up. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral identity token.
+Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Google Gemini, Hugging Face Inference Providers, Groq, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Vertex AI is available through the compatible profile with a regional endpoint and a short-lived Google Cloud token; automatic ADC refresh remains a release follow-up. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral identity token. HTTP quota failures are classified without retaining the provider body so the Desktop can offer a person-controlled handoff to another configured profile while retrieving the same workspace context again.
 
 ### Qarinah context-engine boundary
 

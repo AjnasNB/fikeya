@@ -6,9 +6,10 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 
 ## What Fikeya Includes
 
-- **Four working modes:** Editor, Agent, Terminal, and Review, each focused on a distinct development workflow.
+- **Five working modes:** Editor, Agent, Terminal, Review, and Lab, each focused on a distinct development workflow in Fikeya Desktop. The VS Code extension stays a focused Agent workspace instead of duplicating the host editor.
 - **Two desktop layouts:** Studio for code-first work and Agent Focus for plan-first work.
-- **Provider-neutral configuration:** Azure OpenAI, OpenAI API models (including Codex-capable models available to the API account), Anthropic, OpenRouter, NVIDIA NIM, Google Gemini, Ollama, Vertex AI through its compatible endpoint, and other OpenAI-compatible endpoints.
+- **Provider-neutral configuration:** Azure OpenAI, OpenAI API models (including Codex-capable models available to the API account), Anthropic, OpenRouter, NVIDIA NIM, Google Gemini, Hugging Face Inference Providers, Groq, Ollama, Vertex AI through its compatible endpoint, and other OpenAI-compatible endpoints.
+- **Quota-aware model handoff:** when a provider returns HTTP 429, the Desktop can ask to continue with another configured profile or remember an always-switch preference. The new run recompiles the same bounded Qarinah project context; credentials and failed response bodies are not carried across providers.
 - **One runtime for Desktop and CLI:** shared provider, approval, tool, usage, context, and evidence contracts across both interfaces.
 - **Qarinah context engine:** compact, evidence-linked project context assembled from decisions, tool outcomes, worktrees, symbols, and cited receipts.
 - **Bounded provider execution:** workspace-root validation, explicit network consent, cancellation, and content-free request and response hashes.
@@ -21,7 +22,7 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 
 ```text
 Fikeya Desktop                         Fikeya CLI
-Editor | Agent | Terminal | Review     init | doctor | provider | agent | tool
+Editor | Agent | Terminal | Review | Lab     init | doctor | provider | agent | tool
                     │
                     ▼
              Fikeya Local Gateway

@@ -20,6 +20,8 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Provider profiles and secret references: **integrated beta candidate** - metadata remains separate from OS-keyring credential bytes.
 - Azure Entra ID profile and execution: **integrated beta candidate** - the focused runtime path and a scoped connectivity receipt exist.
 - Google Gemini profile and compatible execution: **integrated beta candidate**.
+- Hugging Face Inference Providers and Groq profiles: **integrated beta candidate** - both use the bounded OpenAI-compatible execution path with credentials stored by reference.
+- Quota-aware provider handoff: **integrated beta candidate** - Desktop classifies a provider `429`, offers another configured profile or an explicit persistent always-switch preference, and recompiles the same workspace-scoped Qarinah context before continuing. It does not silently switch by default.
 - Vertex AI compatible endpoint: **partial** - works with a short-lived bearer token; automatic ADC refresh is planned.
 - Canonical workspace boundary: **partial** - runtime process working directories and sidecar roots are bounded; a complete typed file/patch broker is not implemented.
 - One-use tool approvals: **integrated beta candidate** - Desktop and CLI receive exact file, search, edit, process, and test requests and bind each decision to the immutable request digest.
@@ -27,6 +29,7 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Qarinah context, capture, and receipt adapter: **integrated beta candidate** - workspace initialization, bounded cited retrieval, content-free receipts, and completed-run capture are available.
 - Qarinah graph in Desktop: **integrated beta candidate** - bounded local graph inspection is available without sample-data fallback.
 - Local usage dashboard: **integrated beta candidate** - workspace SQLite aggregates provider-reported input, cached-input, output, context receipts, sessions, and provider/model activity.
+- Native screenshot and screen recording commands: **integrated beta candidate** - Desktop uses the host capture services, requests operating-system permission where required, and asks the user where to save each artifact.
 - Transactional file patching and stale-diff rejection: **planned**.
 - Disposable execution worktree fixture: **planned**.
 - End-to-end Desktop/CLI parity fixture: **planned**.
