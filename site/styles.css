@@ -294,31 +294,15 @@ h1 span {
 	color: var(--text);
 }
 
-.hero-proof {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	width: 100%;
-	margin: 38px 0 0;
-	padding: 0;
+.hero-note {
+	max-width: 580px;
+	margin: 32px 0 0;
+	padding: 15px 0 0 16px;
 	border-top: 1px solid var(--line);
-	list-style: none;
-}
-
-.hero-proof li {
-	display: grid;
-	gap: 3px;
-	padding: 17px 18px 0 0;
-}
-
-.hero-proof strong {
-	font-family: var(--mono);
-	font-size: 17px;
-	font-variant-numeric: tabular-nums;
-}
-
-.hero-proof span {
-	color: var(--quiet);
-	font-size: 12px;
+	border-left: 2px solid var(--accent);
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.55;
 }
 
 .product-shot,
@@ -457,7 +441,7 @@ h1 span {
 
 .tab-list {
 	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
+	grid-template-columns: repeat(5, minmax(0, 1fr));
 	border-bottom: 1px solid var(--line);
 }
 
@@ -769,7 +753,7 @@ h1 span {
 }
 
 .tool-ledger article {
-	grid-column: span 5;
+	grid-column: span 4;
 	min-height: 250px;
 	padding: 28px;
 	border-right: 1px solid var(--line-strong);
@@ -777,9 +761,9 @@ h1 span {
 	background: var(--bg-raised);
 }
 
-.tool-ledger article:nth-child(2),
-.tool-ledger article:nth-child(3) {
-	grid-column: span 7;
+.tool-ledger article:nth-child(4),
+.tool-ledger article:nth-child(5) {
+	grid-column: span 6;
 }
 
 .status {
@@ -952,17 +936,6 @@ h1 span {
 		letter-spacing: -0.058em;
 	}
 
-	.hero-proof {
-		grid-template-columns: 1fr;
-	}
-
-	.hero-proof li {
-		grid-template-columns: 80px 1fr;
-		align-items: baseline;
-		padding: 12px 0;
-		border-bottom: 1px solid var(--line);
-	}
-
 	.mode-panel {
 		grid-template-columns: 1fr;
 		min-height: 0;
@@ -979,8 +952,8 @@ h1 span {
 	}
 
 	.tool-ledger article,
-	.tool-ledger article:nth-child(2),
-	.tool-ledger article:nth-child(3) {
+	.tool-ledger article:nth-child(4),
+	.tool-ledger article:nth-child(5) {
 		grid-column: 1 / -1;
 	}
 
@@ -1064,15 +1037,12 @@ h1 span {
 	}
 
 	.tab-list {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(5, minmax(112px, 1fr));
+		overflow-x: auto;
 	}
 
 	.layout-tab:nth-child(2) {
-		border-right: 0;
-	}
-
-	.layout-tab:nth-child(-n + 2) {
-		border-bottom: 1px solid var(--line);
+		border-right: 1px solid var(--line);
 	}
 
 	.mode-panel h3 {

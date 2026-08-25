@@ -60,7 +60,7 @@ assert(html.includes('<h1>Build with your model.<span>Spend fewer tokens.</span>
 assert(!html.match(/\bany model\b/i), 'Unsupported any-model claim found');
 assert(html.includes('selects task-relevant project evidence instead of replaying the whole repository'), 'Task-relevant context positioning is missing');
 assert(html.includes('inspect measured token and verification receipts'), 'Measured receipt wording is missing');
-assert(html.includes('Signed native Windows, macOS, and Linux installers plus a verified Desktop update feed remain stable-release gates.'), 'Packaging and update release gates are missing');
+assert(html.includes('signed Desktop installers and a verified native update feed remain stable-release gates.'), 'Packaging and update release gates are missing');
 assert(!html.includes('reproducible VSIX packaging'), 'Unproven cross-platform reproducibility claim is present');
 assert(html.includes('Desktop, VS Code extension, and CLI beta candidate'), 'Public beta-candidate status is missing');
 assert(!html.includes('stable release available'), 'The site must not claim a stable release before the release gates pass');
@@ -76,6 +76,12 @@ assert(html.includes('Tool executables are installed separately and remain disab
 assert(html.includes('OpenAI / Codex models'), 'OpenAI and Codex-capable model path is missing');
 assert(html.includes('Google Gemini'), 'Gemini provider path is missing');
 assert(html.includes('Vertex AI'), 'Vertex provider path is missing');
+assert(html.includes('Hugging Face'), 'Hugging Face provider path is missing');
+assert(html.includes('Groq'), 'Groq provider path is missing');
+assert(html.includes('Lab Mode'), 'Lab mode is missing');
+assert(html.includes('href="#top">Home</a>'), 'Home navigation is missing');
+assert(!html.includes('install surfaces'), 'Generic install-surface count is still present');
+assert(!html.includes('provider paths</span>'), 'Generic provider-path count is still present');
 assert(html.includes('The VS Code extension stays intentionally smaller'), 'Extension and Desktop boundary is missing');
 assert(!html.includes('npm run setup'), 'Unsupported setup command found');
 assert(!html.includes('fikeya run '), 'Unsupported run command found');
