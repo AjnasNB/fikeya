@@ -40,6 +40,15 @@ function Invoke-Checked {
 }
 
 Invoke-Checked $repositoryRoot "python" @("-m", "pip", "install", "--disable-pip-version-check", "--upgrade", "build")
+$runtimeBuildRequirements = Join-Path $repositoryRoot "extensions\fikeya-desktop\runtime-build-requirements.txt"
+Invoke-Checked $repositoryRoot "python" @(
+	"-m",
+	"pip",
+	"install",
+	"--disable-pip-version-check",
+	"--requirement",
+	$runtimeBuildRequirements
+)
 foreach ($component in @("fikeya-agent-core", "fikeya-runtime", "integrations\fikeya-interop")) {
 	Invoke-Checked (Join-Path $repositoryRoot $component) "python" @("-m", "build", "--outdir", $outputPath)
 }
