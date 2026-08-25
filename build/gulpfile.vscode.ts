@@ -389,7 +389,9 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		if (includeCopilot) {
 			ensureCopilotPlatformPackage(platform, arch);
 		}
-		const copilotRuntimePrebuilds = gulp.src(includeCopilot ? getCopilotRuntimePrebuildFiles(platform, arch) : [], { base: '.', dot: true, allowEmpty: true });
+		const copilotRuntimePrebuilds = includeCopilot
+			? gulp.src(getCopilotRuntimePrebuildFiles(platform, arch), { base: '.', dot: true, allowEmpty: true })
+			: es.readArray([]);
 		ensureOSProxyResolverPlatformPackage(platform, arch);
 		const osProxyResolverPlatformPackage = gulp.src(getOSProxyResolverPlatformFiles(platform, arch), { base: '.', dot: true, allowEmpty: true });
 		const deps = es.merge(cleanedDeps, copilotRuntimePrebuilds, osProxyResolverPlatformPackage)
@@ -609,7 +611,13 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 function hasAuthenticodeSignature(filePath: string): Promise<boolean> {
 	return new Promise((resolve, reject) => {
 		const proc = cp.spawn('signtool.exe', ['verify', '/pa', filePath]);
-		proc.on('error', reject);
+		proc.on('error', error => {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				resolve(false);
+				return;
+			}
+			reject(error);
+		});
 		proc.on('exit', code => resolve(code === 0));
 	});
 }
@@ -656,6 +664,16 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 		const patchPromises = deps.map<Promise<unknown>>(async dep => {
 			const basename = path.basename(dep);
 			const fullPath = path.join(cwd, dep);
+			const handle = await fs.promises.open(fullPath, 'r');
+			const header = Buffer.alloc(2);
+			try {
+				await handle.read(header, 0, header.length, 0);
+			} finally {
+				await handle.close();
+			}
+			if (header[0] !== 0x4D || header[1] !== 0x5A) {
+				return;
+			}
 
 			await stripAuthenticodeSignature(fullPath);
 			await rcedit(fullPath, {
