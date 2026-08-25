@@ -3,22 +3,15 @@
  *  Copyright (C) 2026 Fikeya contributors
  *--------------------------------------------------------------------------------------------*/
 
-export const fikeyaModes = ['editor', 'agent', 'terminal', 'review'] as const;
-export const fikeyaLayouts = ['studio', 'agentFocus'] as const;
-
-export type FikeyaMode = typeof fikeyaModes[number];
-export type FikeyaLayout = typeof fikeyaLayouts[number];
-
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
-	| { readonly type: 'selectMode'; readonly mode: FikeyaMode }
-	| { readonly type: 'switchLayout'; readonly layout: FikeyaLayout }
 	| { readonly type: 'refreshProviders' }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
 	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: 'auto' | 'off' | 'required'; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'refreshReceipts' }
+	| { readonly type: 'refreshStatistics' }
 	| { readonly type: 'refreshMemory' };
 
 export type FikeyaCommand =
@@ -48,21 +41,10 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 			}
 			return undefined;
 		}
-		case 'selectMode': {
-			if (typeof value.mode === 'string' && fikeyaModes.includes(value.mode as FikeyaMode)) {
-				return { type: value.type, mode: value.mode as FikeyaMode };
-			}
-			return undefined;
-		}
-		case 'switchLayout': {
-			if (typeof value.layout === 'string' && fikeyaLayouts.includes(value.layout as FikeyaLayout)) {
-				return { type: value.type, layout: value.layout as FikeyaLayout };
-			}
-			return undefined;
-		}
 		case 'refreshProviders':
 		case 'cancelAgent':
 		case 'refreshReceipts':
+		case 'refreshStatistics':
 		case 'refreshMemory':
 			return { type: value.type };
 		case 'testProvider':

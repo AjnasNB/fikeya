@@ -6,11 +6,13 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'child_process';
+import { TextDecoder } from 'node:util';
 
 const maximumOutputBytes = 1024 * 1024;
 const maximumAgentOutputBytes = 5 * 1024 * 1024;
 const runtimeTimeoutMilliseconds = 30_000;
-const agentTimeoutMilliseconds = 65_000;
+const agentTimeoutMilliseconds = 15 * 60_000;
+const maximumProtocolLineBytes = 1024 * 1024;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
@@ -37,7 +39,7 @@ export interface FikeyaRuntimeReport {
 
 export interface FikeyaProviderConfiguration {
 	readonly name: string;
-	readonly kind: 'azure-openai' | 'openai' | 'anthropic' | 'openrouter' | 'nvidia-nim' | 'ollama' | 'openai-compatible';
+	readonly kind: 'azure-openai' | 'openai' | 'anthropic' | 'openrouter' | 'nvidia-nim' | 'google-gemini' | 'ollama' | 'openai-compatible';
 	readonly model: string;
 	readonly baseUrl: string;
 	readonly credentialType: 'api-key' | 'bearer' | 'entra-id' | 'none';
@@ -75,12 +77,54 @@ export interface FikeyaAgentMemory {
 	readonly responseSha256: string | null;
 }
 
+export type FikeyaAgentApprovalDecision = 'allow_once' | 'deny_once' | 'cancel';
+
+export interface FikeyaAgentApproval {
+	readonly type: 'approval';
+	readonly requestId: string;
+	readonly sessionId: string;
+	readonly callId: string;
+	readonly toolName: string;
+	readonly argumentsSha256: string;
+	readonly expectedRevision: number;
+	readonly summary: string;
+	readonly arguments: Readonly<Record<string, unknown>>;
+}
+
+export interface FikeyaToolOutcome {
+	readonly callId: string;
+	readonly name: string;
+	readonly status: 'ok' | 'error';
+	readonly outputSha256: string;
+	readonly durationMs: number | null;
+	readonly exitCode: number | null;
+	readonly test: boolean;
+}
+
+export interface FikeyaChangedFileOutcome {
+	readonly path: string;
+	readonly beforeSha256: string | null;
+	readonly afterSha256: string;
+}
+
+export interface FikeyaCodingOutcome {
+	readonly plan: string;
+	readonly summary: string;
+	readonly steps: number;
+	readonly toolCalls: readonly FikeyaToolOutcome[];
+	readonly tests: readonly FikeyaToolOutcome[];
+	readonly changedFiles: readonly FikeyaChangedFileOutcome[];
+}
+
 export interface FikeyaAgentTurn {
 	readonly sessionId: string;
 	readonly callId: string;
+	readonly providerCallIds: readonly string[];
+	readonly status: 'completed' | 'cancelled' | 'failed';
 	readonly output: string;
 	readonly usage: FikeyaAgentUsage;
 	readonly memory: FikeyaAgentMemory;
+	readonly outcome: FikeyaCodingOutcome;
 }
 
 export interface FikeyaProviderReceipt {
@@ -99,6 +143,33 @@ export interface FikeyaProviderReceipt {
 	readonly responseSha256: string;
 	readonly statusCode: number;
 	readonly usageMeasurement: 'provider-reported' | 'unavailable';
+}
+
+export interface FikeyaStatisticsBreakdown {
+	readonly provider: string;
+	readonly model: string;
+	readonly calls: number;
+	readonly measuredCalls: number;
+	readonly inputTokens: number | null;
+	readonly cachedInputTokens: number | null;
+	readonly outputTokens: number | null;
+	readonly lastActivity: string | null;
+}
+
+/** Content-free aggregate metrics read from the local Fikeya Runtime SQLite database. */
+export interface FikeyaStatistics {
+	readonly source: 'local-runtime-sqlite';
+	readonly measurement: 'provider-reported-only' | 'unavailable';
+	readonly generatedAt: string;
+	readonly sessions: number;
+	readonly providerCalls: number;
+	readonly measuredProviderCalls: number;
+	readonly inputTokens: number | null;
+	readonly cachedInputTokens: number | null;
+	readonly outputTokens: number | null;
+	readonly qarinahContextReceipts: number;
+	readonly lastActivity: string | null;
+	readonly breakdown: readonly FikeyaStatisticsBreakdown[];
 }
 
 export interface FikeyaCliResult<T> {
@@ -129,6 +200,8 @@ export function resolveFikeyaCli(extensionPath = path.resolve(__dirname, '..'), 
 	}
 	return { executable: 'fikeya', source: 'path' };
 }
+
+export type FikeyaAgentApprovalHandler = (request: FikeyaAgentApproval) => Promise<FikeyaAgentApprovalDecision>;
 
 /**
  * Connects the packaged Python runtime to the exact Qarinah sidecar shipped with this extension.
@@ -201,7 +274,7 @@ export async function removeFikeyaProvider(providerName: string, workspacePath: 
 	return runBoundedJsonCli(['provider', 'remove', providerName, '--json'], workspacePath, parseProviderRemoval);
 }
 
-/** Starts one real provider turn. Prompt content is written to stdin and never placed in argv. */
+/** Starts one reviewed coding loop. Prompt and approval content cross only the private stdin protocol. */
 export function startFikeyaAgentRun(
 	providerName: string,
 	prompt: string,
@@ -209,6 +282,7 @@ export function startFikeyaAgentRun(
 	contextMaxCharacters: number,
 	memoryMode: FikeyaMemoryMode,
 	workspacePath: string,
+	approvalHandler: FikeyaAgentApprovalHandler,
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaAgentRunHandle {
@@ -228,11 +302,11 @@ export function startFikeyaAgentRun(
 		};
 	}
 
-	const operation = startBoundedJsonCli(
+	const operation = startAgentProtocolCli(
 		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
 		workspacePath,
-		parseAgentTurn,
 		prompt,
+		approvalHandler,
 		agentTimeoutMilliseconds,
 		maximumAgentOutputBytes,
 		invocation,
@@ -249,6 +323,15 @@ export async function loadFikeyaAgentReceipts(sessionId: string, workspacePath: 
 	return runBoundedJsonCli(['agent', 'receipts', sessionId, '--workspace', '.', '--json'], workspacePath, parseAgentReceipts);
 }
 
+/** Reads content-free, measured-only aggregate statistics from the local runtime database. */
+export async function loadFikeyaStatistics(workspacePath: string): Promise<FikeyaCliResult<FikeyaStatistics>> {
+	return runBoundedJsonCli(buildStatisticsArguments(workspacePath), workspacePath, parseStatistics);
+}
+
+export function buildStatisticsArguments(workspacePath: string): readonly string[] {
+	return ['stats', '--workspace', workspacePath, '--json'];
+}
+
 /** Builds the public argument vector. Prompt content is deliberately absent. */
 export function buildAgentRunArguments(
 	providerName: string,
@@ -258,11 +341,11 @@ export function buildAgentRunArguments(
 ): readonly string[] {
 	return [
 		'agent',
-		'run',
+		'execute',
 		'.',
 		'--provider',
 		providerName,
-		'--prompt-stdin',
+		'--protocol-stdin',
 		'--allow-network',
 		'--max-output-tokens',
 		String(maxOutputTokens),
@@ -270,7 +353,7 @@ export function buildAgentRunArguments(
 		String(contextMaxCharacters),
 		'--memory',
 		memoryMode,
-		'--json'
+		'--json-lines'
 	];
 }
 
@@ -341,15 +424,27 @@ export function parseAgentTurn(value: unknown): FikeyaAgentTurn | undefined {
 	const record = asRecord(value);
 	const usage = asRecord(record?.usage);
 	const memory = asRecord(record?.memory);
-	const sessionId = boundedString(record?.sessionId, 128);
-	const callId = boundedString(record?.callId, 128);
+	const outcomeRecord = asRecord(record?.outcome);
+	const sessionId = strictBoundedString(record?.sessionId, 128);
+	const callId = strictBoundedString(record?.callId, 128);
 	const output = strictBoundedString(record?.output, 4_194_304);
 	const measurement = usage?.measurement;
 	const memoryStatus = memory?.status;
-	if (!record || record.ok !== true || !sessionId || !identifierPattern.test(sessionId)
+	const status = record?.status;
+	if (!record || record.type !== 'result'
+		|| (status !== 'completed' && status !== 'cancelled' && status !== 'failed')
+		|| record.ok !== (status === 'completed')
+		|| !sessionId || !identifierPattern.test(sessionId)
 		|| !callId || !identifierPattern.test(callId) || output === undefined
 		|| (measurement !== 'provider-reported' && measurement !== 'unavailable')
-		|| (memoryStatus !== 'off' && memoryStatus !== 'unavailable' && memoryStatus !== 'used')) {
+		|| (memoryStatus !== 'off' && memoryStatus !== 'unavailable' && memoryStatus !== 'used')
+		|| !Array.isArray(record.providerCallIds) || record.providerCallIds.length < 1 || record.providerCallIds.length > 128
+		|| !outcomeRecord) {
+		return undefined;
+	}
+	const providerCallIds = record.providerCallIds.map(candidate => strictBoundedString(candidate, 128));
+	if (providerCallIds.some(candidate => !candidate || !identifierPattern.test(candidate))
+		|| providerCallIds.at(-1) !== callId) {
 		return undefined;
 	}
 	const inputTokens = nullableBoundedInteger(usage?.inputTokens);
@@ -379,13 +474,112 @@ export function parseAgentTurn(value: unknown): FikeyaAgentTurn | undefined {
 	} else if (coverage !== null || evidenceCount !== null || receiptId !== null || responseSha256 !== null) {
 		return undefined;
 	}
+	const outcome = parseCodingOutcome(outcomeRecord);
+	if (!outcome || outcome.summary !== output) {
+		return undefined;
+	}
 	return {
 		sessionId,
 		callId,
+		providerCallIds: providerCallIds as string[],
+		status,
 		output,
 		usage: { measurement, inputTokens, outputTokens, cachedInputTokens },
-		memory: { status: memoryStatus, coverage, evidenceCount, receiptId, responseSha256 }
+		memory: { status: memoryStatus, coverage, evidenceCount, receiptId, responseSha256 },
+		outcome
 	};
+}
+
+export function parseAgentApproval(value: unknown): FikeyaAgentApproval | undefined {
+	const record = asRecord(value);
+	const requestId = strictBoundedString(record?.requestId, 128);
+	const sessionId = strictBoundedString(record?.sessionId, 128);
+	const callId = strictBoundedString(record?.callId, 128);
+	const toolName = strictBoundedString(record?.toolName, 128);
+	const argumentsSha256 = strictBoundedString(record?.argumentsSha256, 64);
+	const summary = strictBoundedString(record?.summary, 4_096);
+	const args = asRecord(record?.arguments);
+	if (!record || record.type !== 'approval'
+		|| !requestId || !identifierPattern.test(requestId)
+		|| !sessionId || !identifierPattern.test(sessionId)
+		|| !callId || !identifierPattern.test(callId)
+		|| !toolName || !identifierPattern.test(toolName)
+		|| !argumentsSha256 || !/^[0-9a-f]{64}$/.test(argumentsSha256)
+		|| summary === undefined || !args
+		|| !isBoundedInteger(record.expectedRevision, 0, 1_000_000_000)) {
+		return undefined;
+	}
+	return {
+		type: 'approval',
+		requestId,
+		sessionId,
+		callId,
+		toolName,
+		argumentsSha256,
+		expectedRevision: record.expectedRevision,
+		summary,
+		arguments: args
+	};
+}
+
+function parseCodingOutcome(value: Record<string, unknown>): FikeyaCodingOutcome | undefined {
+	const plan = strictBoundedString(value.plan, 4_194_304);
+	const summary = strictBoundedString(value.summary, 4_194_304);
+	if (plan === undefined || summary === undefined || !isBoundedInteger(value.steps, 0, 1_000)
+		|| !Array.isArray(value.toolCalls) || value.toolCalls.length > 1_000
+		|| !Array.isArray(value.tests) || value.tests.length > 1_000
+		|| !Array.isArray(value.changedFiles) || value.changedFiles.length > 1_000) {
+		return undefined;
+	}
+	const toolCalls = value.toolCalls.map(parseToolOutcome);
+	const tests = value.tests.map(parseToolOutcome);
+	const changedFiles = value.changedFiles.map(parseChangedFileOutcome);
+	if (toolCalls.some(candidate => candidate === undefined)
+		|| tests.some(candidate => candidate === undefined || candidate.test !== true)
+		|| changedFiles.some(candidate => candidate === undefined)) {
+		return undefined;
+	}
+	return {
+		plan,
+		summary,
+		steps: value.steps,
+		toolCalls: toolCalls as FikeyaToolOutcome[],
+		tests: tests as FikeyaToolOutcome[],
+		changedFiles: changedFiles as FikeyaChangedFileOutcome[]
+	};
+}
+
+function parseToolOutcome(value: unknown): FikeyaToolOutcome | undefined {
+	const record = asRecord(value);
+	const callId = boundedString(record?.callId, 128);
+	const name = boundedString(record?.name, 128);
+	const outputSha256 = boundedString(record?.outputSha256, 71);
+	const status = record?.status;
+	const durationMs = nullableBoundedInteger(record?.durationMs);
+	const exitCode = nullableSignedInteger(record?.exitCode, -65_535, 2_147_483_647);
+	if (!record || !callId || !identifierPattern.test(callId)
+		|| !name || !identifierPattern.test(name)
+		|| (status !== 'ok' && status !== 'error')
+		|| !outputSha256 || !/^sha256:[0-9a-f]{64}$/.test(outputSha256)
+		|| durationMs === undefined || exitCode === undefined || typeof record.test !== 'boolean') {
+		return undefined;
+	}
+	return { callId, name, status, outputSha256, durationMs, exitCode, test: record.test };
+}
+
+function parseChangedFileOutcome(value: unknown): FikeyaChangedFileOutcome | undefined {
+	const record = asRecord(value);
+	const filePath = strictBoundedString(record?.path, 4_096);
+	const beforeSha256 = nullableBoundedString(record?.beforeSha256, 71);
+	const afterSha256 = boundedString(record?.afterSha256, 71);
+	if (!record || !filePath || filePath.includes('\\') || filePath.startsWith('/')
+		|| filePath.split('/').includes('..')
+		|| beforeSha256 === undefined
+		|| (beforeSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(beforeSha256))
+		|| !afterSha256 || !/^sha256:[0-9a-f]{64}$/.test(afterSha256)) {
+		return undefined;
+	}
+	return { path: filePath, beforeSha256, afterSha256 };
 }
 
 export function parseAgentReceipts(value: unknown): readonly FikeyaProviderReceipt[] | undefined {
@@ -694,6 +888,280 @@ function startBoundedJsonCli<T>(
 	return { result, cancel: () => cancelOperation() };
 }
 
+export function parseStatistics(value: unknown): FikeyaStatistics | undefined {
+	const record = asRecord(value);
+	const source = record?.source;
+	const measurement = record?.measurement;
+	const generatedAt = parseTimestamp(record?.generatedAt);
+	const lastActivity = parseNullableTimestamp(record?.lastActivity);
+	const inputTokens = nullableBoundedInteger(record?.inputTokens);
+	const cachedInputTokens = nullableBoundedInteger(record?.cachedInputTokens);
+	const outputTokens = nullableBoundedInteger(record?.outputTokens);
+	if (!record || record.ok !== true
+		|| source !== 'local-runtime-sqlite'
+		|| (measurement !== 'provider-reported-only' && measurement !== 'unavailable')
+		|| !generatedAt || lastActivity === undefined
+		|| !isBoundedInteger(record.sessions, 0, Number.MAX_SAFE_INTEGER)
+		|| !isBoundedInteger(record.providerCalls, 0, Number.MAX_SAFE_INTEGER)
+		|| !isBoundedInteger(record.measuredProviderCalls, 0, Number.MAX_SAFE_INTEGER)
+		|| record.measuredProviderCalls > record.providerCalls
+		|| inputTokens === undefined || cachedInputTokens === undefined || outputTokens === undefined
+		|| !isBoundedInteger(record.qarinahContextReceipts, 0, Number.MAX_SAFE_INTEGER)
+		|| !Array.isArray(record.breakdown) || record.breakdown.length > 128) {
+		return undefined;
+	}
+	const measuredTotals = inputTokens !== null && cachedInputTokens !== null && outputTokens !== null;
+	const unavailableTotals = inputTokens === null && cachedInputTokens === null && outputTokens === null;
+	if ((measurement === 'provider-reported-only' && !measuredTotals)
+		|| (measurement === 'unavailable' && !unavailableTotals)
+		|| (record.measuredProviderCalls === 0) !== (measurement === 'unavailable')) {
+		return undefined;
+	}
+
+	const breakdown: FikeyaStatisticsBreakdown[] = [];
+	let breakdownCalls = 0;
+	let breakdownMeasuredCalls = 0;
+	for (const candidate of record.breakdown) {
+		const item = parseStatisticsBreakdown(candidate);
+		if (!item) {
+			return undefined;
+		}
+		breakdownCalls += item.calls;
+		breakdownMeasuredCalls += item.measuredCalls;
+		if (!Number.isSafeInteger(breakdownCalls) || !Number.isSafeInteger(breakdownMeasuredCalls)) {
+			return undefined;
+		}
+		breakdown.push(item);
+	}
+	if (breakdownCalls !== record.providerCalls || breakdownMeasuredCalls !== record.measuredProviderCalls) {
+		return undefined;
+	}
+
+	return {
+		source,
+		measurement,
+		generatedAt,
+		sessions: record.sessions,
+		providerCalls: record.providerCalls,
+		measuredProviderCalls: record.measuredProviderCalls,
+		inputTokens,
+		cachedInputTokens,
+		outputTokens,
+		qarinahContextReceipts: record.qarinahContextReceipts,
+		lastActivity,
+		breakdown
+	};
+}
+
+function parseStatisticsBreakdown(value: unknown): FikeyaStatisticsBreakdown | undefined {
+	const record = asRecord(value);
+	const provider = boundedString(record?.provider, 128);
+	const model = boundedString(record?.model, 160);
+	const inputTokens = nullableBoundedInteger(record?.inputTokens);
+	const cachedInputTokens = nullableBoundedInteger(record?.cachedInputTokens);
+	const outputTokens = nullableBoundedInteger(record?.outputTokens);
+	const lastActivity = parseNullableTimestamp(record?.lastActivity);
+	if (!record || !provider || !model
+		|| !isBoundedInteger(record.calls, 0, Number.MAX_SAFE_INTEGER)
+		|| !isBoundedInteger(record.measuredCalls, 0, Number.MAX_SAFE_INTEGER)
+		|| record.measuredCalls > record.calls
+		|| inputTokens === undefined || cachedInputTokens === undefined || outputTokens === undefined
+		|| lastActivity === undefined) {
+		return undefined;
+	}
+	const measuredTotals = inputTokens !== null && cachedInputTokens !== null && outputTokens !== null;
+	const unavailableTotals = inputTokens === null && cachedInputTokens === null && outputTokens === null;
+	if ((record.measuredCalls > 0 && !measuredTotals) || (record.measuredCalls === 0 && !unavailableTotals)) {
+		return undefined;
+	}
+	return {
+		provider,
+		model,
+		calls: record.calls,
+		measuredCalls: record.measuredCalls,
+		inputTokens,
+		cachedInputTokens,
+		outputTokens,
+		lastActivity
+	};
+}
+
+function startAgentProtocolCli(
+	args: readonly string[],
+	workspacePath: string,
+	prompt: string,
+	approvalHandler: FikeyaAgentApprovalHandler,
+	timeoutMilliseconds: number,
+	outputLimitBytes: number,
+	invocation: FikeyaCliInvocation,
+	environment: NodeJS.ProcessEnv
+): FikeyaAgentRunHandle {
+	let cancelOperation = (): void => undefined;
+	const result = new Promise<FikeyaCliResult<FikeyaAgentTurn>>(resolve => {
+		const child = spawn(invocation.executable, args, {
+			cwd: workspacePath,
+			env: environment,
+			shell: false,
+			stdio: ['pipe', 'pipe', 'pipe'],
+			windowsHide: true
+		});
+		let buffered = Buffer.alloc(0);
+		let outputBytes = 0;
+		let finalValue: FikeyaAgentTurn | undefined;
+		let settled = false;
+		let timeout: NodeJS.Timeout | undefined;
+		let processing = Promise.resolve();
+
+		const finish = (operationResult: FikeyaCliResult<FikeyaAgentTurn>): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			if (timeout) {
+				clearTimeout(timeout);
+			}
+			resolve(operationResult);
+		};
+		const stop = (failure: FikeyaRuntimeFailure): void => {
+			if (!settled) {
+				child.kill();
+				finish({ ok: false, exitCode: null, failure });
+			}
+		};
+		cancelOperation = (): void => stop('cancelled');
+
+		if (!child.stdin || !child.stdout || !child.stderr) {
+			stop('runtime-error');
+			return;
+		}
+
+		const writeMessage = (value: unknown): Promise<void> => new Promise((accept, reject) => {
+			const payload = `${JSON.stringify(value)}\n`;
+			child.stdin.write(payload, 'utf8', error => error ? reject(error) : accept());
+		});
+		const processLine = async (line: Buffer): Promise<void> => {
+			if (line.length === 0 || line.length > maximumProtocolLineBytes) {
+				throw new Error('Fikeya coding protocol line is empty or exceeds its limit.');
+			}
+			let value: unknown;
+			try {
+				value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line));
+			} catch {
+				throw new Error('Fikeya coding protocol emitted invalid JSON.');
+			}
+			const record = asRecord(value);
+			if (record?.type === 'progress') {
+				if (!parseAgentProgress(record)) {
+					throw new Error('Fikeya coding progress did not match the bounded schema.');
+				}
+				return;
+			}
+			if (record?.type === 'approval') {
+				const request = parseAgentApproval(record);
+				if (!request) {
+					throw new Error('Fikeya coding approval did not match the bounded schema.');
+				}
+				const decision = await approvalHandler(request);
+				if (decision !== 'allow_once' && decision !== 'deny_once' && decision !== 'cancel') {
+					throw new Error('Fikeya coding approval handler returned an invalid decision.');
+				}
+				await writeMessage({ type: 'approval', requestId: request.requestId, decision });
+				return;
+			}
+			if (record?.type === 'result') {
+				if (finalValue) {
+					throw new Error('Fikeya coding protocol emitted more than one result.');
+				}
+				finalValue = parseAgentTurn(record);
+				if (!finalValue) {
+					throw new Error('Fikeya coding result did not match the bounded schema.');
+				}
+				return;
+			}
+			throw new Error('Fikeya coding protocol emitted an unknown message.');
+		};
+
+		const capture = (chunk: Buffer, retain: boolean): void => {
+			if (settled) {
+				return;
+			}
+			outputBytes += chunk.byteLength;
+			if (outputBytes > outputLimitBytes) {
+				stop('output-limit');
+				return;
+			}
+			if (!retain) {
+				return;
+			}
+			buffered = Buffer.concat([buffered, chunk]);
+			while (true) {
+				const newline = buffered.indexOf(0x0a);
+				if (newline < 0) {
+					if (buffered.length > maximumProtocolLineBytes) {
+						stop('output-limit');
+					}
+					break;
+				}
+				let line = buffered.subarray(0, newline);
+				buffered = buffered.subarray(newline + 1);
+				if (line.at(-1) === 0x0d) {
+					line = line.subarray(0, line.length - 1);
+				}
+				processing = processing.then(() => processLine(line));
+				processing.catch(() => stop('invalid-json'));
+			}
+		};
+
+		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
+		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
+		child.stdin.on('error', () => {
+			if (!settled) {
+				stop('runtime-error');
+			}
+		});
+		child.on('error', error => {
+			finish({
+				ok: false,
+				exitCode: null,
+				failure: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not-found' : 'runtime-error'
+			});
+		});
+		child.on('close', exitCode => {
+			void processing.then(() => {
+				if (settled) {
+					return;
+				}
+				if (buffered.length !== 0) {
+					finish({ ok: false, exitCode, failure: 'invalid-json' });
+					return;
+				}
+				if (exitCode !== 0) {
+					finish({ ok: false, exitCode, failure: 'runtime-error' });
+					return;
+				}
+				if (!finalValue) {
+					finish({ ok: false, exitCode, failure: 'invalid-json' });
+					return;
+				}
+				finish({ ok: true, exitCode, value: finalValue, failure: 'none' });
+			}).catch(() => finish({ ok: false, exitCode, failure: 'invalid-json' }));
+		});
+
+		void writeMessage({ type: 'start', prompt }).catch(() => stop('runtime-error'));
+		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
+	});
+	return { result, cancel: () => cancelOperation() };
+}
+
+function parseAgentProgress(record: Record<string, unknown>): boolean {
+	const event = boundedString(record.event, 80);
+	const stage = boundedString(record.stage, 80);
+	return record.type === 'progress'
+		&& Boolean(event && identifierPattern.test(event))
+		&& Boolean(stage && identifierPattern.test(stage))
+		&& isBoundedInteger(record.sequence, 0, 1_000_000_000);
+}
+
 function invalidLocalRequest<T>(): FikeyaCliResult<T> {
 	return { ok: false, exitCode: null, failure: 'runtime-error' };
 }
@@ -721,11 +1189,27 @@ function nullableBoundedInteger(value: unknown): number | null | undefined {
 	return isBoundedInteger(value, 0, 1_000_000_000) ? value : undefined;
 }
 
+function nullableSignedInteger(value: unknown, minimum: number, maximum: number): number | null | undefined {
+	if (value === null) {
+		return null;
+	}
+	return isBoundedInteger(value, minimum, maximum) ? value : undefined;
+}
+
 function nullableBoundedString(value: unknown, maximumLength: number): string | null | undefined {
 	if (value === null) {
 		return null;
 	}
 	return typeof value === 'string' && value.length <= maximumLength ? value : undefined;
+}
+
+function parseTimestamp(value: unknown): string | undefined {
+	const timestamp = strictBoundedString(value, 80);
+	return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : undefined;
+}
+
+function parseNullableTimestamp(value: unknown): string | null | undefined {
+	return value === null ? null : parseTimestamp(value);
 }
 
 function findCheck(checks: readonly Record<string, unknown>[], name: string): Record<string, unknown> | undefined {

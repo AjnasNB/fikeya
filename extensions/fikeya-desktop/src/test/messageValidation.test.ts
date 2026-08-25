@@ -8,17 +8,15 @@ import { describe, test } from 'node:test';
 import { escapeHtml, parseWebviewMessage } from '../messageValidation';
 
 describe('Fikeya webview message validation', () => {
-	test('accepts only the declared modes, layouts, and commands', () => {
+	test('accepts only the declared commands and rejects retired surface controls', () => {
 		assert.deepStrictEqual([
-			parseWebviewMessage({ type: 'selectMode', mode: 'review' }),
-			parseWebviewMessage({ type: 'switchLayout', layout: 'agentFocus' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.runDoctor' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.terminal.sendSequence' }),
-			parseWebviewMessage({ type: 'selectMode', mode: '../terminal' })
+			parseWebviewMessage({ type: 'selectMode', mode: 'review' }),
+			parseWebviewMessage({ type: 'switchLayout', layout: 'agentFocus' })
 		], [
-			{ type: 'selectMode', mode: 'review' },
-			{ type: 'switchLayout', layout: 'agentFocus' },
 			{ type: 'openCommand', command: 'fikeya.runDoctor' },
+			undefined,
 			undefined,
 			undefined
 		]);
@@ -95,6 +93,7 @@ describe('Fikeya webview message validation', () => {
 			parseWebviewMessage({ type: 'removeProvider', providerName: 'bad name' }),
 			parseWebviewMessage({ type: 'cancelAgent' }),
 			parseWebviewMessage({ type: 'refreshReceipts' }),
+			parseWebviewMessage({ type: 'refreshStatistics' }),
 			parseWebviewMessage({ type: 'refreshMemory' })
 		], [
 			{ type: 'refreshProviders' },
@@ -102,6 +101,7 @@ describe('Fikeya webview message validation', () => {
 			undefined,
 			{ type: 'cancelAgent' },
 			{ type: 'refreshReceipts' },
+			{ type: 'refreshStatistics' },
 			{ type: 'refreshMemory' }
 		]);
 	});

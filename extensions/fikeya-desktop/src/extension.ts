@@ -5,28 +5,31 @@
 
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
-import { escapeHtml, FikeyaLayout, FikeyaMode, fikeyaLayouts, fikeyaModes, parseWebviewMessage } from './messageValidation';
+import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
+import { captureCompletedFikeyaRun } from './sessionCapture';
 import {
 	configureFikeyaProvider,
+	FikeyaAgentApproval,
+	FikeyaAgentApprovalDecision,
 	FikeyaAgentMemory,
 	FikeyaAgentRunHandle,
 	FikeyaAgentUsage,
+	FikeyaCodingOutcome,
 	FikeyaMemoryMode,
 	FikeyaProviderConfiguration,
 	FikeyaProviderProfile,
 	FikeyaProviderReceipt,
 	FikeyaRuntimeResult,
+	FikeyaStatistics,
 	loadFikeyaAgentReceipts,
+	loadFikeyaStatistics,
 	listFikeyaProviders,
 	removeFikeyaProvider,
 	runFikeyaRuntime,
 	startFikeyaAgentRun,
 	testFikeyaProvider
 } from './runtime';
-
-const layoutStorageKey = 'fikeya.layout';
-const modeStorageKey = 'fikeya.mode';
 
 interface ProviderDefinition {
 	readonly id: string;
@@ -51,6 +54,7 @@ interface AgentSurfaceState {
 	readonly callId?: string;
 	readonly usage?: FikeyaAgentUsage;
 	readonly memory?: FikeyaAgentMemory;
+	readonly outcome?: FikeyaCodingOutcome;
 	readonly receiptsStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
 	readonly receipts: readonly FikeyaProviderReceipt[];
 	readonly failure?: string;
@@ -61,15 +65,19 @@ interface MemorySurfaceState {
 	readonly snapshot?: FikeyaMemorySnapshot;
 }
 
+interface StatisticsSurfaceState {
+	readonly status: 'not-loaded' | 'loading' | 'ready' | 'unavailable';
+	readonly snapshot?: FikeyaStatistics;
+}
+
 interface DashboardState {
-	readonly layout: FikeyaLayout;
-	readonly mode: FikeyaMode;
 	readonly workspaceName: string;
 	readonly providersStatus: 'not-loaded' | 'loading' | 'ready' | 'unavailable';
 	readonly providers: readonly FikeyaProviderProfile[];
 	readonly providerHealth: Readonly<Record<string, ProviderHealth>>;
 	readonly agent: AgentSurfaceState;
 	readonly memory: MemorySurfaceState;
+	readonly statistics: StatisticsSurfaceState;
 	readonly runtime: 'not-checked' | 'checking' | 'ready' | 'attention';
 	readonly workspaceInitialized: boolean;
 	readonly runtimeProviderCount?: number;
@@ -78,16 +86,9 @@ interface DashboardState {
 
 export function activate(context: vscode.ExtensionContext): void {
 	const provider = new FikeyaWebviewViewProvider(context);
+	context.subscriptions.push(provider);
 	context.subscriptions.push(vscode.window.registerWebviewViewProvider(FikeyaWebviewViewProvider.viewType, provider));
-	context.subscriptions.push(vscode.commands.registerCommand('fikeya.open', async () => {
-		await vscode.commands.executeCommand('workbench.view.extension.fikeya');
-	}));
-	context.subscriptions.push(vscode.commands.registerCommand('fikeya.switchLayout', async () => {
-		await provider.chooseLayout();
-	}));
-	context.subscriptions.push(vscode.commands.registerCommand('fikeya.selectMode', async () => {
-		await provider.chooseMode();
-	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.open', () => provider.openWorkspacePanel()));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.configureProvider', async () => {
 		await provider.configureProvider();
 	}));
@@ -99,22 +100,25 @@ export function activate(context: vscode.ExtensionContext): void {
 	}));
 }
 
-class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
+class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
 	public static readonly viewType = 'fikeya.dashboard';
+	private static readonly panelViewType = 'fikeya.workspace';
 	private view: vscode.WebviewView | undefined;
+	private viewBinding: vscode.Disposable | undefined;
+	private panel: vscode.WebviewPanel | undefined;
+	private panelBinding: vscode.Disposable | undefined;
 	private state: DashboardState;
 	private activeAgentRun: FikeyaAgentRunHandle | undefined;
 
 	public constructor(private readonly context: vscode.ExtensionContext) {
 		this.state = {
-			layout: readStoredValue(context.globalState.get<string>(layoutStorageKey), fikeyaLayouts, 'studio'),
-			mode: readStoredValue(context.globalState.get<string>(modeStorageKey), fikeyaModes, 'agent'),
 			workspaceName: getWorkspaceName(),
 			providersStatus: 'not-loaded',
 			providers: [],
 			providerHealth: {},
 			agent: { status: 'idle', receiptsStatus: 'idle', receipts: [] },
 			memory: { status: 'not-loaded' },
+			statistics: { status: 'not-loaded' },
 			runtime: 'not-checked',
 			workspaceInitialized: false,
 			runtimeProviderCount: undefined,
@@ -123,79 +127,124 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView): void {
+		this.viewBinding?.dispose();
 		this.view = webviewView;
 		webviewView.webview.options = {
 			enableScripts: true
 		};
-		webviewView.webview.html = this.getHtml(webviewView.webview);
-		this.context.subscriptions.push(webviewView.webview.onDidReceiveMessage(async value => {
-			const message = parseWebviewMessage(value);
-			if (!message) {
+		const messageSubscription = this.bindWebview(webviewView.webview);
+		const disposeSubscription = webviewView.onDidDispose(() => {
+			if (this.view !== webviewView) {
 				return;
 			}
-
-			switch (message.type) {
-				case 'openCommand':
-					await vscode.commands.executeCommand(message.command);
-					break;
-				case 'selectMode':
-					await this.setMode(message.mode);
-					break;
-				case 'switchLayout':
-					await this.setLayout(message.layout);
-					break;
-				case 'refreshProviders':
-					await this.refreshProviders(true);
-					break;
-				case 'testProvider':
-					await this.testProvider(message.providerName);
-					break;
-				case 'removeProvider':
-					await this.removeProvider(message.providerName);
-					break;
-				case 'runAgent':
-					await this.runAgent(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode);
-					break;
-				case 'cancelAgent':
-					this.cancelAgent();
-					break;
-				case 'refreshReceipts':
-					await this.refreshReceipts(true);
-					break;
-				case 'refreshMemory':
-					await this.refreshMemory(true);
-					break;
-			}
-		}));
-		this.refresh();
-		void this.refreshProviders(false);
-		void this.refreshMemory(false);
+			this.view = undefined;
+			const binding = this.viewBinding;
+			this.viewBinding = undefined;
+			binding?.dispose();
+		});
+		this.viewBinding = vscode.Disposable.from(messageSubscription, disposeSubscription);
+		this.initializeSurface();
 	}
 
-	public async chooseLayout(): Promise<void> {
-		const selection = await vscode.window.showQuickPick([
-			{ label: vscode.l10n.t('Studio'), description: vscode.l10n.t('Show workspace, providers, the Qarinah graph, and receipts.'), value: 'studio' as const },
-			{ label: vscode.l10n.t('Agent Focus'), description: vscode.l10n.t('Prioritize the active coding surface and run evidence.'), value: 'agentFocus' as const }
-		], {
-			placeHolder: vscode.l10n.t('Choose the Fikeya Layout')
+	public openWorkspacePanel(): void {
+		if (this.panel) {
+			this.panel.reveal(vscode.ViewColumn.Active, false);
+			return;
+		}
+
+		this.panelBinding?.dispose();
+		const panel = vscode.window.createWebviewPanel(
+			FikeyaWebviewViewProvider.panelViewType,
+			vscode.l10n.t('Fikeya Workspace'),
+			{ viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+			{
+				enableScripts: true,
+				retainContextWhenHidden: true
+			}
+		);
+		this.panel = panel;
+		const messageSubscription = this.bindWebview(panel.webview);
+		const disposeSubscription = panel.onDidDispose(() => {
+			if (this.panel !== panel) {
+				return;
+			}
+			this.panel = undefined;
+			const binding = this.panelBinding;
+			this.panelBinding = undefined;
+			binding?.dispose();
 		});
-		if (selection) {
-			await this.setLayout(selection.value);
+		this.panelBinding = vscode.Disposable.from(messageSubscription, disposeSubscription);
+		this.initializeSurface();
+	}
+
+	public dispose(): void {
+		this.activeAgentRun?.cancel();
+		this.activeAgentRun = undefined;
+		this.viewBinding?.dispose();
+		this.viewBinding = undefined;
+		this.view = undefined;
+		const panel = this.panel;
+		this.panel = undefined;
+		this.panelBinding?.dispose();
+		this.panelBinding = undefined;
+		panel?.dispose();
+	}
+
+	private bindWebview(webview: vscode.Webview): vscode.Disposable {
+		return webview.onDidReceiveMessage(value => {
+			void this.handleWebviewMessage(value).catch(() => {
+				void vscode.window.showErrorMessage(vscode.l10n.t('Fikeya could not process that action. Try again or run doctor.'));
+			});
+		});
+	}
+
+	private initializeSurface(): void {
+		this.refresh();
+		if (this.state.providersStatus === 'not-loaded') {
+			void this.refreshProviders(false);
+		}
+		if (this.state.memory.status === 'not-loaded') {
+			void this.refreshMemory(false);
+		}
+		if (this.state.statistics.status === 'not-loaded') {
+			void this.refreshStatistics(false);
 		}
 	}
 
-	public async chooseMode(): Promise<void> {
-		const items = [
-			{ label: vscode.l10n.t('Editor'), value: 'editor' as const },
-			{ label: vscode.l10n.t('Agent'), value: 'agent' as const },
-			{ label: vscode.l10n.t('Terminal'), value: 'terminal' as const },
-			{ label: vscode.l10n.t('Review'), value: 'review' as const }
-		];
-		const selection = await vscode.window.showQuickPick(items, {
-			placeHolder: vscode.l10n.t('Choose the Fikeya Mode')
-		});
-		if (selection) {
-			await this.setMode(selection.value);
+	private async handleWebviewMessage(value: unknown): Promise<void> {
+		const message = parseWebviewMessage(value);
+		if (!message) {
+			return;
+		}
+
+		switch (message.type) {
+			case 'openCommand':
+				await vscode.commands.executeCommand(message.command);
+				break;
+			case 'refreshProviders':
+				await this.refreshProviders(true);
+				break;
+			case 'testProvider':
+				await this.testProvider(message.providerName);
+				break;
+			case 'removeProvider':
+				await this.removeProvider(message.providerName);
+				break;
+			case 'runAgent':
+				await this.runAgent(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode);
+				break;
+			case 'cancelAgent':
+				this.cancelAgent();
+				break;
+			case 'refreshReceipts':
+				await this.refreshReceipts(true);
+				break;
+			case 'refreshStatistics':
+				await this.refreshStatistics(true);
+				break;
+			case 'refreshMemory':
+				await this.refreshMemory(true);
+				break;
 		}
 	}
 
@@ -407,13 +456,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		memoryMode: FikeyaMemoryMode
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
-		if (!workspacePath || this.activeAgentRun || !this.state.providers.some(provider => provider.name === providerName)) {
+		const profile = this.state.providers.find(provider => provider.name === providerName);
+		if (!workspacePath || this.activeAgentRun || !profile) {
 			return;
 		}
 
 		this.state = {
 			...this.state,
-			mode: 'agent',
 			agent: {
 				status: 'running',
 				providerName,
@@ -422,7 +471,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			}
 		};
 		this.refresh();
-		const operation = startFikeyaAgentRun(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, workspacePath);
+		const operation = startFikeyaAgentRun(
+			providerName,
+			prompt,
+			maxOutputTokens,
+			contextMaxCharacters,
+			memoryMode,
+			workspacePath,
+			request => this.approveAgentTool(request)
+		);
 		this.activeAgentRun = operation;
 		const result = await operation.result;
 		if (this.activeAgentRun !== operation) {
@@ -445,22 +502,64 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 
+		const completed = result.value.status === 'completed';
 		this.state = {
 			...this.state,
 			agent: {
-				status: 'completed',
+				status: completed ? 'completed' : 'cancelled',
 				providerName,
 				output: result.value.output,
 				sessionId: result.value.sessionId,
 				callId: result.value.callId,
 				usage: result.value.usage,
 				memory: result.value.memory,
+				outcome: result.value.outcome,
 				receiptsStatus: 'loading',
-				receipts: []
+				receipts: [],
+				failure: completed ? undefined : vscode.l10n.t('Run cancelled at an approval boundary. Completed tool receipts remain available below.')
 			}
 		};
 		this.refresh();
 		await this.refreshReceipts(false);
+		await this.refreshStatistics(false);
+		if (!completed) {
+			return;
+		}
+		const capture = await captureCompletedFikeyaRun({
+			extensionPath: this.context.extensionPath,
+			workspacePath,
+			prompt,
+			profile,
+			turn: result.value,
+			receipts: this.state.agent.receipts
+		});
+		if (capture.ok) {
+			await this.refreshMemory(false);
+		}
+	}
+
+	private async approveAgentTool(request: FikeyaAgentApproval): Promise<FikeyaAgentApprovalDecision> {
+		const allow = vscode.l10n.t('Allow Once');
+		const deny = vscode.l10n.t('Deny Once');
+		const cancel = vscode.l10n.t('Cancel Run');
+		const exactArguments = JSON.stringify(request.arguments, null, 2);
+		const selected = await vscode.window.showWarningMessage(
+			vscode.l10n.t('Fikeya requests {0}', request.toolName),
+			{
+				modal: true,
+				detail: `${request.summary}\n\n${vscode.l10n.t('Exact arguments')} (${request.argumentsSha256}):\n${exactArguments}`
+			},
+			allow,
+			deny,
+			cancel
+		);
+		if (selected === allow) {
+			return 'allow_once';
+		}
+		if (selected === deny) {
+			return 'deny_once';
+		}
+		return 'cancel';
 	}
 
 	private cancelAgent(): void {
@@ -494,6 +593,28 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		this.refresh();
 	}
 
+	private async refreshStatistics(showFailure: boolean): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		if (!workspacePath) {
+			this.state = { ...this.state, statistics: { status: 'unavailable', snapshot: this.state.statistics.snapshot } };
+			this.refresh();
+			return;
+		}
+		this.state = { ...this.state, statistics: { status: 'loading', snapshot: this.state.statistics.snapshot } };
+		this.refresh();
+		const result = await loadFikeyaStatistics(workspacePath);
+		if (!result.ok || !result.value) {
+			this.state = { ...this.state, statistics: { status: 'unavailable', snapshot: this.state.statistics.snapshot } };
+			this.refresh();
+			if (showFailure) {
+				void vscode.window.showErrorMessage(runtimeFailureMessage(result.failure));
+			}
+			return;
+		}
+		this.state = { ...this.state, statistics: { status: 'ready', snapshot: result.value } };
+		this.refresh();
+	}
+
 	private async refreshMemory(showFailure: boolean): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		if (!workspacePath) {
@@ -523,19 +644,6 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		this.refresh();
 	}
 
-	private async setLayout(layout: FikeyaLayout): Promise<void> {
-		await this.context.globalState.update(layoutStorageKey, layout);
-		this.state = { ...this.state, layout };
-		this.refresh();
-	}
-
-	private async setMode(mode: FikeyaMode): Promise<void> {
-		await this.context.globalState.update(modeStorageKey, mode);
-		this.state = { ...this.state, mode };
-		this.refresh();
-		await vscode.commands.executeCommand(modeWorkbenchCommand(mode));
-	}
-
 	private applyRuntimeResult(result: FikeyaRuntimeResult, command: 'doctor' | 'init'): void {
 		if (!result.ok) {
 			this.state = { ...this.state, runtime: 'attention' };
@@ -558,15 +666,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 
 	private refresh(): void {
 		if (this.view) {
-			this.view.webview.html = this.getHtml(this.view.webview);
+			this.view.webview.html = this.getHtml(this.view.webview, 'sidebar');
+		}
+		if (this.panel) {
+			this.panel.webview.html = this.getHtml(this.panel.webview, 'editor');
 		}
 	}
 
-	private getHtml(webview: vscode.Webview): string {
+	private getHtml(webview: vscode.Webview, surface: 'sidebar' | 'editor'): string {
 		const nonce = randomBytes(16).toString('base64');
 		const strings = getWebviewStrings();
 		const providerCards = renderProviderCards(this.state, strings);
 		const agentSurface = renderAgentSurface(this.state, strings);
+		const statisticsSurface = renderStatistics(this.state.statistics, strings);
 		const memoryGraph = renderMemoryGraph(this.state, strings);
 		const memoryGraphData = serializeForHtml(this.state.memory.snapshot ?? { nodes: [], edges: [] });
 		const latestReceipt = this.state.agent.receipts.at(-1);
@@ -574,17 +686,6 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		const providerSummary = selectedProvider ? `${selectedProvider.name} / ${selectedProvider.model}` : strings.noProviderSelected;
 		const usageBasis = this.state.agent.usage?.measurement ?? strings.noUsageRecorded;
 		const contextStatus = formatContextStatus(this.state.agent.memory, strings);
-		const modeSurface = renderModeSurface(this.state.mode, strings);
-		const modeButtons = ([
-			['editor', strings.editor],
-			['agent', strings.agent],
-			['terminal', strings.terminal],
-			['review', strings.review]
-		] as const).map(([mode, label]) => `<button class="mode-button${this.state.mode === mode ? ' active' : ''}" data-mode="${mode}" type="button" aria-pressed="${this.state.mode === mode}">${escapeHtml(label)}</button>`).join('');
-		const layoutButtons = ([
-			['studio', strings.studio],
-			['agentFocus', strings.agentFocus]
-		] as const).map(([layout, label]) => `<button class="layout-button${this.state.layout === layout ? ' active' : ''}" data-layout="${layout}" type="button" aria-pressed="${this.state.layout === layout}">${escapeHtml(label)}</button>`).join('');
 
 		return `<!DOCTYPE html>
 <html lang="en">
@@ -597,6 +698,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		:root { color-scheme: light dark; }
 		* { box-sizing: border-box; }
 		body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
+		body[data-surface="editor"] { background: var(--vscode-editor-background); }
 		button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--vscode-button-border, transparent); color: var(--vscode-button-foreground); background: var(--vscode-button-background); font: inherit; cursor: pointer; }
 		button:hover { background: var(--vscode-button-hoverBackground); }
 		button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
@@ -604,6 +706,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		button:disabled { cursor: not-allowed; opacity: .58; }
 		button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 		.shell { display: grid; max-width: 960px; gap: 12px; margin: 0 auto; padding: 12px; }
+		body[data-surface="editor"] .shell { max-width: 1280px; gap: 16px; padding: 24px 28px 40px; }
+		body[data-surface="editor"] .masthead { padding: 18px; }
+		body[data-surface="editor"] h1 { font-size: 26px; }
 		.masthead { display: grid; gap: 7px; padding: 12px; border-top: 2px solid var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); }
 		.product-heading { display: flex; align-items: center; gap: 9px; }
 		.product-mark { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--vscode-focusBorder); color: var(--vscode-focusBorder); font-family: var(--vscode-editor-font-family); font-size: 10px; font-weight: 700; }
@@ -612,17 +717,26 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		h1 { margin: 1px 0 0; font-size: 18px; line-height: 1.1; }
 		.subtitle, p { margin: 0; color: var(--vscode-descriptionForeground); line-height: 1.45; }
 		.subtitle { max-width: 72ch; }
-		.control-bar { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(150px, .65fr); gap: 6px; }
-		.switcher { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
-		.switcher.modes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-		.switcher button { min-width: 0; overflow: hidden; color: var(--vscode-foreground); background: transparent; border-color: transparent; text-overflow: ellipsis; }
-		.switcher button.active { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 		.run-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--vscode-widget-border); }
 		.run-metric { min-width: 0; padding: 8px 9px; background: var(--vscode-editorWidget-background); }
 		.run-metric.provider { grid-column: 1 / -1; }
 		.run-metric span { display: block; color: var(--vscode-descriptionForeground); font-size: 10px; }
 		.run-metric strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 12px; font-variant-numeric: tabular-nums; }
-		.usage-basis { color: var(--vscode-descriptionForeground); font-size: 10px; }
+			.usage-basis { color: var(--vscode-descriptionForeground); font-size: 10px; }
+			.statistics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--vscode-widget-border); }
+			.statistics-metric { min-width: 0; padding: 9px; background: var(--vscode-editorWidget-background); }
+			.statistics-metric span { display: block; color: var(--vscode-descriptionForeground); font-size: 10px; }
+			.statistics-metric strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 14px; font-variant-numeric: tabular-nums; }
+			.statistics-status { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; }
+			.statistics-status dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; margin: 0; font-size: 11px; }
+			.statistics-status dt { color: var(--vscode-descriptionForeground); }
+			.statistics-status dd { margin: 0; overflow-wrap: anywhere; }
+			.table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--vscode-widget-border); }
+			table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+			th, td { padding: 7px 8px; border-bottom: 1px solid var(--vscode-widget-border); text-align: left; vertical-align: top; }
+			th { color: var(--vscode-descriptionForeground); font-weight: 600; }
+			tbody tr:last-child td { border-bottom: 0; }
+			.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 		.grid { display: grid; gap: 8px; }
 		.card { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.card h2 { margin: 0; font-size: 13px; }
@@ -640,10 +754,6 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		.receipt dt { color: var(--vscode-descriptionForeground); }
 		.receipt dd { margin: 0; overflow-wrap: anywhere; }
 		.agent-surface { display: grid; gap: 10px; }
-		.mode-guide { display: grid; gap: 7px; padding: 12px; border-left: 2px solid var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); }
-		.mode-guide .mode-kicker { color: var(--vscode-focusBorder); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-		.mode-guide h2 { margin: 0; font-size: 15px; }
-		.mode-guide .mode-detail { padding-top: 7px; border-top: 1px solid var(--vscode-widget-border); font-size: 11px; }
 		.agent-form { display: grid; gap: 9px; }
 		.field { display: grid; gap: 4px; }
 		.field > span { color: var(--vscode-foreground); font-weight: 600; }
@@ -684,31 +794,21 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 		.graph-legend i[data-type="concept"] { background: var(--vscode-charts-purple); }
 		.graph-legend i[data-type="directory"] { background: var(--vscode-charts-yellow); }
 		.graph-summary { color: var(--vscode-descriptionForeground); font-size: 11px; }
-		.focus-only { display: none; }
-		body[data-layout="agentFocus"] .studio-only { display: none; }
-		body[data-layout="agentFocus"] .focus-only { display: grid; }
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
 		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
-		@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 		@media (max-width: 720px) { .graph-workspace { grid-template-columns: 1fr; } }
-		@media (max-width: 520px) { .control-bar { grid-template-columns: 1fr; } .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } }
+			@media (max-width: 520px) { .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } .statistics-status { grid-template-columns: 1fr; } }
 		@media (max-width: 420px) { .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } }
-		@media (max-width: 280px) { .switcher.modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .provider-card { grid-template-columns: 1fr; } }
+		@media (max-width: 280px) { .provider-card { grid-template-columns: 1fr; } }
 	</style>
 </head>
-		<body data-layout="${this.state.layout}" data-mode="${this.state.mode}">
+		<body data-surface="${surface}">
 	<main class="shell">
 		<header class="masthead">
 			<div class="product-heading"><span class="product-mark" aria-hidden="true">&lt;/&gt;</span><div><p class="eyebrow">${escapeHtml(strings.providerNeutralEditor)}</p><h1>${escapeHtml(strings.fikeya)}</h1></div><span class="workspace-label" title="${escapeHtml(strings.workspace)}">${escapeHtml(this.state.workspaceName)}</span></div>
 			<p class="subtitle">${escapeHtml(strings.subtitle)}</p>
 		</header>
-		<div class="control-bar"><nav class="switcher modes" aria-label="${escapeHtml(strings.mode)}">${modeButtons}</nav><nav class="switcher" aria-label="${escapeHtml(strings.layout)}">${layoutButtons}</nav></div>
-		<section class="card focus-only" aria-labelledby="active-mode-title">
-			<h2 id="active-mode-title">${escapeHtml(strings.activeMode)}</h2>
-			<strong>${escapeHtml(modeLabel(this.state.mode, strings))}</strong>
-			<p>${escapeHtml(strings.agentFocusDescription)}</p>
-			<div class="actions"><button data-command="fikeya.runDoctor" type="button">${escapeHtml(strings.runDoctor)}</button></div>
-		</section>
 		<section class="run-strip" aria-label="${escapeHtml(strings.runContext)}">
 			<div class="run-metric provider"><span>${escapeHtml(strings.providerAndModel)}</span><strong>${escapeHtml(providerSummary)}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.runtime)}</span><strong>${escapeHtml(runtimeLabel(this.state.runtime, strings))}</strong></div>
@@ -717,9 +817,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			<div class="run-metric"><span>${escapeHtml(strings.outputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.outputTokens))}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.context)}</span><strong>${escapeHtml(contextStatus)}</strong></div>
 		</section>
-		<p class="usage-basis">${escapeHtml(strings.usageSource)} ${escapeHtml(usageBasis)}. ${escapeHtml(strings.metricsDisclaimer)}</p>
-		${this.state.mode === 'agent' ? agentSurface : modeSurface}
-		<section class="grid two studio-only">
+			<p class="usage-basis">${escapeHtml(strings.usageSource)} ${escapeHtml(usageBasis)}. ${escapeHtml(strings.metricsDisclaimer)}</p>
+			${agentSurface}
+			${statisticsSurface}
+		<section class="grid two">
 			<article class="card">
 				<h2>${escapeHtml(strings.getStarted)}</h2>
 				<span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span>
@@ -734,26 +835,25 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 			</article>
 		</section>
 		${memoryGraph}
-		<section class="card studio-only" aria-labelledby="providers-title">
+		<section class="card" aria-labelledby="providers-title">
 			<h2 id="providers-title">${escapeHtml(strings.providers)}</h2>
 			<span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span>
 			<p>${escapeHtml(strings.providersDescription)}</p>
 			<div class="providers">${providerCards}</div>
 			<div class="actions"><button data-command="fikeya.configureProvider" type="button">${escapeHtml(strings.configureProvider)}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
 		</section>
-		${this.state.agent.sessionId ? `<section class="card studio-only"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}
+		${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}
 	</main>
 	<script id="fikeya-memory-graph-data" type="application/json" nonce="${nonce}">${memoryGraphData}</script>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openCommand', command: button.dataset.command })));
-		document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'selectMode', mode: button.dataset.mode })));
-		document.querySelectorAll('[data-layout]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'switchLayout', layout: button.dataset.layout })));
 		document.querySelector('[data-action="refresh-providers"]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshProviders' }));
 		document.querySelectorAll('[data-provider-test]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'testProvider', providerName: button.dataset.providerTest })));
 		document.querySelectorAll('[data-provider-remove]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'removeProvider', providerName: button.dataset.providerRemove })));
 		document.querySelector('[data-agent-cancel]')?.addEventListener('click', () => vscode.postMessage({ type: 'cancelAgent' }));
-		document.querySelector('[data-receipts-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshReceipts' }));
+			document.querySelector('[data-receipts-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshReceipts' }));
+			document.querySelector('[data-statistics-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshStatistics' }));
 		const agentForm = document.querySelector('[data-agent-form]');
 		const networkConsent = document.querySelector('[data-network-consent]');
 		const runButton = document.querySelector('[data-agent-run]');
@@ -896,20 +996,20 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider {
 
 function renderMemoryGraph(state: DashboardState, strings: WebviewStrings): string {
 	if (state.memory.status === 'loading' || state.memory.status === 'not-loaded') {
-		return `<section class="card memory-graph studio-only"><h2>${escapeHtml(strings.memoryGraph)}</h2><p class="empty">${escapeHtml(strings.loadingMemory)}</p></section>`;
+		return `<section class="card memory-graph"><h2>${escapeHtml(strings.memoryGraph)}</h2><p class="empty">${escapeHtml(strings.loadingMemory)}</p></section>`;
 	}
 	const snapshot = state.memory.snapshot;
 	if (state.memory.status === 'unavailable' || !snapshot) {
-		return `<section class="card memory-graph studio-only"><h2>${escapeHtml(strings.memoryGraph)}</h2><p class="empty">${escapeHtml(strings.memoryUnavailable)}</p><div class="actions"><button class="secondary" data-memory-refresh type="button">${escapeHtml(strings.refresh)}</button></div></section>`;
+		return `<section class="card memory-graph"><h2>${escapeHtml(strings.memoryGraph)}</h2><p class="empty">${escapeHtml(strings.memoryUnavailable)}</p><div class="actions"><button class="secondary" data-memory-refresh type="button">${escapeHtml(strings.refresh)}</button></div></section>`;
 	}
 	if (snapshot.nodes.length === 0) {
-		return `<section class="card memory-graph studio-only"><h2>${escapeHtml(strings.memoryGraph)}</h2><p>${escapeHtml(strings.memoryGraphDescription)}</p><p class="empty">${escapeHtml(strings.memoryEmpty)}</p><p class="graph-summary">${escapeHtml(strings.graphManifest)} <code>${escapeHtml(snapshot.graphManifestHash)}</code></p></section>`;
+		return `<section class="card memory-graph"><h2>${escapeHtml(strings.memoryGraph)}</h2><p>${escapeHtml(strings.memoryGraphDescription)}</p><p class="empty">${escapeHtml(strings.memoryEmpty)}</p><p class="graph-summary">${escapeHtml(strings.graphManifest)} <code>${escapeHtml(snapshot.graphManifestHash)}</code></p></section>`;
 	}
 	const relationshipOptions = Array.from(new Set(snapshot.edges.map(edge => edge.type)))
 		.sort((left, right) => left.localeCompare(right))
 		.map(type => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`)
 		.join('');
-	return `<section class="card memory-graph studio-only" aria-labelledby="memory-graph-title">
+	return `<section class="card memory-graph" aria-labelledby="memory-graph-title">
 		<h2 id="memory-graph-title">${escapeHtml(strings.memoryGraph)}</h2>
 		<p>${escapeHtml(strings.memoryGraphDescription)}</p>
 		<div class="graph-controls">
@@ -957,6 +1057,59 @@ function renderProviderCards(state: DashboardState, strings: WebviewStrings): st
 	}).join('');
 }
 
+function renderStatistics(state: StatisticsSurfaceState, strings: WebviewStrings): string {
+	const snapshot = state.snapshot;
+	const statusLabel = state.status === 'loading'
+		? strings.statisticsLoading
+		: state.status === 'ready'
+			? (snapshot?.measurement === 'provider-reported-only' ? strings.statisticsMeasured : strings.statisticsMeasurementUnavailable)
+			: state.status === 'unavailable' && snapshot
+				? strings.statisticsRefreshFailed
+				: state.status === 'unavailable'
+					? strings.statisticsUnavailable
+					: strings.notChecked;
+	const runtimeApiStatus = state.status === 'unavailable' && !snapshot
+		? strings.runtimeStatisticsUnavailable
+		: state.status === 'not-loaded'
+			? strings.notChecked
+			: state.status === 'loading' && !snapshot
+				? strings.checking
+				: strings.runtimeStatisticsAvailable;
+	const breakdown = snapshot?.breakdown.length
+		? `<div class="table-scroll"><table>
+			<caption class="sr-only">${escapeHtml(strings.providerModelBreakdown)}</caption>
+			<thead><tr><th scope="col">${escapeHtml(strings.provider)}</th><th scope="col">${escapeHtml(strings.model)}</th><th scope="col">${escapeHtml(strings.calls)}</th><th scope="col">${escapeHtml(strings.measuredCalls)}</th><th scope="col">${escapeHtml(strings.inputTokens)}</th><th scope="col">${escapeHtml(strings.cachedInputTokens)}</th><th scope="col">${escapeHtml(strings.outputTokens)}</th><th scope="col">${escapeHtml(strings.lastActivity)}</th></tr></thead>
+			<tbody>${snapshot.breakdown.map(item => `<tr><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.model)}</td><td>${item.calls.toLocaleString()}</td><td>${item.measuredCalls.toLocaleString()}</td><td>${escapeHtml(formatUsageValue(item.inputTokens))}</td><td>${escapeHtml(formatUsageValue(item.cachedInputTokens))}</td><td>${escapeHtml(formatUsageValue(item.outputTokens))}</td><td>${escapeHtml(item.lastActivity ?? strings.noRecordedActivity)}</td></tr>`).join('')}</tbody>
+		</table></div>`
+		: `<p class="empty">${escapeHtml(strings.noStatisticsBreakdown)}</p>`;
+
+	return `<section class="card" aria-labelledby="statistics-title">
+		<div class="statistics-status">
+			<div><h2 id="statistics-title">${escapeHtml(strings.localStatistics)}</h2><p>${escapeHtml(strings.statisticsDescription)}</p></div>
+			<div class="actions"><button class="secondary" data-statistics-refresh type="button"${state.status === 'loading' ? ' disabled' : ''}>${escapeHtml(strings.refresh)}</button></div>
+		</div>
+		<span class="badge">${escapeHtml(statusLabel)}</span>
+		<div class="statistics-grid">
+			<div class="statistics-metric"><span>${escapeHtml(strings.sessions)}</span><strong>${snapshot ? snapshot.sessions.toLocaleString() : escapeHtml(strings.unavailable)}</strong></div>
+			<div class="statistics-metric"><span>${escapeHtml(strings.providerCalls)}</span><strong>${snapshot ? snapshot.providerCalls.toLocaleString() : escapeHtml(strings.unavailable)}</strong></div>
+			<div class="statistics-metric"><span>${escapeHtml(strings.measuredCalls)}</span><strong>${snapshot ? snapshot.measuredProviderCalls.toLocaleString() : escapeHtml(strings.unavailable)}</strong></div>
+			<div class="statistics-metric"><span>${escapeHtml(strings.qarinahContextReceipts)}</span><strong>${snapshot ? snapshot.qarinahContextReceipts.toLocaleString() : escapeHtml(strings.unavailable)}</strong></div>
+			<div class="statistics-metric"><span>${escapeHtml(strings.inputTokens)}</span><strong>${escapeHtml(formatUsageValue(snapshot?.inputTokens))}</strong></div>
+			<div class="statistics-metric"><span>${escapeHtml(strings.cachedInputTokens)}</span><strong>${escapeHtml(formatUsageValue(snapshot?.cachedInputTokens))}</strong></div>
+			<div class="statistics-metric"><span>${escapeHtml(strings.outputTokens)}</span><strong>${escapeHtml(formatUsageValue(snapshot?.outputTokens))}</strong></div>
+		</div>
+		<dl class="receipt">
+			<dt>${escapeHtml(strings.measurement)}</dt><dd>${escapeHtml(snapshot?.measurement ?? strings.unavailable)}</dd>
+			<dt>${escapeHtml(strings.dataUpdated)}</dt><dd>${escapeHtml(snapshot?.generatedAt ?? strings.notChecked)}</dd>
+			<dt>${escapeHtml(strings.lastActivity)}</dt><dd>${escapeHtml(snapshot?.lastActivity ?? strings.noRecordedActivity)}</dd>
+			<dt>${escapeHtml(strings.runtimeStatisticsApi)}</dt><dd>${escapeHtml(runtimeApiStatus)}</dd>
+			<dt>${escapeHtml(strings.extensionUpdateStatus)}</dt><dd>${escapeHtml(strings.extensionUpdateManual)}</dd>
+		</dl>
+		<h2>${escapeHtml(strings.providerModelBreakdown)}</h2>
+		${breakdown}
+	</section>`;
+}
+
 function renderAgentSurface(state: DashboardState, strings: WebviewStrings): string {
 	const running = state.agent.status === 'running';
 	const providerOptions = state.providers.length === 0
@@ -966,6 +1119,7 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings): str
 	const output = state.agent.output === undefined
 		? ''
 		: `<div class="agent-receipt"><h2>${escapeHtml(strings.providerOutput)}</h2><pre class="agent-output" tabindex="0">${escapeHtml(state.agent.output)}</pre></div>`;
+	const outcome = state.agent.outcome ? renderCodingOutcome(state.agent.outcome, strings) : '';
 	const identity = state.agent.sessionId
 		? `<dl class="receipt"><dt>${escapeHtml(strings.session)}</dt><dd><code>${escapeHtml(state.agent.sessionId)}</code></dd><dt>${escapeHtml(strings.call)}</dt><dd><code>${escapeHtml(state.agent.callId ?? strings.unavailable)}</code></dd><dt>${escapeHtml(strings.usageBasis)}</dt><dd>${escapeHtml(state.agent.usage?.measurement ?? strings.unavailable)}</dd><dt>${escapeHtml(strings.context)}</dt><dd>${escapeHtml(formatContextStatus(state.agent.memory, strings))}</dd>${state.agent.memory?.receiptId ? `<dt>${escapeHtml(strings.contextReceipt)}</dt><dd><code>${escapeHtml(state.agent.memory.receiptId)}</code></dd>` : ''}${state.agent.memory?.responseSha256 ? `<dt>${escapeHtml(strings.contextEvidence)}</dt><dd><code>${escapeHtml(state.agent.memory.responseSha256)}</code></dd>` : ''}</dl>`
 		: '';
@@ -982,7 +1136,7 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings): str
 			<div class="actions"><button data-agent-run type="submit"${running || state.providers.length === 0 ? ' disabled' : ''}>${escapeHtml(strings.runAgent)}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div>
 		</form>
 		<div class="agent-status" data-tone="${statusTone}" role="status">${escapeHtml(agentStatusLabel(state.agent, strings))}</div>
-		${output}${identity}
+		${output}${outcome}${identity}
 		${state.agent.sessionId ? `<div class="actions"><button class="secondary" data-receipts-refresh type="button"${state.agent.receiptsStatus === 'loading' ? ' disabled' : ''}>${escapeHtml(strings.refreshReceipts)}</button></div>` : ''}
 	</section>`;
 }
@@ -1006,18 +1160,21 @@ function renderReceipt(receipt: FikeyaProviderReceipt | undefined, agent: AgentS
 	</dl>`;
 }
 
-function renderModeSurface(mode: FikeyaMode, strings: WebviewStrings): string {
-	const copy = mode === 'editor'
-		? { title: strings.editorModeTitle, description: strings.editorModeDescription, detail: strings.editorModeDetail }
-		: mode === 'terminal'
-			? { title: strings.terminalModeTitle, description: strings.terminalModeDescription, detail: strings.terminalModeDetail }
-			: { title: strings.reviewModeTitle, description: strings.reviewModeDescription, detail: strings.reviewModeDetail };
-	return `<section class="mode-guide" aria-labelledby="mode-guide-title">
-		<p class="mode-kicker">${escapeHtml(strings.activeMode)} / ${escapeHtml(modeLabel(mode, strings))}</p>
-		<h2 id="mode-guide-title">${escapeHtml(copy.title)}</h2>
-		<p>${escapeHtml(copy.description)}</p>
-		<p class="mode-detail">${escapeHtml(copy.detail)}</p>
-	</section>`;
+function renderCodingOutcome(outcome: FikeyaCodingOutcome, strings: WebviewStrings): string {
+	const changedFiles = outcome.changedFiles.length === 0
+		? `<p class="empty">${escapeHtml(strings.noChangedFiles)}</p>`
+		: `<ul>${outcome.changedFiles.slice(0, 100).map(file => `<li><code>${escapeHtml(file.path)}</code></li>`).join('')}</ul>`;
+	const tools = outcome.toolCalls.length === 0
+		? `<p class="empty">${escapeHtml(strings.noToolCalls)}</p>`
+		: `<ul>${outcome.toolCalls.slice(0, 100).map(tool => `<li><code>${escapeHtml(tool.name)}</code> - ${escapeHtml(tool.status)}${tool.test ? ` - ${escapeHtml(strings.test)}` : ''}${tool.exitCode === null ? '' : ` - ${escapeHtml(vscode.l10n.t('exit {0}', tool.exitCode))}`}</li>`).join('')}</ul>`;
+	return `<div class="agent-receipt">
+		<h2>${escapeHtml(strings.executionOutcome)}</h2>
+		<h3>${escapeHtml(strings.codingPlan)}</h3>
+		<pre class="agent-output" tabindex="0">${escapeHtml(outcome.plan)}</pre>
+		<p>${escapeHtml(vscode.l10n.t('{0} reviewed steps', outcome.steps))}</p>
+		<h3>${escapeHtml(strings.changedFiles)}</h3>${changedFiles}
+		<h3>${escapeHtml(strings.toolActivity)}</h3>${tools}
+	</div>`;
 }
 
 function agentStatusLabel(agent: AgentSurfaceState, strings: WebviewStrings): string {
@@ -1070,29 +1227,33 @@ interface WebviewStrings {
 	readonly noProviderSelected: string;
 	readonly noUsageRecorded: string;
 	readonly usageSource: string;
-	readonly layout: string;
-	readonly mode: string;
-	readonly studio: string;
-	readonly agentFocus: string;
-	readonly editor: string;
-	readonly agent: string;
-	readonly terminal: string;
-	readonly review: string;
-	readonly activeMode: string;
-	readonly agentFocusDescription: string;
-	readonly editorModeTitle: string;
-	readonly editorModeDescription: string;
-	readonly editorModeDetail: string;
-	readonly terminalModeTitle: string;
-	readonly terminalModeDescription: string;
-	readonly terminalModeDetail: string;
-	readonly reviewModeTitle: string;
-	readonly reviewModeDescription: string;
-	readonly reviewModeDetail: string;
 	readonly workspace: string;
 	readonly runtime: string;
 	readonly unavailable: string;
 	readonly metricsDisclaimer: string;
+	readonly localStatistics: string;
+	readonly statisticsDescription: string;
+	readonly statisticsLoading: string;
+	readonly statisticsMeasured: string;
+	readonly statisticsMeasurementUnavailable: string;
+	readonly statisticsRefreshFailed: string;
+	readonly statisticsUnavailable: string;
+	readonly sessions: string;
+	readonly providerCalls: string;
+	readonly calls: string;
+	readonly measuredCalls: string;
+	readonly qarinahContextReceipts: string;
+	readonly measurement: string;
+	readonly dataUpdated: string;
+	readonly lastActivity: string;
+	readonly noRecordedActivity: string;
+	readonly runtimeStatisticsApi: string;
+	readonly runtimeStatisticsAvailable: string;
+	readonly runtimeStatisticsUnavailable: string;
+	readonly extensionUpdateStatus: string;
+	readonly extensionUpdateManual: string;
+	readonly providerModelBreakdown: string;
+	readonly noStatisticsBreakdown: string;
 	readonly getStarted: string;
 	readonly initialized: string;
 	readonly notInitialized: string;
@@ -1167,6 +1328,12 @@ interface WebviewStrings {
 	readonly runCompleted: string;
 	readonly runFailed: string;
 	readonly providerOutput: string;
+	readonly executionOutcome: string;
+	readonly codingPlan: string;
+	readonly changedFiles: string;
+	readonly noChangedFiles: string;
+	readonly toolActivity: string;
+	readonly noToolCalls: string;
 	readonly session: string;
 	readonly call: string;
 	readonly usageBasis: string;
@@ -1194,36 +1361,40 @@ interface WebviewStrings {
 function getWebviewStrings(): WebviewStrings {
 	return {
 		fikeya: vscode.l10n.t('Fikeya'),
-		providerNeutralEditor: vscode.l10n.t('Provider-Neutral AI Code Editor'),
-		subtitle: vscode.l10n.t('Plan, edit, run, and review with the model you choose. Fikeya assembles bounded project context and records exact provider usage when the provider reports it.'),
+		providerNeutralEditor: vscode.l10n.t('AI Coding-Agent Workspace'),
+		subtitle: vscode.l10n.t('Configure the model you choose, run reviewed coding work, inspect the Qarinah graph, and verify exact provider usage from one workspace.'),
 		runContext: vscode.l10n.t('Active Run Context'),
 		providerAndModel: vscode.l10n.t('Provider / Model'),
 		noProviderSelected: vscode.l10n.t('Configure a provider to begin'),
 		noUsageRecorded: vscode.l10n.t('No usage recorded'),
 		usageSource: vscode.l10n.t('Usage source:'),
-		layout: vscode.l10n.t('Layout'),
-		mode: vscode.l10n.t('Mode'),
-		studio: vscode.l10n.t('Studio'),
-		agentFocus: vscode.l10n.t('Agent Focus'),
-		editor: vscode.l10n.t('Editor'),
-		agent: vscode.l10n.t('Agent'),
-		terminal: vscode.l10n.t('Terminal'),
-		review: vscode.l10n.t('Review'),
-		activeMode: vscode.l10n.t('Active Mode'),
-		agentFocusDescription: vscode.l10n.t('The focused layout keeps the selected coding surface and its run evidence in view.'),
-		editorModeTitle: vscode.l10n.t('Write in the Full Editor'),
-		editorModeDescription: vscode.l10n.t('Use native navigation, language diagnostics, refactors, debugging, Git, and extensions while Fikeya keeps the active provider and context receipt visible.'),
-		editorModeDetail: vscode.l10n.t('Select Agent when the task needs a bounded model turn. The editor never sends code merely because this mode is active.'),
-		terminalModeTitle: vscode.l10n.t('Work in the Integrated Terminal'),
-		terminalModeDescription: vscode.l10n.t('Use the native shell, tasks, and test output without leaving the project. Direct terminal commands remain under your control.'),
-		terminalModeDetail: vscode.l10n.t('Automated process execution stays behind the runtime broker and exact request approval boundary.'),
-		reviewModeTitle: vscode.l10n.t('Inspect the Real Diff'),
-		reviewModeDescription: vscode.l10n.t('Use Source Control and the merge editor to inspect changed files while call receipts preserve provider, usage, and evidence metadata.'),
-		reviewModeDetail: vscode.l10n.t('Review mode focuses existing repository changes. It does not substitute generated findings or simulated test results.'),
 		workspace: vscode.l10n.t('Workspace'),
 		runtime: vscode.l10n.t('Runtime'),
 		unavailable: vscode.l10n.t('Unavailable'),
 		metricsDisclaimer: vscode.l10n.t('Token counts are shown only when the provider reports them. Fikeya does not estimate provider billing here.'),
+		localStatistics: vscode.l10n.t('Local Usage & Statistics'),
+		statisticsDescription: vscode.l10n.t('Content-free aggregates read from this workspace\'s local Fikeya SQLite database. This view does not send an analytics event to Fikeya or another service.'),
+		statisticsLoading: vscode.l10n.t('Refreshing local statistics'),
+		statisticsMeasured: vscode.l10n.t('Provider-reported token measurements'),
+		statisticsMeasurementUnavailable: vscode.l10n.t('Token measurement unavailable'),
+		statisticsRefreshFailed: vscode.l10n.t('Refresh failed; showing the last local snapshot'),
+		statisticsUnavailable: vscode.l10n.t('Local statistics are unavailable in the installed runtime'),
+		sessions: vscode.l10n.t('Sessions'),
+		providerCalls: vscode.l10n.t('Provider Calls'),
+		calls: vscode.l10n.t('Calls'),
+		measuredCalls: vscode.l10n.t('Measured Calls'),
+		qarinahContextReceipts: vscode.l10n.t('Qarinah Context Receipts'),
+		measurement: vscode.l10n.t('Measurement'),
+		dataUpdated: vscode.l10n.t('Data Updated'),
+		lastActivity: vscode.l10n.t('Last Local Activity'),
+		noRecordedActivity: vscode.l10n.t('No recorded activity'),
+		runtimeStatisticsApi: vscode.l10n.t('Runtime Statistics API'),
+		runtimeStatisticsAvailable: vscode.l10n.t('Available in the installed local runtime'),
+		runtimeStatisticsUnavailable: vscode.l10n.t('Unavailable in the installed local runtime'),
+		extensionUpdateStatus: vscode.l10n.t('Extension Update Status'),
+		extensionUpdateManual: vscode.l10n.t('Managed by the current VSIX host. This view does not claim Marketplace or native auto-update.'),
+		providerModelBreakdown: vscode.l10n.t('Provider and Model Breakdown'),
+		noStatisticsBreakdown: vscode.l10n.t('No provider or model usage has been recorded in this local workspace.'),
 		getStarted: vscode.l10n.t('Get Started'),
 		initialized: vscode.l10n.t('Initialized'),
 		notInitialized: vscode.l10n.t('Not Initialized'),
@@ -1274,7 +1445,7 @@ function getWebviewStrings(): WebviewStrings {
 		test: vscode.l10n.t('Test'),
 		remove: vscode.l10n.t('Remove'),
 		agentRun: vscode.l10n.t('Agent Run'),
-		agentRunDescription: vscode.l10n.t('Send one bounded prompt to a live runtime provider. Prompt and output content stay ephemeral in this view.'),
+		agentRunDescription: vscode.l10n.t('Run a reviewed coding loop that can inspect files, apply exact approved edits, invoke allowlisted tools, and verify tests. Prompt and tool content stay ephemeral in this view.'),
 		provider: vscode.l10n.t('Provider'),
 		prompt: vscode.l10n.t('Prompt'),
 		promptPlaceholder: vscode.l10n.t('Describe the coding task or question.'),
@@ -1290,14 +1461,20 @@ function getWebviewStrings(): WebviewStrings {
 		contextDisabled: vscode.l10n.t('Disabled for this run'),
 		contextUnavailable: vscode.l10n.t('Unavailable; no context attached'),
 		maximumOutputTokens: vscode.l10n.t('Maximum Output Tokens'),
-		networkConsent: vscode.l10n.t('Allow this run to make one provider network request. Consent resets after every run.'),
+		networkConsent: vscode.l10n.t('Allow this reviewed run to make provider requests. Every workspace or process tool still requires an exact one-use decision.'),
 		runAgent: vscode.l10n.t('Run Agent'),
 		cancel: vscode.l10n.t('Cancel'),
 		agentIdle: vscode.l10n.t('Choose a provider and enter a prompt. No network request occurs until you confirm it for this run.'),
-		waitingForProvider: vscode.l10n.t('Waiting for the completed provider response. This alpha does not claim token streaming.'),
-		runCompleted: vscode.l10n.t('Provider response completed. Usage and evidence below come from the durable runtime receipt.'),
+		waitingForProvider: vscode.l10n.t('Planning, inspecting, and verifying. Fikeya pauses before every workspace or process tool.'),
+		runCompleted: vscode.l10n.t('Reviewed coding loop completed. The result, changed files, tests, usage, and evidence are shown below.'),
 		runFailed: vscode.l10n.t('The provider run failed safely. Provider response bodies were not retained.'),
-		providerOutput: vscode.l10n.t('Ephemeral Provider Output'),
+		providerOutput: vscode.l10n.t('Reviewed Result'),
+		executionOutcome: vscode.l10n.t('Structured Execution Outcome'),
+		codingPlan: vscode.l10n.t('Plan'),
+		changedFiles: vscode.l10n.t('Changed Files'),
+		noChangedFiles: vscode.l10n.t('No files were changed.'),
+		toolActivity: vscode.l10n.t('Approved Tool Activity'),
+		noToolCalls: vscode.l10n.t('No tools were executed.'),
 		session: vscode.l10n.t('Session'),
 		call: vscode.l10n.t('Call'),
 		usageBasis: vscode.l10n.t('Usage Basis'),
@@ -1370,6 +1547,15 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 			secretPrompt: vscode.l10n.t('Enter the NVIDIA NIM API Key')
 		},
 		{
+			id: 'google-gemini',
+			label: vscode.l10n.t('Google Gemini'),
+			detail: vscode.l10n.t('Use the Gemini API through its OpenAI-compatible endpoint.'),
+			runtimeKind: 'google-gemini',
+			credentialType: 'api-key',
+			defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+			secretPrompt: vscode.l10n.t('Enter the Google Gemini API Key')
+		},
+		{
 			id: 'ollama',
 			label: vscode.l10n.t('Ollama'),
 			detail: vscode.l10n.t('Use a model running on this device.'),
@@ -1379,8 +1565,8 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 		},
 		{
 			id: 'openai-compatible',
-			label: vscode.l10n.t('OpenAI-Compatible'),
-			detail: vscode.l10n.t('Connect to a custom compatible endpoint.'),
+			label: vscode.l10n.t('Vertex AI or OpenAI-Compatible'),
+			detail: vscode.l10n.t('Connect with a compatible endpoint and short-lived bearer token.'),
 			runtimeKind: 'openai-compatible',
 			credentialType: 'bearer',
 			defaultBaseUrl: '',
@@ -1399,10 +1585,6 @@ function getLocalWorkspacePath(): string | undefined {
 	}
 	const folder = vscode.workspace.workspaceFolders?.find(candidate => candidate.uri.scheme === 'file');
 	return folder?.uri.fsPath;
-}
-
-function readStoredValue<T extends string>(value: string | undefined, allowed: readonly T[], fallback: T): T {
-	return value && allowed.includes(value as T) ? value as T : fallback;
 }
 
 function validateProviderUrl(value: string, required = false): string | undefined {
@@ -1455,31 +1637,5 @@ function runtimeLabel(runtime: DashboardState['runtime'], strings: WebviewString
 			return strings.needsAttention;
 		default:
 			return strings.notChecked;
-	}
-}
-
-function modeLabel(mode: FikeyaMode, strings: WebviewStrings): string {
-	switch (mode) {
-		case 'editor':
-			return strings.editor;
-		case 'terminal':
-			return strings.terminal;
-		case 'review':
-			return strings.review;
-		default:
-			return strings.agent;
-	}
-}
-
-function modeWorkbenchCommand(mode: FikeyaMode): string {
-	switch (mode) {
-		case 'editor':
-			return 'workbench.action.focusActiveEditorGroup';
-		case 'terminal':
-			return 'workbench.action.terminal.focus';
-		case 'review':
-			return 'workbench.view.scm';
-		default:
-			return 'workbench.view.extension.fikeya';
 	}
 }

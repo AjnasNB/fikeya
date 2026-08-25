@@ -1,14 +1,12 @@
 {
 	"displayName": "Fikeya Desktop",
-	"description": "A provider-neutral AI code editor with Editor, Agent, Terminal, and Review modes, Qarinah context, and exact usage receipts.",
+	"description": "A provider-neutral AI coding-agent workspace with provider profiles, Qarinah context, and exact usage receipts.",
 	"capabilities.untrustedWorkspaces": "Fikeya can run local tools, so initialize it only in a workspace you trust.",
 	"container.title": "Fikeya",
 	"view.dashboard.name": "Fikeya",
 	"view.dashboard.contextualTitle": "Fikeya Workspace",
 	"command.category": "Fikeya",
 	"command.open.title": "Open Fikeya",
-	"command.switchLayout.title": "Switch Layout",
-	"command.selectMode.title": "Select Mode",
 	"command.configureProvider.title": "Configure Provider",
 	"command.initializeWorkspace.title": "Initialize Workspace",
 	"command.runDoctor.title": "Run Doctor"

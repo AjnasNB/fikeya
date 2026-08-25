@@ -26,8 +26,6 @@
 	"activationEvents": [
 		"onView:fikeya.dashboard",
 		"onCommand:fikeya.open",
-		"onCommand:fikeya.switchLayout",
-		"onCommand:fikeya.selectMode",
 		"onCommand:fikeya.configureProvider",
 		"onCommand:fikeya.initializeWorkspace",
 		"onCommand:fikeya.runDoctor"
@@ -61,18 +59,6 @@
 				"icon": "$(sparkle)"
 			},
 			{
-				"command": "fikeya.switchLayout",
-				"title": "%command.switchLayout.title%",
-				"category": "%command.category%",
-				"icon": "$(layout)"
-			},
-			{
-				"command": "fikeya.selectMode",
-				"title": "%command.selectMode.title%",
-				"category": "%command.category%",
-				"icon": "$(list-selection)"
-			},
-			{
 				"command": "fikeya.configureProvider",
 				"title": "%command.configureProvider.title%",
 				"category": "%command.category%",
@@ -94,14 +80,9 @@
 		"menus": {
 			"view/title": [
 				{
-					"command": "fikeya.switchLayout",
-					"when": "view == fikeya.dashboard",
-					"group": "navigation@1"
-				},
-				{
 					"command": "fikeya.runDoctor",
 					"when": "view == fikeya.dashboard",
-					"group": "navigation@2"
+					"group": "navigation@1"
 				}
 			]
 		}
@@ -110,7 +91,7 @@
 		"compile": "npx gulp compile-extension:fikeya-desktop",
 		"watch": "npx gulp watch-extension:fikeya-desktop",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",
