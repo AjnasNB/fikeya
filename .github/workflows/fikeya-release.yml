@@ -98,6 +98,8 @@ jobs:
           npm ci
           npm test
           Pop-Location
+          node --test scripts/fikeya/tests/capture_desktop_proof.test.ts
+          node scripts/fikeya/capture-desktop-proof.ts --check
           python -m unittest bench/fikeya-plan-proof/test_run.py
       - name: Build unsigned release artifacts
         shell: pwsh
