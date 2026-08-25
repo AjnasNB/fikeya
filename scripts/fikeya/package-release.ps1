@@ -93,7 +93,17 @@ if (-not $SkipDesktop) {
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "compile-build-without-mangling")
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64")
 	$packagedProduct = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\resources\app\product.json"
-	Invoke-Checked $repositoryRoot "python" @("scripts\fikeya\verify_packaged_product.py", $packagedProduct)
+	$packagedExecutable = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\Fikeya.exe"
+	Invoke-Checked $repositoryRoot "python" @(
+		"scripts\fikeya\verify_packaged_product.py",
+		$packagedProduct,
+		"--executable",
+		$packagedExecutable,
+		"--public-version",
+		$releaseVersion,
+		"--numeric-version",
+		[string]$distribution.desktopNumericVersion
+	)
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64-user-setup")
 	$setupSource = Join-Path $repositoryRoot ".build\win32-x64\user-setup\FikeyaSetup.exe"
 	if (-not (Test-Path -LiteralPath $setupSource)) {
@@ -101,6 +111,10 @@ if (-not $SkipDesktop) {
 	}
 	$setupTarget = Join-Path $outputPath "FikeyaSetup-$releaseVersion-win32-x64.exe"
 	Copy-Item -LiteralPath $setupSource -Destination $setupTarget
+	& (Join-Path $PSScriptRoot "verify-installer-smoke.ps1") `
+		-InstallerPath $setupTarget `
+		-PublicVersion $releaseVersion `
+		-NumericVersion ([string]$distribution.desktopNumericVersion)
 
 	if ($env:FIKEYA_SIGNING_PFX_BASE64 -and $env:FIKEYA_SIGNING_PFX_PASSWORD) {
 		$pfxPath = Join-Path $env:TEMP "fikeya-release-signing.pfx"
