@@ -39,7 +39,7 @@ describe('Fikeya webview message validation', () => {
 	});
 
 	test('accepts bounded agent turns only with per-run network consent', () => {
-		assert.deepStrictEqual(parseWebviewMessage({
+		const request = {
 			type: 'runAgent',
 			providerName: 'azure-primary',
 			prompt: 'Explain the failing test.',
@@ -47,8 +47,18 @@ describe('Fikeya webview message validation', () => {
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
 			allowNetwork: true
-		}), {
+		};
+		assert.deepStrictEqual(parseWebviewMessage(request), {
 			type: 'runAgent',
+			providerName: 'azure-primary',
+			prompt: 'Explain the failing test.',
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
+			allowNetwork: true
+		});
+		assert.deepStrictEqual(parseWebviewMessage({ ...request, type: 'proposePlan' }), {
+			type: 'proposePlan',
 			providerName: 'azure-primary',
 			prompt: 'Explain the failing test.',
 			maxOutputTokens: 2048,
@@ -58,7 +68,7 @@ describe('Fikeya webview message validation', () => {
 		});
 
 		assert.strictEqual(parseWebviewMessage({
-			type: 'runAgent',
+			type: 'proposePlan',
 			providerName: 'azure-primary',
 			prompt: 'No consent.',
 			maxOutputTokens: 2048,
@@ -66,6 +76,71 @@ describe('Fikeya webview message validation', () => {
 			memoryMode: 'required',
 			allowNetwork: false
 		}), undefined);
+	});
+
+	test('accepts an exact bounded plan specification and declared lifecycle actions', () => {
+		const specification = {
+			schemaVersion: 1,
+			title: 'Inspect the project',
+			steps: [{
+				stepId: 'inspect',
+				title: 'List files',
+				toolCall: { callId: 'plan:list', name: 'workspace.list_files', arguments: { path: '.' } },
+				verify: { expectedStatus: 'ok' }
+			}]
+		};
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'createPlan', specification }), { type: 'createPlan', specification });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'newPlan' }), { type: 'newPlan' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'refreshPlan' }), { type: 'refreshPlan' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'planAction', action: 'review' }), { type: 'planAction', action: 'review' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'planAction', action: 'approve-step', stepId: 'inspect' }), { type: 'planAction', action: 'approve-step', stepId: 'inspect' });
+		assert.strictEqual(parseWebviewMessage({ type: 'planAction', action: 'approve-step', stepId: '../inspect' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'planAction', action: 'delete' }), undefined);
+	});
+
+	test('rejects forward-dependent and unsupported-tool plan specifications', () => {
+		const laterDependency = {
+			title: 'Invalid ordering',
+			steps: [{ stepId: 'first', title: 'First', dependsOn: ['later'], toolCall: { callId: 'first:call', name: 'workspace.list_files', arguments: {} } }, { stepId: 'later', title: 'Later', toolCall: { callId: 'later:call', name: 'workspace.list_files', arguments: {} } }]
+		};
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: laterDependency }), undefined);
+		const unsupported = {
+			title: 'Unsupported tool',
+			steps: [{ stepId: 'fetch', title: 'Fetch', toolCall: { callId: 'fetch:call', name: 'network.fetch', arguments: { url: 'https://example.com' } } }]
+		};
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: unsupported }), undefined);
+	});
+
+	test('matches runtime plan invariants before specifications cross stdin', () => {
+		const hash = `sha256:${'a'.repeat(64)}`;
+		const valid = {
+			schemaVersion: 1,
+			title: 'Inspect and verify',
+			steps: [
+				{ stepId: 'inspect', title: 'Inspect', toolCall: { callId: 'call:inspect', name: 'workspace.list_files', arguments: { path: '.' } } },
+				{ stepId: 'verify', title: 'Verify', dependsOn: ['inspect'], toolCall: { callId: 'call:verify', name: 'workspace.read_file', arguments: { path: 'README.md' } }, verify: { expectedStatus: 'ok', expectedExitCode: 0, expectedOutputSha256: hash, files: [{ path: 'README.md', sha256: hash }] } }
+			]
+		};
+		assert.ok(parseWebviewMessage({ type: 'createPlan', specification: valid }));
+		const duplicateCall = structuredClone(valid);
+		duplicateCall.steps[1].toolCall.callId = 'call:inspect';
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: duplicateCall }), undefined);
+		const duplicateDependency = structuredClone(valid);
+		duplicateDependency.steps[1].dependsOn = ['inspect', 'inspect'];
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: duplicateDependency }), undefined);
+		const unsafeVerification = structuredClone(valid);
+		const unsafeFile = unsafeVerification.steps[1].verify?.files[0];
+		assert.ok(unsafeFile);
+		unsafeFile.path = '.fikeya/state.sqlite3';
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: unsafeVerification }), undefined);
+		const unknownVerificationField = structuredClone(valid);
+		(unknownVerificationField.steps[1].verify as Record<string, unknown>).runWithoutApproval = true;
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: unknownVerificationField }), undefined);
+		const nonFiniteArguments = structuredClone(valid);
+		Object.assign(nonFiniteArguments.steps[0].toolCall.arguments, { limit: Number.NaN });
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: nonFiniteArguments }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: { ...valid, title: '🧠'.repeat(1_025) } }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'createPlan', specification: { ...valid, executeNow: true } }), undefined);
 	});
 
 	test('rejects oversized prompts and unsafe provider identifiers', () => {
