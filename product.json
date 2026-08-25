@@ -28,16 +28,14 @@
 	"darwinBundleIdentifier": "com.fikeya.desktop",
 	"darwinProfileUUID": "2B803C84-C578-4018-8351-F7740025070B",
 	"darwinProfilePayloadUUID": "9C500EC6-2296-4373-A8D5-0ECAB38BFABD",
-	"linuxIconName": "code-oss",
+	"linuxIconName": "fikeya",
 	"licenseFileName": "LICENSES/README.md",
 	"reportIssueUrl": "https://github.com/AjnasNB/fikeya/issues/new",
 	"nodejsArtifactFeed": "",
 	"electronArtifactFeed": "",
 	"urlProtocol": "fikeya",
 	"agentsTelemetryAppName": "fikeya-agents",
-	"builtInAiExtensions": [
-		"github.copilot-chat"
-	],
+	"builtInAiExtensions": [],
 	"webviewContentExternalBaseUrlTemplate": "https://{{uuid}}.vscode-cdn.net/insider/ef65ac1ba57f57f2a3961bfe94aa20481caca4c6/out/vs/workbench/contrib/webview/browser/pre/",
 	"builtInExtensionsEnabledWithAutoUpdates": [],
 	"builtInExtensions": [
@@ -128,6 +126,12 @@
 		}
 	],
 	"onboardingThemes": [
+		{
+			"id": "fikeya-dark",
+			"label": "Fikeya Dark",
+			"themeId": "Fikeya Dark",
+			"type": "dark"
+		},
 		{
 			"id": "dark-2026",
 			"label": "Dark 2026",

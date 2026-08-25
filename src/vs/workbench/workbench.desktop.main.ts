@@ -132,6 +132,7 @@ import './contrib/extensions/electron-browser/devtoolsExtensionHost.contribution
 
 // Issues
 import './contrib/issue/electron-browser/issue.contribution.js';
+import './contrib/fikeya/electron-browser/fikeyaCapture.contribution.js';
 
 // Surveys
 import './contrib/surveys/browser/survey.contribution.js';
