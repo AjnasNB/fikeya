@@ -1,6 +1,6 @@
 # Third-party notices
 
-`fikeya-agent-core` has no third-party runtime dependencies in version `0.1.0b1`.
+`fikeya-agent-core` has no third-party runtime dependencies in version `0.1.0b2`.
 
 Development and verification use:
 

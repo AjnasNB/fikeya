@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fikeya-runtime"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "Provider-neutral runtime, bounded-context compiler, and safety boundary for the Fikeya AI code editor."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,7 +13,7 @@ authors = [
   { name = "Ajnas N B" },
 ]
 dependencies = [
-  "fikeya-agent-core==0.1.0b1",
+  "fikeya-agent-core==0.1.0b2",
   "keyring>=25.6,<27",
 ]
 keywords = ["ai", "ai-code-editor", "coding-agent", "context-management", "developer-tools", "provider-neutral"]

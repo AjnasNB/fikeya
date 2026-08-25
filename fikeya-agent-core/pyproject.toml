@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fikeya-agent-core"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "Bounded, checkpointed coding-agent orchestration for Fikeya."
 readme = "README.md"
 requires-python = ">=3.10"

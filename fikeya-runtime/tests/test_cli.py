@@ -21,7 +21,7 @@ def test_cli_reports_the_installed_version(capsys: object) -> None:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out == "fikeya 0.1.0b1\n"
+    assert capsys.readouterr().out == "fikeya 0.1.0b2\n"
 
 
 class _ProtocolInput:
@@ -163,6 +163,84 @@ def test_cli_agent_requires_stdin_and_explicit_network_opt_in(
                 "--provider",
                 "local",
                 "--prompt-stdin",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    denied = json.loads(capsys.readouterr().out)
+    assert "Model execution denied" in denied["error"]
+
+
+def test_cli_plan_proposal_requires_stdin_and_explicit_network_opt_in(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: object,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["--home", str(home), "init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "provider",
+                "configure",
+                "local",
+                "--kind",
+                "ollama",
+                "--model",
+                "qwen",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "plan",
+                "propose",
+                str(workspace),
+                "--provider",
+                "local",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    missing_stdin = json.loads(capsys.readouterr().out)
+    assert "--request-stdin" in missing_stdin["error"]
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        _ProtocolInput(
+            [
+                {
+                    "protocol": "fikeya.plan-request.v1",
+                    "prompt": "plan this request",
+                }
+            ]
+        ),
+    )
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "plan",
+                "propose",
+                str(workspace),
+                "--provider",
+                "local",
+                "--request-stdin",
                 "--json",
             ]
         )
