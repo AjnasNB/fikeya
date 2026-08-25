@@ -598,10 +598,10 @@ suite('ChatEntitlementService', () => {
 
 		service.setForceHidden(false);
 
-		assert.deepStrictEqual({ configurationHidden, policyHidden, visible: service.sentiment.hidden }, {
+		assert.deepStrictEqual({ configurationHidden, policyHidden, providerlessHidden: service.sentiment.hidden }, {
 			configurationHidden: true,
 			policyHidden: true,
-			visible: false,
+			providerlessHidden: true,
 		});
 	});
 
