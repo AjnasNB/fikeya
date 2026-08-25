@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2026 Fikeya contributors
- *  Licensed under the GNU Affero General Public License v3.0 or later.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 const assert = require('node:assert/strict');
