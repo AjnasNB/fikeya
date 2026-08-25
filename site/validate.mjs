@@ -10,7 +10,12 @@ const requiredFiles = [
 	'favicon.svg',
 	'fikeya-live-chat.png',
 	'fikeya-live-context-graph.png',
+	'docs',
+	'download',
+	'enterprise',
 	'index.html',
+	'product',
+	'proof',
 	'robots.txt',
 	'sitemap.xml',
 	'site.webmanifest',
@@ -32,6 +37,17 @@ for (const file of requiredFiles) {
 }
 
 const html = await readFile(new URL('index.html', root), 'utf8');
+const pagePaths = [
+	'docs/index.html',
+	'download/index.html',
+	'enterprise/index.html',
+	'product/index.html',
+	'proof/index.html'
+];
+const pageDocuments = new Map(await Promise.all(pagePaths.map(async pagePath => [
+	pagePath,
+	await readFile(new URL(pagePath, root), 'utf8')
+])));
 const css = await readFile(new URL('styles.css', root), 'utf8');
 const js = await readFile(new URL('app.js', root), 'utf8');
 const assetsIgnore = await readFile(new URL('.assetsignore', root), 'utf8');
@@ -44,11 +60,24 @@ const workerWranglerText = await readFile(new URL('wrangler.worker.jsonc', root)
 const worker = (await import(new URL('worker.ts', root))).default;
 
 const sourceFiles = files.filter(file => ['.html', '.css', '.js', '.mjs', '.json', '.jsonc', '.txt'].includes(extname(file)));
-for (const file of sourceFiles) {
-	const source = await readFile(new URL(file, root), 'utf8');
-	assert(!source.includes('\u2014'), `${file} contains an em dash`);
-	assert(!source.match(/sk-[a-z0-9_-]{12,}/i), `${file} appears to contain an API key`);
-	assert(!source.match(/nvapi-[a-z0-9_\\-]{12,}/i), `${file} appears to contain an NVIDIA API key`);
+const sourceEntries = [...sourceFiles, ...pagePaths];
+for (const sourceEntry of sourceEntries) {
+	const source = await readFile(new URL(sourceEntry, root), 'utf8');
+	assert(!source.includes('\u2014'), `${sourceEntry} contains an em dash`);
+	assert(!source.match(/sk-[a-z0-9_-]{12,}/i), `${sourceEntry} appears to contain an API key`);
+	assert(!source.match(/nvapi-[a-z0-9_\\-]{12,}/i), `${sourceEntry} appears to contain an NVIDIA API key`);
+}
+
+for (const [pagePath, page] of pageDocuments) {
+	assert(page.includes('Content-Security-Policy'), `${pagePath} is missing its Content Security Policy`);
+	assert(page.includes('href="#main"'), `${pagePath} is missing its skip link`);
+	assert(page.includes('id="main"'), `${pagePath} is missing its main target`);
+	assert(!page.match(/<script(?![^>]*\bsrc=)[^>]*>/i), `${pagePath} contains an inline script`);
+	assert(!page.match(/<style\b/i), `${pagePath} contains an inline style element`);
+	assert(!page.match(/\sstyle\s*=/i), `${pagePath} contains an inline style attribute`);
+	assert(!page.match(/\bsrc=["']https?:\/\//i), `${pagePath} contains a remote asset`);
+	assert(!page.match(/<img\b(?![^>]*\balt=)/i), `${pagePath} contains an image without alt text`);
+	assert(!page.match(/tabindex=["'][1-9]/i), `${pagePath} contains a positive tabindex`);
 }
 
 assert(html.includes('Content-Security-Policy'), 'Missing Content Security Policy');
@@ -91,7 +120,8 @@ assert(html.includes('Vertex AI'), 'Vertex provider path is missing');
 assert(html.includes('Hugging Face'), 'Hugging Face provider path is missing');
 assert(html.includes('Groq'), 'Groq provider path is missing');
 assert(html.includes('Lab Mode'), 'Lab mode is missing');
-assert(html.includes('href="#top">Home</a>'), 'Home navigation is missing');
+assert(html.includes('href="/">Home</a>'), 'Home navigation is missing');
+assert(html.includes('href="/download/">Download the public beta</a>'), 'Primary download action is missing');
 assert(!html.includes('install surfaces'), 'Generic install-surface count is still present');
 assert(!html.includes('provider paths</span>'), 'Generic provider-path count is still present');
 assert(html.includes('The companion editor extension stays intentionally smaller'), 'Extension and Desktop boundary is missing');
@@ -122,6 +152,9 @@ assert(headers.includes('Permissions-Policy:'), 'Permissions Policy header is mi
 assert(manifest.name === 'Fikeya', 'Web manifest name is incorrect');
 assert(robots.includes('Sitemap: https://fikeya.com/sitemap.xml'), 'Robots sitemap declaration is missing');
 assert(sitemap.includes('<loc>https://fikeya.com/</loc>'), 'Canonical sitemap location is missing');
+for (const route of ['product', 'proof', 'docs', 'enterprise', 'download']) {
+	assert(sitemap.includes(`<loc>https://fikeya.com/${route}/</loc>`), `Sitemap is missing /${route}/`);
+}
 assert(assetsIgnore.includes('.wrangler'), 'Wrangler local state is not excluded from static assets');
 assert(assetsIgnore.includes('node_modules'), 'Dependencies are not excluded from static assets');
 assert(wranglerText.includes('"compatibility_date": "2026-08-24"'), 'Cloudflare compatibility date is incorrect');
@@ -146,11 +179,15 @@ const assetResponse = await worker.fetch(new Request('https://fikeya.com/'), {
 });
 assert(assetResponse.status === 200 && await assetResponse.text() === 'asset', 'Apex requests must reach the static asset binding');
 
-const hrefs = Array.from(html.matchAll(/href=["']([^"']+)["']/g), match => match[1]);
-const ids = new Set(Array.from(html.matchAll(/\bid=["']([^"']+)["']/g), match => match[1]));
 const allowedExternalLinks = new Set([
 	'https://fikeya.com/',
+	'https://fikeya.com/product/',
+	'https://fikeya.com/proof/',
+	'https://fikeya.com/docs/',
+	'https://fikeya.com/enterprise/',
+	'https://fikeya.com/download/',
 	'https://github.com/AjnasNB/fikeya',
+	'https://github.com/AjnasNB/fikeya/tree/main/docs/fikeya/verification',
 	'https://github.com/sponsors/AjnasNB',
 	'https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1',
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/FikeyaSetup-0.1.0-beta.1-win32-x64.exe',
@@ -160,12 +197,17 @@ const allowedExternalLinks = new Set([
 	'https://fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health',
 	'https://qarinah.io/docs/benchmarks/'
 ]);
-for (const href of hrefs) {
-	if (href.startsWith('#') && href.length > 1) {
-		assert(ids.has(href.slice(1)), `Broken fragment link: ${href}`);
-	}
-	if (/^https?:\/\//i.test(href)) {
-		assert(allowedExternalLinks.has(href), `Unexpected external link: ${href}`);
+
+for (const [pagePath, page] of new Map([['index.html', html], ...pageDocuments])) {
+	const hrefs = Array.from(page.matchAll(/href=["']([^"']+)["']/g), match => match[1]);
+	const ids = new Set(Array.from(page.matchAll(/\bid=["']([^"']+)["']/g), match => match[1]));
+	for (const href of hrefs) {
+		if (href.startsWith('#') && href.length > 1) {
+			assert(ids.has(href.slice(1)), `${pagePath} has a broken fragment link: ${href}`);
+		}
+		if (/^https?:\/\//i.test(href)) {
+			assert(allowedExternalLinks.has(href), `${pagePath} has an unexpected external link: ${href}`);
+		}
 	}
 }
 
@@ -176,5 +218,5 @@ if (failures.length > 0) {
 	}
 	process.exitCode = 1;
 } else {
-	console.log(`Site validation passed (${sourceFiles.length} source files checked).`);
+	console.log(`Site validation passed (${sourceEntries.length} source files checked).`);
 }

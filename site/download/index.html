@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="Download Fikeya Desktop for Windows, the focused VS Code extension, or the Fikeya CLI public beta with checksums and provenance.">
+		<meta name="robots" content="index, follow, max-image-preview:large">
+		<meta name="theme-color" content="#0b0f0e">
+		<meta name="color-scheme" content="dark">
+		<meta property="og:type" content="website">
+		<meta property="og:site_name" content="Fikeya">
+		<meta property="og:title" content="Download Fikeya public beta">
+		<meta property="og:description" content="Choose the complete Windows workbench, the focused VS Code extension, or the CLI runtime.">
+		<meta property="og:url" content="https://fikeya.com/download/">
+		<meta property="og:image" content="https://fikeya.com/fikeya-desktop-beta-editor.jpg">
+		<meta property="og:image:alt" content="The Fikeya public beta running on Windows.">
+		<meta name="twitter:card" content="summary_large_image">
+		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
+		<title>Download Fikeya public beta</title>
+		<link rel="canonical" href="https://fikeya.com/download/">
+		<link rel="icon" href="/favicon.svg?v=20260825h" type="image/svg+xml">
+		<link rel="manifest" href="/site.webmanifest">
+		<link rel="stylesheet" href="/styles.css?v=20260826a">
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+		<header class="site-header"><div class="shell nav-shell"><a class="brand" href="/" aria-label="Fikeya home"><img src="/favicon.svg?v=20260825h" width="30" height="30" alt=""><span>Fikeya</span></a><nav aria-label="Primary navigation"><ul class="nav-links"><li><a href="/">Home</a></li><li><a href="/product/">Product</a></li><li><a href="/proof/">Proof</a></li><li><a href="/docs/">Docs</a></li><li><a href="/enterprise/">Enterprise</a></li><li><a href="/download/" aria-current="page">Download</a></li></ul></nav><div class="nav-actions"><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a class="nav-source" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">GitHub</a></div></div></header>
+
+		<main id="main">
+			<section class="download-hero"><div class="shell"><p class="eyebrow">Fikeya 0.1.0-beta.1</p><h1>Choose how you want to work.</h1><p class="page-summary">Use the complete Windows workbench, add the focused agent to VS Code, or automate through the CLI. The editor is free. Provider or infrastructure usage remains between you and the service you configure.</p></div></section>
+
+			<section class="download-picker"><div class="shell release-download-grid"><article class="primary-download"><span>Windows x64</span><h2>Fikeya Desktop</h2><p>The complete branded workbench with editor, terminal, debugger, Git, language services, Chat, Plan, Context, Usage, and review.</p><a class="button button-primary" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/FikeyaSetup-0.1.0-beta.1-win32-x64.exe">Download the EXE</a><small>Windows user installer</small></article><article><span>VS Code</span><h2>Focused extension</h2><p>Add Chat, Plan, Context, Usage, providers, approvals, and receipts to a compatible existing editor.</p><a class="button button-text" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-desktop-0.1.0-win32-x64.vsix">Download the VSIX</a><small>Manual VSIX install</small></article><article><span>Python 3.10+</span><h2>Fikeya CLI</h2><p>Run initialization, provider setup, plan-to-proof workflows, statistics, tools, and receipts without the Desktop.</p><a class="button button-text" href="https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-cli-0.1.0-beta.1.zip">Download the CLI bundle</a><small>Runtime and Agent Core wheels</small></article></div></section>
+
+			<section class="section"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Verify before installing</p><h2>Checksums and provenance are available. Trusted signing is not yet complete.</h2><p>The beta release includes SHA-256 verification files and GitHub build provenance. The current Windows installer is not Authenticode-signed, so Windows can show an unknown-publisher warning.</p><p class="release-warning">Do not treat publisher text inside installer metadata as a digital signature. A trusted publisher requires a verified Authenticode certificate or Azure Artifact Signing identity.</p><div class="hero-actions"><a class="button button-primary" href="https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1" rel="noopener noreferrer">Open release and checksums</a><a class="button button-text" href="/proof/">Inspect product proof</a></div></div><div class="capability-list"><div><span>Version</span><strong>All three public artifacts use 0.1.0-beta.1</strong></div><div><span>Checksum</span><strong>Verify SHA-256 before installing</strong></div><div><span>Provenance</span><strong>Inspect the GitHub build attestation</strong></div><div><span>Signature</span><strong>Unsigned beta; no trusted-publisher claim</strong></div></div></div></section>
+
+			<section class="section"><div class="shell docs-layout"><aside><span>Install</span><strong>Windows Desktop</strong></aside><div class="docs-content"><h2>Open the installer, then choose a project.</h2><ol class="docs-steps"><li><strong>Verify the checksum.</strong><p>Compare the downloaded EXE with the SHA-256 file attached to the same GitHub release.</p></li><li><strong>Run the installer.</strong><p>Review the unknown-publisher warning honestly. Cancel if the file hash does not match.</p></li><li><strong>Open a trusted folder.</strong><p>The first-run flow asks for a project and directs you to provider setup when no profile exists.</p></li><li><strong>Initialize and run Doctor.</strong><p>Fikeya creates local runtime state and verifies the Qarinah and provider boundary before a task.</p></li></ol></div></div></section>
+
+			<section class="section"><div class="shell platform-grid"><article><span>Windows</span><strong>Public installer available</strong><p>The current supported packaged Desktop path.</p></article><article><span>macOS</span><strong>Source and component checks only</strong><p>No signed native Desktop package is published yet.</p></article><article><span>Linux</span><strong>Source and component checks only</strong><p>No signed native Desktop package is published yet.</p></article><article><span>Editor extension</span><strong>Manual VSIX beta</strong><p>Marketplace trusted publishing and host auto-update remain release work.</p></article></div></section>
+
+			<section class="page-cta"><div class="shell"><p class="eyebrow">Need help?</p><h2>Follow the five-minute project setup.</h2><a class="button button-primary" href="/docs/">Open Fikeya docs</a></div></section>
+		</main>
+
+		<footer class="site-footer"><div class="shell footer-layout"><div class="brand footer-brand"><img src="/favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div><p>Public beta downloads with explicit verification and signing state.</p><div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a href="/product/">Product</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a><a href="/enterprise/">Enterprise</a></div></div></footer>
+	</body>
+</html>
