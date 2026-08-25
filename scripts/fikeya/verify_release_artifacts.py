@@ -209,14 +209,16 @@ def _verify_python_metadata(
         with tarfile.open(archive_path, mode="r:gz") as archive:
             members = archive.getmembers()
             _validate_tar_members(members, archive_path.name)
+            archive_root = archive_path.name.removesuffix(".tar.gz")
+            root_metadata_name = f"{archive_root}/PKG-INFO"
             metadata_members = [
                 member
                 for member in members
-                if member.isfile() and member.name.endswith("/PKG-INFO")
+                if member.isfile() and member.name == root_metadata_name
             ]
             if len(metadata_members) != 1:
                 raise ReleaseVerificationError(
-                    f"{archive_path.name} must contain exactly one sdist PKG-INFO file."
+                    f"{archive_path.name} must contain exactly one root sdist PKG-INFO file."
                 )
             metadata_file = archive.extractfile(metadata_members[0])
             if metadata_file is None:
@@ -496,15 +498,16 @@ $signature = Get-AuthenticodeSignature -LiteralPath $path
 def _verify_installer_metadata(
     metadata: Mapping[str, Any], identity: ReleaseIdentity
 ) -> None:
-    for field in (
-        "fileVersion",
-        "productVersion",
-        "fileVersionRaw",
-        "productVersionRaw",
-    ):
-        if metadata.get(field) != identity.desktop_numeric_version:
+    expected_versions = {
+        "fileVersion": identity.desktop_numeric_version,
+        "productVersion": identity.public_version,
+        "fileVersionRaw": identity.desktop_numeric_version,
+        "productVersionRaw": identity.desktop_numeric_version,
+    }
+    for field, expected_version in expected_versions.items():
+        if metadata.get(field) != expected_version:
             raise ReleaseVerificationError(
-                f"Installer {field} is {metadata.get(field)!r}; expected {identity.desktop_numeric_version!r}."
+                f"Installer {field} is {metadata.get(field)!r}; expected {expected_version!r}."
             )
     status = metadata.get("authenticodeStatus")
     if status not in {"NotSigned", "Valid"}:

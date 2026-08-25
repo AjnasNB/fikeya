@@ -249,10 +249,16 @@ def _write_sdist(path: Path, project: str, version: str) -> None:
     metadata = (
         f"Metadata-Version: 2.4\nName: {project}\nVersion: {version}\n\n".encode()
     )
-    info = tarfile.TarInfo(f"{project}-{version}/PKG-INFO")
-    info.size = len(metadata)
+    archive_root = path.name.removesuffix(".tar.gz")
+    root_info = tarfile.TarInfo(f"{archive_root}/PKG-INFO")
+    root_info.size = len(metadata)
+    generated_info = tarfile.TarInfo(
+        f"{archive_root}/src/{project.replace('-', '_')}.egg-info/PKG-INFO"
+    )
+    generated_info.size = len(metadata)
     with tarfile.open(path, "w:gz") as archive:
-        archive.addfile(info, io.BytesIO(metadata))
+        archive.addfile(root_info, io.BytesIO(metadata))
+        archive.addfile(generated_info, io.BytesIO(metadata))
 
 
 def _write_vsix(
@@ -320,7 +326,7 @@ def _rewrite_checksums(root: Path) -> None:
 def _installer_metadata(identity: ReleaseIdentity) -> dict[str, str | None]:
     return {
         "fileVersion": identity.desktop_numeric_version,
-        "productVersion": identity.desktop_numeric_version,
+        "productVersion": identity.public_version,
         "fileVersionRaw": identity.desktop_numeric_version,
         "productVersionRaw": identity.desktop_numeric_version,
         "authenticodeStatus": "NotSigned",
