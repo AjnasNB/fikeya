@@ -16,9 +16,87 @@ const {
 	createProofWorkspace,
 	parseCaptureArguments,
 	publishStableEvidence,
+	readCompletedPlanProof,
 	readEvidenceSummary,
 	startDeterministicProvider
 } = require('../capture-desktop-proof.ts');
+
+const evidenceStepIds = [
+	'successful-chat',
+	'draft-plan',
+	'reviewed-plan',
+	'awaiting-approval',
+	'exact-step-approved',
+	'first-step-verified',
+	'succeeded-plan'
+] as const;
+
+function hash(character: string): string {
+	return `sha256:${character.repeat(64)}`;
+}
+
+function completedPlanPayload() {
+	const definitions = [
+		['inventory-project', 'workspace.list_files'],
+		['inspect-readme', 'workspace.read_file'],
+		['find-review-boundary', 'workspace.search_text']
+	] as const;
+	const planSteps = definitions.map(([stepId, toolName], index) => ({
+		stepId,
+		status: 'succeeded',
+		toolCallSha256: hash(String(index + 1)),
+		approval: {
+			referenceId: `apr_${String(index + 1).repeat(24)}`,
+			toolCallSha256: hash(String(index + 1)),
+			issuedAt: `2026-08-26T00:0${index}:00.000Z`,
+			expiresAt: `2026-08-26T00:1${index}:00.000Z`,
+			consumedAt: `2026-08-26T00:0${index}:01.000Z`
+		},
+		execution: {
+			toolCallSha256: hash(String(index + 1)),
+			resultSha256: hash(String(index + 4)),
+			executionSha256: hash(String(index + 7))
+		},
+		verification: {
+			status: 'passed',
+			outcomeSha256: hash(['a', 'b', 'c'][index]),
+			checks: [{ passed: true }]
+		}
+	}));
+	const receiptSteps = definitions.map(([stepId, toolName], index) => ({
+		order: index + 1,
+		stepId,
+		toolName,
+		status: 'succeeded',
+		approvalReference: `apr_${String(index + 1).repeat(24)}`,
+		approvalConsumedAt: `2026-08-26T00:0${index}:01.000Z`,
+		approvalExpiresAt: `2026-08-26T00:1${index}:00.000Z`,
+		toolCallSha256: hash(String(index + 1)),
+		resultSha256: hash(String(index + 4)),
+		executionSha256: hash(String(index + 7)),
+		verificationSha256: hash(['a', 'b', 'c'][index]),
+		verificationStatus: 'passed'
+	}));
+	return {
+		schemaVersion: 'fikeya.desktop-plan-proof.v1',
+		capturedAt: '2026-08-26T00:20:00.000Z',
+		plan: {
+			planId: 'pln_1234567890abcdef12345678',
+			status: 'succeeded',
+			specSha256: hash('d'),
+			steps: planSteps
+		},
+		receipt: {
+			kind: 'fikeya.plan.receipt',
+			planId: 'pln_1234567890abcdef12345678',
+			status: 'succeeded',
+			specSha256: hash('d'),
+			recordSha256: hash('e'),
+			steps: receiptSteps
+		},
+		recordSha256: hash('e')
+	};
+}
 
 test('capture arguments default to a compiled real-app run', () => {
 	const options = parseCaptureArguments([]);
@@ -91,6 +169,34 @@ test('Electron Chat proof submits a natively valid bounded context budget', asyn
 	assert.match(scenario, /if \(!form\.checkValidity\(\)\) return false;/u);
 });
 
+test('Desktop Plan proof grants exact approvals and verifies only safe workspace tools', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /approveExactStep\(code, page, 'inventory-project'\)/u);
+	assert.match(scenario, /approveExactStep\(code, page, 'inspect-readme'\)/u);
+	assert.match(scenario, /approveExactStep\(code, page, 'find-review-boundary'\)/u);
+	assert.doesNotMatch(scenario, /data-plan-action="approve-all"/u);
+	assert.match(scenario, /workspace\.list_files/u);
+	assert.match(scenario, /workspace\.read_file/u);
+	assert.match(scenario, /workspace\.search_text/u);
+	assert.doesNotMatch(scenario, /process\.run|workspace\.write_file|workspace\.apply_patch/u);
+});
+
+test('completed Plan proof validates linked approvals, executions, results, and verifications', async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-plan-proof-'));
+	await mkdir(path.join(root, '.fikeya'), { recursive: true });
+	await writeFile(path.join(root, '.fikeya', 'desktop-plan-proof.json'), `${JSON.stringify(completedPlanPayload())}\n`, 'utf8');
+	const proof = await readCompletedPlanProof(root);
+	assert.equal(proof.status, 'succeeded');
+	assert.equal(proof.steps.length, 3);
+	assert.ok(proof.steps.every((step: { readonly verificationStatus: string }) => step.verificationStatus === 'passed'));
+	assert.ok(proof.steps.every((step: { readonly approvalConsumedAt: string }) => !Number.isNaN(Date.parse(step.approvalConsumedAt))));
+
+	const invalid = completedPlanPayload();
+	invalid.receipt.steps[1].executionSha256 = hash('f');
+	await writeFile(path.join(root, '.fikeya', 'desktop-plan-proof.json'), `${JSON.stringify(invalid)}\n`, 'utf8');
+	await assert.rejects(() => readCompletedPlanProof(root), /hash linkage is invalid/u);
+});
+
 test('evidence summary rejects non-passing and incomplete runs', async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-evidence-test-'));
 	await writeFile(path.join(root, 'manifest.json'), JSON.stringify({
@@ -104,7 +210,7 @@ test('evidence summary rejects non-passing and incomplete runs', async () => {
 
 test('evidence summary rejects artifacts outside the evidence run', async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-evidence-boundary-'));
-	const stepIds = ['successful-chat', 'draft-plan', 'reviewed-plan', 'awaiting-approval'];
+	const stepIds = evidenceStepIds;
 	await writeFile(path.join(root, 'manifest.json'), JSON.stringify({
 		scenarioId: 'fikeya-chat-plan-proof',
 		outcome: 'passed',
@@ -119,7 +225,7 @@ test('stable evidence copies only passed real-run screenshots and hashes them', 
 	const run = path.join(root, 'run');
 	const output = path.join(root, 'published');
 	await mkdir(run, { recursive: true });
-	const stepIds = ['successful-chat', 'draft-plan', 'reviewed-plan', 'awaiting-approval'];
+	const stepIds = evidenceStepIds;
 	for (const stepId of stepIds) {
 		await writeFile(path.join(run, `${stepId}.png`), `real-${stepId}`, 'utf8');
 	}
@@ -133,9 +239,15 @@ test('stable evidence copies only passed real-run screenshots and hashes them', 
 		steps: stepIds.map(id => ({ id, captures: [{ status: 'passed', screenshot: `${id}.png` }] }))
 	}), 'utf8');
 	const summary = await readEvidenceSummary(run);
-	const published = await publishStableEvidence(summary, output);
+	const completedProofWorkspace = path.join(root, 'completed-plan');
+	await mkdir(path.join(completedProofWorkspace, '.fikeya'), { recursive: true });
+	await writeFile(path.join(completedProofWorkspace, '.fikeya', 'desktop-plan-proof.json'), `${JSON.stringify(completedPlanPayload())}\n`, 'utf8');
+	const completedProof = await readCompletedPlanProof(completedProofWorkspace);
+	const published = await publishStableEvidence(summary, output, completedProof);
 	assert.equal(published.proofManifest.outcome, 'passed');
-	assert.equal(published.proofManifest.screenshots.length, 4);
+	assert.equal(published.proofManifest.screenshots.length, 7);
 	assert.ok(published.proofManifest.screenshots.every((item: { readonly sha256: string }) => /^sha256:[0-9a-f]{64}$/u.test(item.sha256)));
-	assert.equal(JSON.parse(await readFile(published.manifestPath, 'utf8')).schemaVersion, 'fikeya.desktop-proof.v1');
+	assert.match(published.proofManifest.planProof.sha256, /^sha256:[0-9a-f]{64}$/u);
+	assert.equal(published.proofManifest.planProof.status, 'succeeded');
+	assert.equal(JSON.parse(await readFile(published.manifestPath, 'utf8')).schemaVersion, 'fikeya.desktop-proof.v2');
 });

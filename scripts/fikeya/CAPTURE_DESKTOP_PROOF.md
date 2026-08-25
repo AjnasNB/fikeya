@@ -8,10 +8,12 @@ The recorded scenario:
 2. initializes Fikeya Runtime and Qarinah in that disposable project;
 3. configures the bundled runtime with the credential-free loopback profile, completes a real three-call Chat turn, and verifies the visible assistant response plus provider-reported usage;
 4. creates a three-step durable plan through the Plan form;
-5. reviews the immutable plan; and
-6. starts it only far enough to prove that execution stops at the first exact approval boundary.
+5. reviews the immutable plan;
+6. starts it to the first exact approval boundary;
+7. issues one expiring, single-use approval for each selected step; and
+8. executes and verifies three read-only workspace operations before asserting the final succeeded receipt chain.
 
-No provider credential is needed. The deterministic server binds only to `127.0.0.1`, and the runtime profile and usage database live under the disposable `FIKEYA_HOME`. The scenario never clicks a tool approval button and does not execute a workspace tool. It verifies the successful assistant response and exact `60` input, `12` cached-input, and `15` output tokens before the scenario runner records the passing screenshot.
+No provider credential is needed. The deterministic server binds only to `127.0.0.1`, and the runtime profile and usage database live under the disposable `FIKEYA_HOME`. The Plan proof grants authority only to `workspace.list_files`, `workspace.read_file`, and `workspace.search_text` inside the disposable project. It never writes a project file, invokes a shell, or authorizes network access. The scenario verifies the successful assistant response and exact `60` input, `12` cached-input, and `15` output tokens, then verifies that every Plan step retains a consumed approval, result hash, execution hash, verification hash, and passing check.
 
 ## Run
 
@@ -34,9 +36,13 @@ The helper compiles the current extension and scenario harness, launches the rea
 - `fikeya-plan-draft-real.png`
 - `fikeya-plan-reviewed-real.png`
 - `fikeya-plan-awaiting-approval-real.png`
+- `fikeya-plan-exact-approval-real.png`
+- `fikeya-plan-executed-verified-real.png`
+- `fikeya-plan-succeeded-real.png`
+- `fikeya-plan-lifecycle-proof.json`
 - `fikeya-desktop-proof.json`
 
-The JSON manifest points to the original evidence directory, HTML report, captioned video when FFmpeg is available, Playwright trace, exact app version, platform, and SHA-256 of every copied screenshot. The original scenario bundle remains under `.build/vscode-playwright-mcp/evidence/`.
+The JSON manifest points to the original evidence directory, HTML report, captioned video when FFmpeg is available, Playwright trace, exact app version, platform, SHA-256 of every copied screenshot, and the validated content-free Plan receipt. The lifecycle receipt records the final plan, record, tool-call, result, execution, and verification digests without copying tool output. The original scenario bundle remains under `.build/vscode-playwright-mcp/evidence/`.
 
 Use `--check` for a fast prerequisite check, `--output <dir>` to choose the stable-copy directory, or `--skip-compile` only when the extension and scenario runner were already compiled from the current sources.
 

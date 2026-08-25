@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 interface ScenarioTarget {
 	readonly targetId: string;
@@ -74,6 +75,37 @@ interface ApprovalState {
 	readonly approve: string;
 }
 
+interface IssuedApprovalState {
+	readonly badge: string;
+	readonly selectedStatus: string;
+	readonly approval: string;
+	readonly expiresAt: string;
+}
+
+interface VerifiedStepState {
+	readonly badge: string;
+	readonly stepId: string;
+	readonly executionSha256: string;
+	readonly verificationSha256: string;
+	readonly check: string;
+}
+
+interface CompletedPlanState {
+	readonly badge: string;
+	readonly planId: string;
+	readonly recordSha256: string;
+	readonly steps: readonly {
+		readonly stepId: string;
+		readonly status: string;
+		readonly toolCallSha256: string;
+		readonly approval: string;
+		readonly expiresAt: string;
+		readonly executionSha256: string;
+		readonly verificationSha256: string;
+		readonly checks: readonly string[];
+	}[];
+}
+
 const workspacePath = process.env.FIKEYA_CAPTURE_WORKSPACE;
 if (!workspacePath || !path.isAbsolute(workspacePath)) {
 	throw new Error('FIKEYA_CAPTURE_WORKSPACE must name the absolute disposable proof workspace.');
@@ -82,6 +114,10 @@ const providerName = process.env.FIKEYA_CAPTURE_PROVIDER_NAME;
 const providerOutput = process.env.FIKEYA_CAPTURE_PROVIDER_OUTPUT;
 if (!providerName || !providerOutput) {
 	throw new Error('FIKEYA_CAPTURE_PROVIDER_NAME and FIKEYA_CAPTURE_PROVIDER_OUTPUT must describe the deterministic proof provider.');
+}
+const runtimeExecutable = process.env.FIKEYA_CAPTURE_RUNTIME_EXECUTABLE;
+if (!runtimeExecutable || !path.isAbsolute(runtimeExecutable)) {
+	throw new Error('FIKEYA_CAPTURE_RUNTIME_EXECUTABLE must name the absolute packaged local runtime.');
 }
 
 const planSpecification = {
@@ -188,6 +224,139 @@ async function runWorkbenchCommand(
 		}
 	}
 	throw lastError;
+}
+
+async function approveExactStep(
+	code: ScenarioCode,
+	page: ScenarioContext['page'],
+	stepId: string
+): Promise<IssuedApprovalState> {
+	const clicked = await evaluateFikeya<boolean>(code, `(() => {
+		const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
+		const step = surface?.querySelector('[data-plan-step="${stepId}"]');
+		if (!step) return false;
+		step.click();
+		const button = surface?.querySelector('[data-plan-action="approve-step"][data-plan-action-step="${stepId}"]');
+		if (!button || button.disabled) return false;
+		button.click();
+		return true;
+	})()`);
+	if (!clicked) {
+		throw new Error(`The exact approval action was not available for ${stepId}.`);
+	}
+	// Exact approval is a modal person-in-the-loop boundary. The isolated proof
+	// fixture accepts only the single visible action after the scenario has
+	// already asserted the exact step identifier and its immutable tool digest.
+	await pause(500);
+	await page.keyboard.press('Enter');
+	const state = await waitForFikeya<IssuedApprovalState>(code, `(() => {
+		const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
+		const step = surface?.querySelector('[data-plan-step="${stepId}"]');
+		step?.click();
+		const detail = surface?.querySelector('[data-plan-detail="${stepId}"]:not([hidden])');
+		const receipt = detail ? Array.from(detail.querySelectorAll('.receipt dd')).map(item => item.textContent?.trim() ?? '') : [];
+		const expiresAt = detail?.querySelector('time')?.getAttribute('datetime') ?? '';
+		const value = {
+			badge: surface?.querySelector('.badge')?.textContent?.trim() ?? '',
+			selectedStatus: step?.querySelector('.plan-step-status')?.textContent?.trim() ?? '',
+			approval: receipt[1] ?? '',
+			expiresAt
+		};
+		return value.badge === 'Awaiting Approval'
+			&& value.selectedStatus === 'Approved'
+			&& /^apr_[a-z0-9]+ · unused$/.test(value.approval)
+			&& !Number.isNaN(Date.parse(value.expiresAt))
+			&& Date.parse(value.expiresAt) > Date.now()
+			&& receipt[3] === 'No execution receipt'
+			&& receipt[4] === 'No verification receipt'
+			? value
+			: false;
+	})()`, `The exact approval reference for ${stepId} was not issued with an unused, unexpired receipt.`, 60_000);
+	await evaluateFikeya<boolean>(code, `(() => {
+		const receipt = document.querySelector('[data-plan-detail="${stepId}"]:not([hidden]) .receipt');
+		if (!receipt) return false;
+		receipt.scrollIntoView({ block: 'center' });
+		return true;
+	})()`);
+	return state;
+}
+
+async function resumeApprovedStep(code: ScenarioCode): Promise<void> {
+	const clicked = await evaluateFikeya<boolean>(code, `(() => {
+		const button = document.querySelector('[data-plan-action="resume"]');
+		if (!button || button.disabled) return false;
+		button.click();
+		return true;
+	})()`);
+	if (!clicked) {
+		throw new Error('The approved plan step could not be resumed.');
+	}
+}
+
+async function waitForVerifiedStep(
+	code: ScenarioCode,
+	stepId: string,
+	nextStepId?: string
+): Promise<VerifiedStepState> {
+	const state = await waitForFikeya<VerifiedStepState>(code, `(() => {
+		const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
+		const step = surface?.querySelector('[data-plan-step="${stepId}"]');
+		step?.click();
+		const detail = surface?.querySelector('[data-plan-detail="${stepId}"]:not([hidden])');
+		const receipt = detail ? Array.from(detail.querySelectorAll('.receipt dd')).map(item => item.textContent?.trim() ?? '') : [];
+		const execution = /^ok · (sha256:[0-9a-f]{64})$/.exec(receipt[3] ?? '');
+		const verification = /^passed · (sha256:[0-9a-f]{64})$/.exec(receipt[4] ?? '');
+		const check = detail?.querySelector('.plan-lines li')?.textContent?.trim() ?? '';
+		const next = ${nextStepId ? `surface?.querySelector('[data-plan-step="${nextStepId}"] .plan-step-status')?.textContent?.trim()` : "'none'"};
+		const value = {
+			badge: surface?.querySelector('.badge')?.textContent?.trim() ?? '',
+			stepId: '${stepId}',
+			executionSha256: execution?.[1] ?? '',
+			verificationSha256: verification?.[1] ?? '',
+			check
+		};
+		return step?.querySelector('.plan-step-status')?.textContent?.trim() === 'Succeeded'
+			&& /^apr_[a-z0-9]+ · consumed$/.test(receipt[1] ?? '')
+			&& execution && verification
+			&& check.startsWith('✓ tool_status · ')
+			&& ${nextStepId ? "next === 'Awaiting Approval'" : "value.badge === 'Succeeded'"}
+			? value
+			: false;
+	})()`, `The safe ${stepId} operation did not expose execution and verification receipts.`, 60_000);
+	await evaluateFikeya<boolean>(code, `(() => {
+		const receipt = document.querySelector('[data-plan-detail="${stepId}"]:not([hidden]) .receipt');
+		if (!receipt) return false;
+		receipt.scrollIntoView({ block: 'center' });
+		return true;
+	})()`);
+	return state;
+}
+
+function writeCompletedPlanProof(planId: string): void {
+	const output = execFileSync(runtimeExecutable, [
+		'plan',
+		'show',
+		planId,
+		'--workspace',
+		workspacePath,
+		'--json'
+	], {
+		encoding: 'utf8',
+		env: process.env,
+		windowsHide: true
+	});
+	const payload = JSON.parse(output);
+	fs.writeFileSync(
+		path.join(workspacePath, '.fikeya', 'desktop-plan-proof.json'),
+		`${JSON.stringify({
+			schemaVersion: 'fikeya.desktop-plan-proof.v1',
+			capturedAt: new Date().toISOString(),
+			plan: payload.plan,
+			receipt: payload.receipt,
+			recordSha256: payload.recordSha256
+		}, null, 2)}\n`,
+		'utf8'
+	);
 }
 
 const scenario: Scenario = {
@@ -379,6 +548,78 @@ const scenario: Scenario = {
 						: false;
 				})()`, 'The plan did not stop before execution at its exact approval boundary.', 60_000);
 				return `${proof.badge}; ${proof.selectedStatus}; tool-call evidence ${proof.digest}. No tool was approved or executed.`;
+			}
+		},
+		{
+			id: 'exact-step-approved',
+			title: 'Issue one exact, expiring approval reference',
+			async run({ code, page }) {
+				const approved = await approveExactStep(code, page, 'inventory-project');
+				return `${approved.selectedStatus} through ${approved.approval}; the unused single-use reference expires at ${approved.expiresAt}.`;
+			}
+		},
+		{
+			id: 'first-step-verified',
+			title: 'Execute and verify one safe read-only workspace operation',
+			async run({ code }) {
+				await resumeApprovedStep(code);
+				const verified = await waitForVerifiedStep(code, 'inventory-project', 'inspect-readme');
+				return `The safe read-only tool executed as ${verified.executionSha256} and verification passed as ${verified.verificationSha256}; ${verified.check}.`;
+			}
+		},
+		{
+			id: 'succeeded-plan',
+			title: 'Complete all exact approvals and retain proof receipts',
+			async run({ code, page }) {
+				await approveExactStep(code, page, 'inspect-readme');
+				await resumeApprovedStep(code);
+				await waitForVerifiedStep(code, 'inspect-readme', 'find-review-boundary');
+				await approveExactStep(code, page, 'find-review-boundary');
+				await resumeApprovedStep(code);
+				await waitForVerifiedStep(code, 'find-review-boundary');
+				const completed = await waitForFikeya<CompletedPlanState>(code, `(() => {
+					const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
+					const planMeta = surface?.querySelector('.plan-heading p')?.textContent?.trim() ?? '';
+					const planId = /Durable plan (pln_[a-z0-9]+) /.exec(planMeta)?.[1] ?? '';
+					const receipts = Array.from(surface?.querySelectorAll('[data-plan-step]') ?? []).map(step => {
+						step.click();
+						const stepId = step.getAttribute('data-plan-step') ?? '';
+						const detail = surface?.querySelector('[data-plan-detail="' + stepId + '"]:not([hidden])');
+						const values = detail ? Array.from(detail.querySelectorAll('.receipt dd')).map(item => item.textContent?.trim() ?? '') : [];
+						return {
+							stepId,
+							status: step.querySelector('.plan-step-status')?.textContent?.trim() ?? '',
+							toolCallSha256: values[0] ?? '',
+							approval: values[1] ?? '',
+							expiresAt: detail?.querySelector('time')?.getAttribute('datetime') ?? '',
+							executionSha256: /^ok · (sha256:[0-9a-f]{64})$/.exec(values[3] ?? '')?.[1] ?? '',
+							verificationSha256: /^passed · (sha256:[0-9a-f]{64})$/.exec(values[4] ?? '')?.[1] ?? '',
+							checks: Array.from(detail?.querySelectorAll('.plan-lines li') ?? []).map(item => item.textContent?.trim() ?? '')
+						};
+					});
+					const recordSha256 = Array.from(surface?.querySelectorAll('.compact-receipt dd code') ?? []).at(-1)?.textContent?.trim() ?? '';
+					const valid = surface?.querySelector('.badge')?.textContent?.trim() === 'Succeeded'
+						&& /^pln_[a-z0-9]+$/.test(planId)
+						&& /^sha256:[0-9a-f]{64}$/.test(recordSha256)
+						&& receipts.length === 3
+						&& receipts.every(item => item.status === 'Succeeded'
+							&& /^sha256:[0-9a-f]{64}$/.test(item.toolCallSha256)
+							&& /^apr_[a-z0-9]+ · consumed$/.test(item.approval)
+							&& !Number.isNaN(Date.parse(item.expiresAt))
+							&& /^sha256:[0-9a-f]{64}$/.test(item.executionSha256)
+							&& /^sha256:[0-9a-f]{64}$/.test(item.verificationSha256)
+							&& item.checks.length > 0
+							&& item.checks.every(check => check.startsWith('✓ ')));
+					return valid ? { badge: 'Succeeded', planId, recordSha256, steps: receipts } : false;
+				})()`, 'The completed plan did not retain exact approval, execution, verification, and evidence hashes.', 60_000);
+				await evaluateFikeya<boolean>(code, `(() => {
+					const receipt = document.querySelector('[data-plan-detail="find-review-boundary"]:not([hidden]) .receipt');
+					if (!receipt) return false;
+					receipt.scrollIntoView({ block: 'center' });
+					return true;
+				})()`);
+				writeCompletedPlanProof(completed.planId);
+				return `${completed.badge}: ${completed.steps.length} safe steps retained consumed approvals, tool-call hashes, execution hashes, verification hashes, and passing checks in record ${completed.recordSha256}.`;
 			}
 		}
 	]

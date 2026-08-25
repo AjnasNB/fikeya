@@ -84,9 +84,37 @@ interface EvidenceSummary {
 	readonly draftScreenshot: string;
 	readonly reviewedScreenshot: string;
 	readonly approvalScreenshot: string;
+	readonly exactApprovalScreenshot: string;
+	readonly firstVerifiedScreenshot: string;
+	readonly succeededScreenshot: string;
 	readonly reportPath: string;
 	readonly tracePath?: string;
 	readonly videoPath?: string;
+}
+
+interface CompletedPlanProofStep {
+	readonly order: number;
+	readonly stepId: string;
+	readonly toolName: string;
+	readonly status: 'succeeded';
+	readonly approvalReference: string;
+	readonly approvalConsumedAt: string;
+	readonly approvalExpiresAt: string;
+	readonly toolCallSha256: string;
+	readonly resultSha256: string;
+	readonly executionSha256: string;
+	readonly verificationSha256: string;
+	readonly verificationStatus: 'passed';
+}
+
+interface CompletedPlanProof {
+	readonly schemaVersion: 'fikeya.desktop-plan-proof.v1';
+	readonly capturedAt: string;
+	readonly planId: string;
+	readonly recordSha256: string;
+	readonly specSha256: string;
+	readonly status: 'succeeded';
+	readonly steps: readonly CompletedPlanProofStep[];
 }
 
 interface ProofScreenshot {
@@ -109,6 +137,16 @@ interface PublishedEvidence {
 		readonly tracePath: string | null;
 		readonly videoPath: string | null;
 		readonly screenshots: readonly ProofScreenshot[];
+		readonly planProof: {
+			readonly name: string;
+			readonly path: string;
+			readonly sha256: string;
+			readonly planId: string;
+			readonly recordSha256: string;
+			readonly specSha256: string;
+			readonly status: 'succeeded';
+			readonly steps: readonly CompletedPlanProofStep[];
+		};
 	};
 }
 
@@ -152,8 +190,9 @@ function captureHelp(): string {
 		'',
 		'Launch the real Fikeya dev Electron build with the local extension, complete',
 		'one Chat turn through an isolated deterministic loopback provider, create a',
-		'durable draft through the actual Plan UI, review it, stop at exact approval,',
-		'and save successful Chat/Plan screenshots plus the report, video, and trace.',
+		'durable draft through the actual Plan UI, review it, grant each exact approval,',
+		'execute three read-only workspace tools, verify their receipts, and save the',
+		'successful Chat/Plan screenshots plus the report, video, trace, and proof JSON.',
 		'',
 		'Options:',
 		'  --output <dir>   copy stable proof screenshots and a manifest here',
@@ -394,6 +433,9 @@ async function readEvidenceSummary(runDirectory: string): Promise<EvidenceSummar
 		draftScreenshot: screenshotFor('draft-plan'),
 		reviewedScreenshot: screenshotFor('reviewed-plan'),
 		approvalScreenshot: screenshotFor('awaiting-approval'),
+		exactApprovalScreenshot: screenshotFor('exact-step-approved'),
+		firstVerifiedScreenshot: screenshotFor('first-step-verified'),
+		succeededScreenshot: screenshotFor('succeeded-plan'),
 		reportPath: resolveArtifact(manifest.artifacts.report),
 		tracePath: trace ? resolveArtifact(trace) : undefined,
 		videoPath: manifest.artifacts.videos?.includes('videos/annotated.mp4')
@@ -402,17 +444,116 @@ async function readEvidenceSummary(runDirectory: string): Promise<EvidenceSummar
 	};
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireHash(value: unknown, field: string): string {
+	if (typeof value !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value)) {
+		throw new Error(`Completed Desktop plan proof has an invalid ${field}.`);
+	}
+	return value;
+}
+
+function requireTimestamp(value: unknown, field: string): string {
+	if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
+		throw new Error(`Completed Desktop plan proof has an invalid ${field}.`);
+	}
+	return value;
+}
+
+async function readCompletedPlanProof(workspacePath: string): Promise<CompletedPlanProof> {
+	const proofPath = path.join(workspacePath, '.fikeya', 'desktop-plan-proof.json');
+	const payload = JSON.parse(await readFile(proofPath, 'utf8')) as unknown;
+	if (!isRecord(payload) || payload.schemaVersion !== 'fikeya.desktop-plan-proof.v1') {
+		throw new Error('Completed Desktop plan proof has an unsupported schema.');
+	}
+	const capturedAt = requireTimestamp(payload.capturedAt, 'capturedAt');
+	const plan = isRecord(payload.plan) ? payload.plan : undefined;
+	const receipt = isRecord(payload.receipt) ? payload.receipt : undefined;
+	const recordSha256 = requireHash(payload.recordSha256, 'recordSha256');
+	if (!plan || !receipt || plan.status !== 'succeeded' || receipt.status !== 'succeeded'
+		|| receipt.kind !== 'fikeya.plan.receipt' || receipt.recordSha256 !== recordSha256
+		|| plan.planId !== receipt.planId || plan.specSha256 !== receipt.specSha256
+		|| typeof plan.planId !== 'string' || !/^pln_[a-z0-9]+$/u.test(plan.planId)
+		|| !Array.isArray(plan.steps) || !Array.isArray(receipt.steps)
+		|| plan.steps.length !== 3 || receipt.steps.length !== 3) {
+		throw new Error('Completed Desktop plan proof is not one matching succeeded plan and receipt.');
+	}
+	const expected = [
+		['inventory-project', 'workspace.list_files'],
+		['inspect-readme', 'workspace.read_file'],
+		['find-review-boundary', 'workspace.search_text']
+	] as const;
+	const steps = expected.map(([expectedStepId, expectedTool], index): CompletedPlanProofStep => {
+		const sourceStep = isRecord(plan.steps[index]) ? plan.steps[index] : undefined;
+		const proofStep = isRecord(receipt.steps[index]) ? receipt.steps[index] : undefined;
+		if (!sourceStep || !proofStep || sourceStep.stepId !== expectedStepId || proofStep.stepId !== expectedStepId
+			|| sourceStep.status !== 'succeeded' || proofStep.status !== 'succeeded'
+			|| proofStep.order !== index + 1 || proofStep.toolName !== expectedTool) {
+			throw new Error(`Completed Desktop plan proof has an invalid step ${index + 1}.`);
+		}
+		const approval = isRecord(sourceStep.approval) ? sourceStep.approval : undefined;
+		const execution = isRecord(sourceStep.execution) ? sourceStep.execution : undefined;
+		const verification = isRecord(sourceStep.verification) ? sourceStep.verification : undefined;
+		if (!approval || !execution || !verification || verification.status !== 'passed'
+			|| !Array.isArray(verification.checks) || verification.checks.length === 0
+			|| verification.checks.some(check => !isRecord(check) || check.passed !== true)
+			|| typeof proofStep.approvalReference !== 'string' || !/^apr_[a-z0-9]+$/u.test(proofStep.approvalReference)
+			|| approval.referenceId !== proofStep.approvalReference
+			|| approval.consumedAt !== proofStep.approvalConsumedAt
+			|| approval.expiresAt !== proofStep.approvalExpiresAt) {
+			throw new Error(`Completed Desktop plan proof is missing a consumed exact approval or passed checks for ${expectedStepId}.`);
+		}
+		const toolCallSha256 = requireHash(proofStep.toolCallSha256, `${expectedStepId}.toolCallSha256`);
+		const resultSha256 = requireHash(proofStep.resultSha256, `${expectedStepId}.resultSha256`);
+		const executionSha256 = requireHash(proofStep.executionSha256, `${expectedStepId}.executionSha256`);
+		const verificationSha256 = requireHash(proofStep.verificationSha256, `${expectedStepId}.verificationSha256`);
+		if (sourceStep.toolCallSha256 !== toolCallSha256 || approval.toolCallSha256 !== toolCallSha256
+			|| execution.toolCallSha256 !== toolCallSha256 || execution.resultSha256 !== resultSha256
+			|| execution.executionSha256 !== executionSha256 || verification.outcomeSha256 !== verificationSha256) {
+			throw new Error(`Completed Desktop plan proof hash linkage is invalid for ${expectedStepId}.`);
+		}
+		return {
+			order: index + 1,
+			stepId: expectedStepId,
+			toolName: expectedTool,
+			status: 'succeeded',
+			approvalReference: proofStep.approvalReference,
+			approvalConsumedAt: requireTimestamp(proofStep.approvalConsumedAt, `${expectedStepId}.approvalConsumedAt`),
+			approvalExpiresAt: requireTimestamp(proofStep.approvalExpiresAt, `${expectedStepId}.approvalExpiresAt`),
+			toolCallSha256,
+			resultSha256,
+			executionSha256,
+			verificationSha256,
+			verificationStatus: 'passed'
+		};
+	});
+	return {
+		schemaVersion: 'fikeya.desktop-plan-proof.v1',
+		capturedAt,
+		planId: plan.planId,
+		recordSha256,
+		specSha256: requireHash(plan.specSha256, 'specSha256'),
+		status: 'succeeded',
+		steps
+	};
+}
+
 async function sha256File(filePath: string): Promise<string> {
 	return `sha256:${createHash('sha256').update(await readFile(filePath)).digest('hex')}`;
 }
 
-async function publishStableEvidence(summary: EvidenceSummary, outputDirectory: string): Promise<PublishedEvidence> {
+async function publishStableEvidence(summary: EvidenceSummary, outputDirectory: string, completedPlanProof: CompletedPlanProof): Promise<PublishedEvidence> {
 	await mkdir(outputDirectory, { recursive: true });
 	const copies: readonly (readonly [string, string])[] = [
 		['fikeya-chat-real.png', summary.chatScreenshot],
 		['fikeya-plan-draft-real.png', summary.draftScreenshot],
 		['fikeya-plan-reviewed-real.png', summary.reviewedScreenshot],
-		['fikeya-plan-awaiting-approval-real.png', summary.approvalScreenshot]
+		['fikeya-plan-awaiting-approval-real.png', summary.approvalScreenshot],
+		['fikeya-plan-exact-approval-real.png', summary.exactApprovalScreenshot],
+		['fikeya-plan-executed-verified-real.png', summary.firstVerifiedScreenshot],
+		['fikeya-plan-succeeded-real.png', summary.succeededScreenshot]
 	];
 	const screenshots: ProofScreenshot[] = [];
 	for (const [name, source] of copies) {
@@ -420,8 +561,11 @@ async function publishStableEvidence(summary: EvidenceSummary, outputDirectory: 
 		await copyFile(source, destination);
 		screenshots.push({ name, path: destination, sha256: await sha256File(destination) });
 	}
+	const planProofName = 'fikeya-plan-lifecycle-proof.json';
+	const planProofPath = path.join(outputDirectory, planProofName);
+	await writeFile(planProofPath, `${JSON.stringify(completedPlanProof, null, 2)}\n`, 'utf8');
 	const proofManifest = {
-		schemaVersion: 'fikeya.desktop-proof.v1',
+		schemaVersion: 'fikeya.desktop-proof.v2',
 		scenarioId: summary.manifest.scenarioId,
 		capturedAt: summary.manifest.completedAt,
 		outcome: summary.manifest.outcome,
@@ -431,7 +575,17 @@ async function publishStableEvidence(summary: EvidenceSummary, outputDirectory: 
 		reportPath: summary.reportPath,
 		tracePath: summary.tracePath ?? null,
 		videoPath: summary.videoPath ?? null,
-		screenshots
+		screenshots,
+		planProof: {
+			name: planProofName,
+			path: planProofPath,
+			sha256: await sha256File(planProofPath),
+			planId: completedPlanProof.planId,
+			recordSha256: completedPlanProof.recordSha256,
+			specSha256: completedPlanProof.specSha256,
+			status: completedPlanProof.status,
+			steps: completedPlanProof.steps
+		}
 	};
 	const destination = path.join(outputDirectory, 'fikeya-desktop-proof.json');
 	await writeFile(destination, `${JSON.stringify(proofManifest, null, 2)}\n`, 'utf8');
@@ -503,6 +657,7 @@ async function captureDesktopProof(options: CaptureOptions) {
 				...process.env,
 				FIKEYA_CAPTURE_PROVIDER_NAME: captureProviderName,
 				FIKEYA_CAPTURE_PROVIDER_OUTPUT: captureProviderOutput,
+				FIKEYA_CAPTURE_RUNTIME_EXECUTABLE: runtimeExecutable,
 				FIKEYA_CAPTURE_WORKSPACE: workspace,
 				FIKEYA_HOME: runtimeHome
 			}
@@ -518,7 +673,8 @@ async function captureDesktopProof(options: CaptureOptions) {
 		throw new Error('The scenario runner did not report its evidence directory.');
 	}
 	const summary = await readEvidenceSummary(match[1].trim());
-	const published = await publishStableEvidence(summary, options.outputDirectory);
+	const completedPlanProof = await readCompletedPlanProof(workspace);
+	const published = await publishStableEvidence(summary, options.outputDirectory, completedPlanProof);
 	return {
 		checked: true,
 		workspace,
@@ -561,6 +717,7 @@ module.exports = {
 	defaultOutputDirectory,
 	parseCaptureArguments,
 	publishStableEvidence,
+	readCompletedPlanProof,
 	readEvidenceSummary,
 	repositoryRoot,
 	runProcess,
