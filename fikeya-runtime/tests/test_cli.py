@@ -8,10 +8,20 @@ import json
 import socket
 from pathlib import Path
 
+import pytest
+
 from fikeya_runtime.cli import main
 from fikeya_runtime.errors import SecretStoreUnavailable
 
 _ORIGINAL_SOCKET_CONNECT = socket.socket.connect
+
+
+def test_cli_reports_the_installed_version(capsys: object) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == "fikeya 0.1.0b1\n"
 
 
 class _ProtocolInput:

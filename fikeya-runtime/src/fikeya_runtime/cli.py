@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import __version__
 from .agent import AgentRunner
 from .credentials import CredentialResolver
 from .errors import (
@@ -51,6 +52,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fikeya",
         description="Local-first Fikeya runtime and provider configuration.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--home",
