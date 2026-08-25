@@ -2,7 +2,7 @@
 
 ## Status definitions
 
-- **Integrated alpha:** reachable through the current Desktop extension or `fikeya` CLI and covered by focused tests.
+- **Integrated beta candidate:** reachable through the current Desktop extension or `fikeya` CLI and covered by focused tests.
 - **Standalone implemented:** tested component code exists, but it is not yet wired into the Desktop/CLI product path.
 - **Partial:** a narrower behavior ships, while the complete item still has explicit gaps.
 - **Planned:** the requirement is defined, but release evidence does not yet exist.
@@ -13,17 +13,20 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 
 ## P0: Safe vertical slice
 
-- Branded current Code OSS desktop: **partial** - the built-in Fikeya extension exists; a complete signed cross-platform desktop distribution is not released.
-- Four mode selectors and two layouts: **integrated alpha** - the modes focus existing Code OSS surfaces; they are not four independent agent runtimes.
-- Python runtime and CLI: **integrated alpha** - initialization, diagnostics, providers, bounded model turns, cancellation, receipts, and tool-preset management are available.
+- Branded current Code OSS desktop: **partial** - a locally verified Windows beta candidate exists; signed cross-platform distributions are not released.
+- Desktop and extension surface split: **integrated beta candidate** - Desktop retains the full native editor, terminal, source-control, and review surfaces while the VS Code extension exposes one focused Fikeya workspace.
+- Python runtime and CLI: **integrated beta candidate** - initialization, diagnostics, providers, bounded model turns, the reviewed coding loop, cancellation, receipts, statistics, and tool-preset management are available.
 - Typed local protocol: **partial** - runtime, Desktop, and sidecar validate bounded local messages, but the public TypeScript schema is not yet the one live contract consumed by every component.
-- Provider profiles and secret references: **integrated alpha** - metadata remains separate from OS-keyring credential bytes.
-- Azure Entra ID profile and execution: **integrated alpha** - the focused runtime path and a scoped connectivity receipt exist.
+- Provider profiles and secret references: **integrated beta candidate** - metadata remains separate from OS-keyring credential bytes.
+- Azure Entra ID profile and execution: **integrated beta candidate** - the focused runtime path and a scoped connectivity receipt exist.
+- Google Gemini profile and compatible execution: **integrated beta candidate**.
+- Vertex AI compatible endpoint: **partial** - works with a short-lived bearer token; automatic ADC refresh is planned.
 - Canonical workspace boundary: **partial** - runtime process working directories and sidecar roots are bounded; a complete typed file/patch broker is not implemented.
-- One-use process approvals: **standalone implemented** - the runtime broker enforces exact requests, but the Desktop approvals surface is not connected to live requests.
-- Cancellation: **integrated alpha** for provider turns and **standalone implemented** for Agent Core/interop streams.
-- Qarinah context and receipt adapter: **integrated alpha** - opt-in CLI context and content-free runtime receipts are available.
-- Qarinah graph in Desktop: **integrated alpha** - bounded local graph inspection is available without sample-data fallback.
+- One-use tool approvals: **integrated beta candidate** - Desktop and CLI receive exact file, search, edit, process, and test requests and bind each decision to the immutable request digest.
+- Cancellation: **integrated beta candidate** for provider and reviewed coding turns, with standalone interop cancellation tests.
+- Qarinah context, capture, and receipt adapter: **integrated beta candidate** - workspace initialization, bounded cited retrieval, content-free receipts, and completed-run capture are available.
+- Qarinah graph in Desktop: **integrated beta candidate** - bounded local graph inspection is available without sample-data fallback.
+- Local usage dashboard: **integrated beta candidate** - workspace SQLite aggregates provider-reported input, cached-input, output, context receipts, sessions, and provider/model activity.
 - Transactional file patching and stale-diff rejection: **planned**.
 - Disposable execution worktree fixture: **planned**.
 - End-to-end Desktop/CLI parity fixture: **planned**.
@@ -31,7 +34,7 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 
 ## P1: Agent interoperability and repository intelligence
 
-- Native plan/act/observe/review core: **standalone implemented** - checkpointing, approvals, cancellation, durable replay, resume/fork, execution leases, and bounded recovery are tested; Desktop/CLI wiring remains planned.
+- Native plan/act/observe/review core: **integrated beta candidate** - Desktop and CLI use the runtime adapter with approvals, root-bound tools, changed-file hashes, tests, cancellation, and execution receipts.
 - Deep Agents and LangGraph integration: **planned** - the current native core does not require or bundle them.
 - ACP client boundary: **standalone implemented** - local stdio session start/resume/fork, negotiation, cancellation, permissions, and bounded callbacks exist; product wiring and a native ACP agent remain planned.
 - MCP client boundary: **standalone implemented** - discovery, allowlists, normalized calls, permission checks, limits, cancellation, and receipts exist; a product-level session manager, server, and registry remain planned.

@@ -41,7 +41,7 @@ sh scripts/fikeya/bootstrap.sh
 The bootstrap performs five bounded steps:
 
 1. Creates a Python virtual environment in the current user's cache, isolated by a content-free hash of the checkout path.
-2. Installs the local `fikeya-runtime` package with the Azure identity extra under the checked-in dependency constraints.
+2. Installs the matched local `fikeya-agent-core` and `fikeya-runtime` packages with the Azure identity extra under the checked-in dependency constraints.
 3. Runs `npm ci` and the protocol tests using the protocol lockfile.
 4. Runs `npm ci` and the Qarinah sidecar tests using the sidecar lockfile.
 5. Verifies the runtime entry point and writes a content-free `verification.json` receipt in the isolated cache.

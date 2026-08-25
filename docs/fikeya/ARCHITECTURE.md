@@ -4,7 +4,7 @@ Fikeya is an AI code editor and coding-agent runtime first. Durable sessions and
 
 ## Status and reading guide
 
-Fikeya is a developer alpha. This document separates three different kinds of behavior:
+Fikeya is a beta candidate. This document separates three different kinds of behavior:
 
 - **Integrated now** is reachable through the current Desktop extension or `fikeya` CLI.
 - **Standalone component** has focused tests in this repository but is not yet connected to the Desktop/CLI product path.
@@ -12,19 +12,18 @@ Fikeya is a developer alpha. This document separates three different kinds of be
 
 Only the first category should be treated as current end-user behavior.
 
-## Integrated developer-alpha behavior
+## Integrated beta-candidate behavior
 
 ### Desktop
 
-The current Desktop slice is a built-in extension for the Code OSS workbench. It contributes four mode selectors and two layouts without replacing the existing editor, terminal, source-control, debugging, or extension-host behavior.
+Fikeya Desktop is a branded Code OSS workbench with the existing editor, terminal, source-control, debugging, task, language-service, and extension-host surfaces. The built-in Fikeya extension adds one focused coding-agent workspace rather than duplicating those native surfaces. The same extension can be packaged as a VSIX for VS Code-compatible hosts.
 
-- **Editor** focuses the active editor group.
-- **Agent** exposes provider selection and runs one bounded provider turn through the Python runtime.
-- **Terminal** focuses the integrated terminal.
-- **Review** opens the existing source-control view.
-- **Studio** and **Agent Focus** change which Fikeya controls lead the workbench.
+- **Editor** is the native workbench editor and its language services.
+- **Agent** exposes provider selection, Qarinah context controls, the reviewed coding loop, exact approvals, cancellation, outcomes, and receipts.
+- **Terminal** is the native integrated terminal; agent-requested processes remain separate approval-gated operations.
+- **Review** uses native source control plus the Fikeya execution and evidence receipts.
 
-The Agent surface requires fresh network consent for every run. It receives output after the provider turn completes; token-delta streaming is not implemented. The approvals surface is an explicit empty-state preview because the Desktop does not yet subscribe to approval events.
+The Agent surface requires fresh network consent for every run. It receives output after the provider turn completes; token-delta streaming is not implemented. Each file, search, edit, or process tool request pauses for a request-bound allow-once, deny-once, or cancel decision. Approved arguments cannot be mutated or reused.
 
 The Studio layout can display a bounded, searchable Qarinah graph from the pinned local sidecar. Search, filters, node movement, pan, and zoom are local UI behavior. The graph reports unavailable data instead of substituting samples.
 
@@ -41,7 +40,7 @@ The current runtime provides:
 - content-free provider and Qarinah receipts; and
 - a process-only `ToolBroker` that accepts an executable and argument vector, starts disabled, and requires an exact one-use approval before real execution.
 
-Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral Entra ID token.
+Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Google Gemini, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Vertex AI is available through the compatible profile with a regional endpoint and a short-lived Google Cloud token; automatic ADC refresh remains a release follow-up. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral identity token.
 
 ### Qarinah context-engine boundary
 
@@ -74,7 +73,7 @@ The current runtime does not provide the complete MCP framing/session loop or a 
 
 These components have focused tests but are not yet one integrated Desktop/CLI execution path:
 
-- **Fikeya Agent Core** implements a checkpointed plan, act, observe, and review state machine with bounded steps, durable events, cancellation, request-bound approvals, broker-call leases, resume/fork primitives, and content-free execution receipts. It exposes an injected execution-broker interface and does not itself provide shell or file execution. LangGraph and Deep Agents are not required or bundled in the current core.
+- **Fikeya Agent Core** also remains usable as a standalone package. Its plan, act, observe, and review state machine is integrated into `fikeya agent execute` with root-bound file, search, edit, process, test, approval, changed-file, and outcome adapters. LangGraph and Deep Agents are not required or bundled in the current core.
 - **Fikeya Interop** implements bounded local-stdio adapters for ACP agents, Codex app-server, and MCP tools. It includes capability and permission boundaries, cancellation, allowlists, result limits, and content-free receipts. It is neither a sandbox nor a credential broker and is not yet wired into Desktop or the runtime CLI.
 - **Fikeya Protocol** contains public TypeScript schemas intended to become a shared compatibility surface. The Desktop and Python runtime still maintain their own live boundary models, so conformance between all components is not yet a shipped guarantee.
 

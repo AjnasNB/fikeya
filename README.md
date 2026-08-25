@@ -8,14 +8,14 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 
 - **Four working modes:** Editor, Agent, Terminal, and Review, each focused on a distinct development workflow.
 - **Two desktop layouts:** Studio for code-first work and Agent Focus for plan-first work.
-- **Provider-neutral configuration:** Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints.
+- **Provider-neutral configuration:** Azure OpenAI, OpenAI API models (including Codex-capable models available to the API account), Anthropic, OpenRouter, NVIDIA NIM, Google Gemini, Ollama, Vertex AI through its compatible endpoint, and other OpenAI-compatible endpoints.
 - **One runtime for Desktop and CLI:** shared provider, approval, tool, usage, context, and evidence contracts across both interfaces.
 - **Qarinah context engine:** compact, evidence-linked project context assembled from decisions, tool outcomes, worktrees, symbols, and cited receipts.
 - **Bounded provider execution:** workspace-root validation, explicit network consent, cancellation, and content-free request and response hashes.
 - **Measurable efficiency:** provider-reported input, cached-input, and output usage stays distinct from local estimates, and matched benchmark receipts fail closed when conditions differ.
 - **Open protocols:** ACP for complete agents and MCP for tools and resources.
 - **Reviewed browser and crawler presets:** validated, digest-bound connector configuration that stays disabled until the developer explicitly enables it; the connector process and MCP session are separate integrations.
-- **Standalone native-agent core:** typed plan, act, observe, and review stages with checkpoints, cancellation, bounded retries, exact-call approvals, and execution receipts. Wiring this package into the Desktop turn is a remaining alpha integration task.
+- **Integrated native-agent core:** typed plan, act, observe, and review stages with cancellation, bounded retries, exact-call approvals, workspace tools, changed-file hashes, test outcomes, and execution receipts in both Desktop and CLI.
 
 ## Product Shape
 
@@ -54,13 +54,15 @@ Provider credentials are stored in VS Code SecretStorage or the operating-system
 
 See [the security model](docs/fikeya/SECURITY.md) and [architecture](docs/fikeya/ARCHITECTURE.md).
 
-## Build Status
+## Release status
 
-Fikeya is under active public-alpha development. The current milestone covers the branded Code OSS desktop, secure Python runtime, provider profiles, CLI, ACP and MCP interoperability packages, workspace initialization, opt-in browser and crawler tool presets, a checkpointed native agent core, and Qarinah integration. It is not described as a stable release until clean-install Desktop and CLI fixtures pass on Windows, macOS, and Linux and the packaged artifacts are signed.
+Fikeya is a public beta candidate. The current milestone covers the branded Code OSS desktop, focused VS Code extension, secure Python runtime and CLI, provider profiles, the reviewed plan-act-observe-review coding loop, exact one-use approvals, local usage statistics, Qarinah initialization and graph inspection, ACP and MCP interoperability packages, and opt-in browser and crawler presets. Stable release gates remain: signed Windows, macOS, and Linux artifacts, clean-install verification on all three platforms, and a verified Desktop update feed.
+
+The VS Code extension follows the host's extension update channel. Fikeya Desktop does not silently download or force an unsigned executable. A future mandatory-update policy must verify a signed release manifest before it can block an unsupported build.
 
 ## Development
 
-Fikeya's developer-alpha bootstrap validates the checkout, creates a per-checkout Python environment in the current user's cache, installs the runtime with Azure identity support, and verifies the locked protocol and Qarinah sidecar components. It never requests provider credentials.
+Fikeya's developer-alpha bootstrap validates the checkout, creates a per-checkout Python environment in the current user's cache, installs the matched Agent Core and Runtime with Azure identity support, and verifies the locked protocol and Qarinah sidecar components. It never requests provider credentials.
 
 ```powershell
 pwsh -NoProfile -File scripts/fikeya/bootstrap.ps1 -CheckOnly

@@ -1,17 +1,10 @@
 # Fikeya Desktop
 
-Fikeya Desktop is the built-in workbench surface for the local Fikeya runtime. It keeps the editor, agent controls, terminal, review surface, provider setup, workspace diagnostics, and Qarinah status in one product shell.
+Fikeya Desktop is the focused coding-agent workspace for the local Fikeya runtime. It keeps reviewed agent controls, provider setup, workspace diagnostics, the Qarinah graph, and exact receipts together without duplicating the editor, terminal, or source-control navigation already provided by the full desktop product.
 
-## Modes and layouts
+## One agent workspace
 
-- **Editor** focuses the active editor group.
-- **Agent** returns to the Fikeya agent controls.
-- **Terminal** focuses the integrated terminal.
-- **Review** opens source control for change review.
-- **Studio** shows workspace setup, providers, memory status, approvals, and receipts.
-- **Agent Focus** reduces the panel to the active mode and its primary controls.
-
-The selected mode and layout are persisted in VS Code global state. A webview message cannot invoke arbitrary workbench commands: the extension validates every mode, layout, and command against a fixed allowlist.
+Use **Fikeya: Open Fikeya** for the full-width editor-area panel, or open the Fikeya activity-bar view for the compact sidebar. Both surfaces share the same live state and expose the agent run, configured provider profiles, workspace setup, Qarinah memory graph, and durable receipts. Reopening the command reveals the existing panel rather than creating duplicate sessions or message listeners. A webview message cannot invoke arbitrary workbench commands: every command and action is validated against a fixed allowlist.
 
 ## Runtime setup
 
@@ -38,13 +31,17 @@ For providers that require a secret, Fikeya Desktop:
 
 Azure OpenAI defaults to Entra ID and sends no credential payload. Ollama is credential-free and permits plain HTTP only on a loopback address. Other provider endpoints must use HTTPS.
 
-## Live alpha surfaces
+## Live beta-candidate surfaces
 
-The Agent surface reads configured profiles from `fikeya provider list --json` and runs one provider turn through `fikeya agent run`. A prompt is sent only over stdin. Each run requires a fresh network-consent checkbox, can be cancelled, and keeps output only in the current webview session. Exact token counts are shown only when the provider reports them. Content-free call and session receipts can be refreshed from local runtime state. Provider response bodies and stderr are not surfaced as error details.
+The Agent surface reads configured profiles from `fikeya provider list --json` and runs the reviewed plan-act-observe-review loop through `fikeya agent execute`. Prompts and approval decisions travel over a private JSON Lines stdin protocol and never enter process arguments. Every workspace read, edit, or process request pauses for an exact **Allow Once**, **Deny Once**, or **Cancel Run** decision. Completed runs show the plan, result, changed files, tool and test outcomes, provider-reported usage, and Qarinah evidence. Content-free call and session receipts can be refreshed from local runtime state; provider response bodies and stderr are not persisted as error details.
 
-The Studio layout also reads a compact, bounded graph from the pinned Qarinah package through a local JSON-RPC adapter. Search, type filters, node dragging, canvas pan and zoom are local. Node evidence hashes, graph manifest, and ledger head are displayed when present. If Qarinah is missing, uninitialized, invalid, too large, or times out, the graph says it is unavailable; it never substitutes sample data.
+The workspace also reads a compact, bounded graph from the pinned Qarinah package through a local JSON-RPC adapter. Search, type filters, node dragging, canvas pan and zoom are local. Node evidence hashes, graph manifest, and ledger head are displayed when present. If Qarinah is missing, uninitialized, invalid, too large, or times out, the graph says it is unavailable; it never substitutes sample data.
 
-The current alpha still uses VS Code's existing editor, terminal, and source-control views for Editor, Terminal, and Review modes. The approvals queue is an explicit empty-state preview because the extension does not yet subscribe to live approval events. Provider output is delivered after a completed turn; the UI does not simulate token streaming.
+The **Local Usage & Statistics** view calls `fikeya stats --workspace <path> --json` and displays content-free aggregates from that workspace's runtime SQLite database: sessions, provider calls, provider-reported input/cached/output tokens, Qarinah context receipts, activity time, and provider/model breakdowns. Missing provider token measurements remain unavailable instead of being estimated. Refresh is manual as well as post-run, nothing is sent to Fikeya analytics, and the view does not claim Marketplace or native auto-update support.
+
+The full Fikeya Desktop and Code OSS shell retain their editor, terminal, source-control, and review surfaces. This extension intentionally presents one coding-agent workspace instead of another mode switcher. Provider output is delivered after a completed run; the UI does not simulate token streaming. The provider picker includes Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Google Gemini, Ollama, and a Vertex AI or other OpenAI-compatible endpoint. Consumer AI subscriptions are not reused as API credentials.
+
+The extension follows the update mechanism of its VS Code-compatible host. The standalone desktop still needs signed native packages and a signature-verified update manifest before it can enforce a minimum supported version; it does not force-install an unsigned build.
 
 ## Standalone VSIX
 

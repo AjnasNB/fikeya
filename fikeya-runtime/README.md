@@ -6,13 +6,14 @@ provider configuration backed by the operating system credential store,
 bounded OpenAI-compatible model execution, exact provider-usage receipts,
 content-free context receipts, and an approval-gated tool broker.
 
-This is an alpha foundation. It deliberately does not run a shell string,
+This is the runtime included in the Fikeya beta candidate. It deliberately does not run a shell string,
 silently send project content to a model, or persist API keys in JSON or SQLite.
 
 ## Install for development
 
 ```console
 python -m venv .venv
+.venv\Scripts\python -m pip install -e "../fikeya-agent-core"
 .venv\Scripts\python -m pip install -e ".[azure,test]"
 .venv\Scripts\python -m pytest
 ```
@@ -69,8 +70,20 @@ printf '%s' "$MODEL_SECRET" | fikeya provider configure work \
 
 The metadata file stores only a `keyring://...` reference. The secret itself is
 written to the current user's operating system keyring. Supported profiles are
-Azure OpenAI, OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama, and generic
-OpenAI-compatible endpoints.
+Azure OpenAI, OpenAI API models, Anthropic, OpenRouter, NVIDIA NIM, Google
+Gemini, Ollama, and generic OpenAI-compatible endpoints. Codex-capable OpenAI
+models work when they are available to the user's OpenAI API account. A
+ChatGPT, Codex, Claude, or Gemini consumer subscription is not an API
+credential. Vertex AI can use the compatible profile with its regional
+OpenAI-compatible endpoint and a short-lived Google Cloud bearer token;
+automatic Application Default Credentials refresh is not yet built into the
+runtime.
+
+List configured profiles without exposing credentials:
+
+```console
+fikeya provider list --json
+```
 
 Provider connectivity is never tested during configuration or ordinary test
 runs. A network request occurs only when a person explicitly runs:
@@ -99,6 +112,36 @@ printf '%s' "Continue the current implementation" | fikeya agent run . \
 Use `--memory required` to stop before contacting the model when cited project
 context cannot be prepared. Use `--memory off` for a deliberately memory-free
 turn.
+
+## Run a reviewed coding loop
+
+`fikeya agent execute` connects the provider-neutral runtime to Fikeya Agent
+Core. The loop can list, read, and search project files; apply preconditioned
+UTF-8 edits; invoke an allowlisted process without a shell; run tests; and
+return a structured plan, changed-file hashes, tool receipts, test receipts,
+usage, and Qarinah evidence.
+
+This command is a bidirectional integration protocol for Fikeya Desktop and
+other trusted local clients. Start it with:
+
+```console
+fikeya agent execute . --provider work --protocol-stdin --allow-network --json-lines
+```
+
+The client writes one JSON line containing `{"type":"start","prompt":"..."}`.
+Before every workspace or process tool, the runtime emits a bounded `approval`
+message containing the exact arguments and their SHA-256 digest. The client
+must reply with the matching request ID and one decision: `allow_once`,
+`deny_once`, or `cancel`. A successful loop ends with one `result` line. Prompt,
+file content, tool output, plans, and final answers remain ephemeral; SQLite
+keeps content-free events, hashes, provider receipts, and exact reported usage.
+
+Process execution remains local. Command interpreters are prohibited, the
+executable must be allowlisted, the working directory must remain inside the
+initialized workspace, and an approved request cannot be reused or mutated.
+Fikeya resolves the executable to an absolute PATH entry outside the workspace,
+rejects Windows command-script shims, and owns the complete child process tree
+so cancellation and timeout cleanup cannot leave a background tool running.
 
 ## Run one bounded agent turn
 
