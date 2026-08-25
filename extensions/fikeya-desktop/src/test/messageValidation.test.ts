@@ -12,6 +12,22 @@ describe('Fikeya webview message validation', () => {
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'clearConversation' }), { type: 'clearConversation' });
 	});
 
+	test('accepts only local workspace surfaces', () => {
+		assert.deepStrictEqual([
+			parseWebviewMessage({ type: 'selectSurface', surface: 'chat' }),
+			parseWebviewMessage({ type: 'selectSurface', surface: 'plan' }),
+			parseWebviewMessage({ type: 'selectSurface', surface: 'context' }),
+			parseWebviewMessage({ type: 'selectSurface', surface: 'usage' }),
+			parseWebviewMessage({ type: 'selectSurface', surface: 'terminal' })
+		], [
+			{ type: 'selectSurface', surface: 'chat' },
+			{ type: 'selectSurface', surface: 'plan' },
+			{ type: 'selectSurface', surface: 'context' },
+			{ type: 'selectSurface', surface: 'usage' },
+			undefined
+		]);
+	});
+
 	test('accepts only the declared commands and rejects retired surface controls', () => {
 		assert.deepStrictEqual([
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.runDoctor' }),

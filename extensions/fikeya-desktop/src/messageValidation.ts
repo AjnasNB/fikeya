@@ -16,6 +16,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
 	| { readonly type: 'refreshPlan' }
+	| { readonly type: 'selectSurface'; readonly surface: 'chat' | 'plan' | 'context' | 'usage' }
 	| { readonly type: 'planAction'; readonly action: 'review' | 'approve-all' | 'approve-step' | 'run' | 'resume' | 'cancel'; readonly stepId?: string }
 	| { readonly type: 'clearConversation' }
 	| { readonly type: 'refreshReceipts' }
@@ -116,6 +117,10 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 			const specification = parsePlanSpecification(value.specification);
 			return specification ? { type: value.type, specification } : undefined;
 		}
+		case 'selectSurface':
+			return value.surface === 'chat' || value.surface === 'plan' || value.surface === 'context' || value.surface === 'usage'
+				? { type: value.type, surface: value.surface }
+				: undefined;
 		case 'planAction': {
 			if (value.action === 'approve-step') {
 				return isProviderName(value.stepId)

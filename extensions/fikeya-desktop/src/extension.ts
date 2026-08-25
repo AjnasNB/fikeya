@@ -9,7 +9,7 @@ import { appendConversationMessage, FikeyaConversationMessage } from './conversa
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import { captureCompletedFikeyaRun } from './sessionCapture';
-import { FikeyaPlanStageId } from './surface';
+import { buildRecordedPlanTimeline, FikeyaPlanStageId, isChatInteractionBlocked, selectInitialPlanStepId } from './surface';
 import {
 	configureFikeyaProvider,
 	approveFikeyaPlan,
@@ -345,11 +345,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			case 'refreshPlan':
 				await this.refreshPlan(true);
 				break;
+			case 'selectSurface':
+				this.state = { ...this.state, activeMode: message.surface };
+				break;
 			case 'planAction':
 				await this.runPlanAction(message.action, message.stepId);
 				break;
 			case 'clearConversation':
-				if (this.state.agent.status !== 'running') {
+				if (!isChatInteractionBlocked({
+					agentRunning: this.state.agent.status === 'running',
+					planRunning: this.activePlanRun !== undefined,
+					planCancellationInProgress: this.planCancellationInProgress
+				})) {
 					this.state = { ...this.state, conversation: [] };
 					this.refresh();
 				}
@@ -576,7 +583,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
-		if (!workspacePath || this.activeAgentRun || this.activePlanProposalRun || !profile) {
+		const chatBlocked = isChatInteractionBlocked({
+			agentRunning: this.activeAgentRun !== undefined,
+			planRunning: this.activePlanRun !== undefined,
+			planCancellationInProgress: this.planCancellationInProgress
+		});
+		if (!workspacePath || chatBlocked || this.activePlanProposalRun || !profile) {
 			return;
 		}
 
@@ -949,6 +961,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				this.applyPlanResult(await changeFikeyaPlan('cancel', plan.planId, workspacePath));
 			} finally {
 				this.planCancellationInProgress = false;
+				this.refresh();
 			}
 			return;
 		}
@@ -1138,7 +1151,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const nonce = randomBytes(16).toString('base64');
 		const strings = getWebviewStrings();
 		const providerCards = renderProviderCards(this.state, strings);
-		const agentSurface = renderAgentSurface(this.state, strings, this.state.activeMode === 'research');
+		const planOperationInProgress = this.activePlanRun !== undefined || this.planCancellationInProgress;
+		const agentSurface = renderAgentSurface(this.state, strings, this.state.activeMode === 'research', planOperationInProgress);
 		const planSurface = renderPlanSurface(this.state, strings);
 		const statisticsSurface = renderStatistics(this.state.statistics, strings);
 		const memoryGraph = renderMemoryGraph(this.state, strings);
@@ -1153,10 +1167,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			? this.state.activeMode
 			: 'chat';
 		const desktopNavigation = `<div class="workspace-navigation"><nav class="mode-switcher" role="tablist" aria-label="${escapeHtml(strings.workspaceModes)}">
-			<button id="surface-tab-chat" role="tab" aria-controls="surface-panel-chat" aria-selected="${initialSurface === 'chat'}" tabindex="${initialSurface === 'chat' ? '0' : '-1'}" data-surface-tab="chat" data-surface-target="chat" data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Chat'))}</button>
-			<button id="surface-tab-plan" role="tab" aria-controls="surface-panel-plan" aria-selected="${initialSurface === 'plan'}" tabindex="${initialSurface === 'plan' ? '0' : '-1'}" data-surface-tab="plan" data-surface-target="plan" data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Plan'))}</button>
-			<button id="surface-tab-context" role="tab" aria-controls="surface-panel-context" aria-selected="${initialSurface === 'context'}" tabindex="${initialSurface === 'context' ? '0' : '-1'}" data-surface-tab="context" data-surface-target="context" data-command="fikeya.mode.lab" type="button">${escapeHtml(vscode.l10n.t('Context'))}</button>
-			<button id="surface-tab-usage" role="tab" aria-controls="surface-panel-usage" aria-selected="${initialSurface === 'usage'}" tabindex="${initialSurface === 'usage' ? '0' : '-1'}" data-surface-tab="usage" data-surface-target="usage" data-command="fikeya.view.usage" type="button">${escapeHtml(vscode.l10n.t('Usage'))}</button>
+			<button id="surface-tab-chat" role="tab" aria-controls="surface-panel-chat" aria-selected="${initialSurface === 'chat'}" tabindex="${initialSurface === 'chat' ? '0' : '-1'}" data-surface-tab="chat" data-surface-target="chat" type="button">${escapeHtml(vscode.l10n.t('Chat'))}</button>
+			<button id="surface-tab-plan" role="tab" aria-controls="surface-panel-plan" aria-selected="${initialSurface === 'plan'}" tabindex="${initialSurface === 'plan' ? '0' : '-1'}" data-surface-tab="plan" data-surface-target="plan" type="button">${escapeHtml(vscode.l10n.t('Plan'))}</button>
+			<button id="surface-tab-context" role="tab" aria-controls="surface-panel-context" aria-selected="${initialSurface === 'context'}" tabindex="${initialSurface === 'context' ? '0' : '-1'}" data-surface-tab="context" data-surface-target="context" type="button">${escapeHtml(vscode.l10n.t('Context'))}</button>
+			<button id="surface-tab-usage" role="tab" aria-controls="surface-panel-usage" aria-selected="${initialSurface === 'usage'}" tabindex="${initialSurface === 'usage' ? '0' : '-1'}" data-surface-tab="usage" data-surface-target="usage" type="button">${escapeHtml(vscode.l10n.t('Usage'))}</button>
 		</nav><nav class="native-actions" aria-label="${escapeHtml(vscode.l10n.t('Workbench destinations'))}"><button class="quiet" data-command="fikeya.mode.research" type="button">${escapeHtml(vscode.l10n.t('Research'))}</button><button class="quiet" id="surface-action-setup" data-surface-target="setup" data-command="fikeya.view.setup" type="button">${escapeHtml(vscode.l10n.t('Setup'))}</button><button class="quiet" data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Code'))}</button><button class="quiet" data-command="fikeya.mode.terminal" type="button">${escapeHtml(strings.terminalMode)}</button><button class="quiet" data-command="fikeya.mode.review" type="button">${escapeHtml(strings.reviewMode)}</button></nav></div>`;
 		const setupCards = `<section class="grid two compact-grid">
 			<article class="card">
@@ -1171,7 +1185,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			</article>
 		</section>`;
 		const usageSurface = `${statisticsSurface}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
-		const surfacePanels = `<div class="active-surface" data-initial-surface="${initialSurface}">
+		const surfacePanels = `<div class="active-surface" data-initial-surface="${initialSurface}" data-plan-id="${escapeHtml(this.state.plan.record?.planId ?? '')}">
 			<section id="surface-panel-chat" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-chat" data-surface-panel="chat"${initialSurface === 'chat' ? '' : ' hidden'}>${agentSurface}</section>
 			<section id="surface-panel-plan" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-plan" data-surface-panel="plan"${initialSurface === 'plan' ? '' : ' hidden'}>${planSurface}</section>
 			<section id="surface-panel-context" class="surface-panel" role="tabpanel" aria-labelledby="surface-tab-context" data-surface-panel="context"${initialSurface === 'context' ? '' : ' hidden'}>${memoryGraph}</section>
@@ -1336,6 +1350,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.plan-create-form textarea { min-height: 300px; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); tab-size: 2; }
 		.plan-client-error { margin: 0; color: var(--vscode-errorForeground); }
 		.plan-actions { margin: 12px 0; }
+		.plan-bulk-approval { margin-top: 12px; border-top: 1px solid var(--vscode-widget-border); color: var(--vscode-descriptionForeground); }
+		.plan-bulk-approval > summary { width: max-content; padding: 10px 0 6px; cursor: pointer; font-size: 11px; }
+		.plan-bulk-approval .actions { margin-top: 8px; }
 		.plan-lifecycle { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 12px 0 0; padding: 1px; list-style: none; background: var(--vscode-widget-border); }
 		.plan-lifecycle li { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; padding: 8px; background: var(--vscode-editorWidget-background); }
 		.plan-lifecycle li span { display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid var(--vscode-widget-border); border-radius: 50%; font-family: var(--vscode-editor-font-family); font-size: 9px; }
@@ -1424,6 +1441,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const surfaceTargets = Array.from(document.querySelectorAll('[data-surface-target]'));
 		const surfacePanels = Array.from(document.querySelectorAll('[data-surface-panel]'));
 		const availableSurfaces = new Set(surfacePanels.map(panel => panel.dataset.surfacePanel));
+		const activePlanId = surfaceRoot?.dataset.planId || '';
 		const activateSurface = (surfaceName, focus = false) => {
 			if (!surfaceName || !availableSurfaces.has(surfaceName)) return;
 			for (const panel of surfacePanels) panel.hidden = panel.dataset.surfacePanel !== surfaceName;
@@ -1433,9 +1451,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				tab.tabIndex = selected ? 0 : -1;
 				if (selected && focus) tab.focus();
 			}
-			vscode.setState({ ...persistedState, surface: surfaceName, planStep: vscode.getState()?.planStep });
+			const state = vscode.getState() || {};
+			vscode.setState({ ...state, surface: surfaceName, planId: activePlanId, planStep: state.planId === activePlanId ? state.planStep : undefined });
 		};
-		for (const target of surfaceTargets) target.addEventListener('click', () => activateSurface(target.dataset.surfaceTarget));
+		for (const target of surfaceTargets) target.addEventListener('click', () => {
+			activateSurface(target.dataset.surfaceTarget);
+			if (target.dataset.surfaceTab) vscode.postMessage({ type: 'selectSurface', surface: target.dataset.surfaceTab });
+		});
 		for (const [index, tab] of surfaceTabs.entries()) tab.addEventListener('keydown', event => {
 			let nextIndex;
 			if (event.key === 'ArrowRight') nextIndex = (index + 1) % surfaceTabs.length;
@@ -1462,7 +1484,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			}
 			for (const detail of planDetails) detail.hidden = detail.dataset.planDetail !== stepId;
 			const state = vscode.getState() || {};
-			vscode.setState({ ...state, planStep: stepId });
+			vscode.setState({ ...state, planId: activePlanId, planStep: stepId });
 		};
 		for (const [index, step] of planSteps.entries()) {
 			step.addEventListener('click', () => selectPlanStep(step.dataset.planStep));
@@ -1478,7 +1500,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			});
 		}
 		const renderedPlanStep = planSteps.find(step => step.getAttribute('aria-selected') === 'true')?.dataset.planStep;
-		selectPlanStep(planSteps.some(step => step.dataset.planStep === persistedState.planStep) ? persistedState.planStep : renderedPlanStep);
+		const persistedPlanStep = persistedState.planId === activePlanId ? persistedState.planStep : undefined;
+		selectPlanStep(planSteps.some(step => step.dataset.planStep === persistedPlanStep) ? persistedPlanStep : renderedPlanStep);
 		const planCreateForm = document.querySelector('[data-plan-create-form]');
 		const planClientError = document.querySelector('[data-plan-client-error]');
 		planCreateForm?.addEventListener('submit', event => {
@@ -1820,7 +1843,8 @@ function renderPlanSurface(state: DashboardState, strings: WebviewStrings): stri
 		</section>`;
 	}
 
-	const selectedStep = plan.steps.find(step => ['awaiting_approval', 'executing', 'verifying', 'failed'].includes(step.status)) ?? plan.steps.at(-1)!;
+	const initialStepId = selectInitialPlanStepId(plan.steps);
+	const selectedStep = plan.steps.find(step => step.stepId === initialStepId) ?? plan.steps[0]!;
 	const busy = state.plan.status === 'loading' || state.plan.status === 'running';
 	const waitingSteps = plan.steps.filter(step => step.status === 'pending' || step.status === 'awaiting_approval');
 	const approvedSteps = plan.steps.filter(step => step.status === 'approved');
@@ -1828,12 +1852,14 @@ function renderPlanSurface(state: DashboardState, strings: WebviewStrings): stri
 	const actionButtons = [
 		plan.status === 'draft' ? `<button data-plan-action="review" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Review immutable plan'))}</button>` : '',
 		plan.status === 'reviewed' ? `<button data-plan-action="run" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Start to approval'))}</button>` : '',
-		(plan.status === 'reviewed' || plan.status === 'awaiting_approval') && waitingSteps.length > 0 ? `<button class="secondary" data-plan-action="approve-all" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Approve all pending'))}</button>` : '',
 		(plan.status === 'executing' || plan.status === 'verifying' || (plan.status === 'awaiting_approval' && approvedSteps.length > 0)) ? `<button data-plan-action="resume" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Resume approved work'))}</button>` : '',
 		!['succeeded', 'failed', 'cancelled'].includes(plan.status) ? `<button class="secondary" data-plan-action="cancel" type="button">${escapeHtml(vscode.l10n.t('Cancel plan'))}</button>` : '',
 		`<button class="quiet" data-plan-refresh type="button"${busy ? ' disabled' : ''}>${escapeHtml(strings.refresh)}</button>`,
 		`<button class="quiet" data-plan-new type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New plan'))}</button>`
 	].join('');
+	const bulkApproval = (plan.status === 'reviewed' || plan.status === 'awaiting_approval') && waitingSteps.length > 0
+		? `<details class="plan-bulk-approval"><summary>${escapeHtml(vscode.l10n.t('Bulk approval'))}</summary><p>${escapeHtml(vscode.l10n.t('The selected step remains the primary approval path. Use this only when you have reviewed every pending tool call and exact argument.'))}</p><div class="actions"><button class="quiet" data-plan-action="approve-all" type="button"${busy ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Approve all {0} pending steps', waitingSteps.length))}</button></div></details>`
+		: '';
 	const timelineButtons = plan.steps.map(step => `<button class="plan-step" id="plan-step-${escapeHtml(step.stepId)}" role="tab" aria-controls="plan-detail-${escapeHtml(step.stepId)}" aria-selected="${step.stepId === selectedStep.stepId}" tabindex="${step.stepId === selectedStep.stepId ? '0' : '-1'}" data-plan-step="${escapeHtml(step.stepId)}" data-status="${planStepVisualStatus(step.status)}" type="button"><span class="plan-step-index" aria-hidden="true">${step.order}</span><span class="plan-step-copy"><strong>${escapeHtml(step.title)}</strong><span>${escapeHtml(step.toolCall.name)}</span></span><span class="plan-step-status">${escapeHtml(planStepStatusLabel(step.status))}</span></button>`).join('');
 	const detailPanels = plan.steps.map(step => {
 		const dependencies = step.dependsOn.length > 0 ? step.dependsOn.join(', ') : vscode.l10n.t('None');
@@ -1859,7 +1885,7 @@ function renderPlanSurface(state: DashboardState, strings: WebviewStrings): stri
 		${lifecycle}
 		<div class="actions plan-actions">${actionButtons}</div>
 		${state.plan.failure || plan.failureReason ? `<p class="plan-boundary" role="alert">${escapeHtml(state.plan.failure ?? plan.failureReason ?? '')}</p>` : ''}
-		<div class="plan-workspace"><div class="plan-timeline" role="tablist" aria-label="${escapeHtml(vscode.l10n.t('Exact plan steps'))}">${timelineButtons}</div><div class="plan-details" aria-live="polite">${detailPanels}</div></div>
+		<div class="plan-workspace"><div class="plan-timeline" role="tablist" aria-label="${escapeHtml(vscode.l10n.t('Exact plan steps'))}">${timelineButtons}</div><div class="plan-details" aria-live="polite">${detailPanels}</div></div>${bulkApproval}
 		<dl class="receipt compact-receipt"><dt>${escapeHtml(vscode.l10n.t('Specification'))}</dt><dd><code>${escapeHtml(plan.specSha256)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Current record'))}</dt><dd><code>${escapeHtml(state.plan.recordSha256 ?? strings.unavailable)}</code></dd></dl>
 	</section>`;
 }
@@ -1872,14 +1898,9 @@ function renderPlanLifecycle(plan: FikeyaPlanRecord): string {
 		{ id: 'execute', title: vscode.l10n.t('Execute') },
 		{ id: 'verify', title: vscode.l10n.t('Verify') }
 	];
-	const activeIndex = plan.status === 'draft' ? 0
-		: plan.status === 'reviewed' ? 1
-			: plan.status === 'awaiting_approval' ? 2
-				: plan.status === 'executing' ? 3
-					: 4;
-	const terminalSuccess = plan.status === 'succeeded';
+	const timeline = buildRecordedPlanTimeline(plan);
 	return `<ol class="plan-lifecycle" aria-label="${escapeHtml(vscode.l10n.t('Plan lifecycle'))}">${order.map((stage, index) => {
-		const visual = terminalSuccess || index < activeIndex ? 'complete' : index === activeIndex ? (plan.status === 'failed' || plan.status === 'cancelled' ? 'attention' : 'active') : 'pending';
+		const visual = timeline.find(item => item.id === stage.id)?.status ?? 'pending';
 		return `<li data-status="${visual}"><span>${index + 1}</span><strong>${escapeHtml(stage.title)}</strong></li>`;
 	}).join('')}</ol>`;
 }
@@ -1905,8 +1926,10 @@ function planStatusLabel(status: FikeyaPlanRecord['status']): string {
 	return status.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 
-function renderAgentSurface(state: DashboardState, strings: WebviewStrings, researchMode: boolean): string {
+function renderAgentSurface(state: DashboardState, strings: WebviewStrings, researchMode: boolean, planOperationInProgress: boolean): string {
 	const running = state.agent.status === 'running';
+	const interactionBlocked = isChatInteractionBlocked({ agentRunning: running, planRunning: planOperationInProgress, planCancellationInProgress: false });
+	const controlsDisabled = interactionBlocked || state.providers.length === 0;
 	const providerOptions = state.providers.length === 0
 		? `<option value="">${escapeHtml(strings.noProviders)}</option>`
 		: state.providers.map(provider => `<option value="${escapeHtml(provider.name)}"${state.agent.providerName === provider.name ? ' selected' : ''}>${escapeHtml(`${provider.name} | ${provider.model}`)}</option>`).join('');
@@ -1922,14 +1945,14 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, rese
 		? `<details class="run-details"><summary>${escapeHtml(vscode.l10n.t('Inspect latest run'))}</summary><div class="run-details-body">${outcome}<dl class="receipt"><dt>${escapeHtml(strings.session)}</dt><dd><code>${escapeHtml(state.agent.sessionId)}</code></dd><dt>${escapeHtml(strings.call)}</dt><dd><code>${escapeHtml(state.agent.callId ?? strings.unavailable)}</code></dd><dt>${escapeHtml(strings.usageBasis)}</dt><dd>${escapeHtml(state.agent.usage?.measurement ?? strings.unavailable)}</dd><dt>${escapeHtml(strings.context)}</dt><dd>${escapeHtml(formatContextStatus(state.agent.memory, strings))}</dd>${state.agent.memory?.receiptId ? `<dt>${escapeHtml(strings.contextReceipt)}</dt><dd><code>${escapeHtml(state.agent.memory.receiptId)}</code></dd>` : ''}${state.agent.memory?.responseSha256 ? `<dt>${escapeHtml(strings.contextEvidence)}</dt><dd><code>${escapeHtml(state.agent.memory.responseSha256)}</code></dd>` : ''}</dl></div></details>`
 		: '';
 	return `<section class="card agent-surface" aria-labelledby="agent-run-title">
-		<div class="agent-heading"><div><h2 id="agent-run-title">${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Chat'))}</h2><p>${escapeHtml(researchMode ? vscode.l10n.t('Cited investigation with the same project and permission boundary.') : vscode.l10n.t('A live conversation beside the editor. Messages stay in this extension-host session.'))}</p></div><div class="agent-heading-actions"><button class="quiet" data-conversation-clear type="button"${running || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button><span class="badge">${escapeHtml(agentStatusLabel(state.agent, strings))}</span></div></div>
+		<div class="agent-heading"><div><h2 id="agent-run-title">${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Chat'))}</h2><p>${escapeHtml(researchMode ? vscode.l10n.t('Cited investigation with the same project and permission boundary.') : vscode.l10n.t('A live conversation beside the editor. Messages stay in this extension-host session.'))}</p></div><div class="agent-heading-actions"><button class="quiet" data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button><span class="badge">${escapeHtml(planOperationInProgress ? vscode.l10n.t('Plan active') : agentStatusLabel(state.agent, strings))}</span></div></div>
 		<div class="chat-thread" data-chat-thread aria-live="polite">${conversation}${progress}</div>
 		<form class="agent-form" data-agent-form autocomplete="off">
-			<label class="field composer"><span class="sr-only">${escapeHtml(strings.prompt)}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(researchMode ? vscode.l10n.t('Research a technical question and ask for cited findings...') : vscode.l10n.t('Ask Fikeya to inspect, edit, run, or review this project...'))}"${running || state.providers.length === 0 ? ' disabled' : ''} required></textarea></label>
-			<div class="composer-bar"><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${running || state.providers.length === 0 ? ' disabled' : ''}>${providerOptions}</select></label><details class="run-controls"><summary>${escapeHtml(vscode.l10n.t('Model and context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${running || state.providers.length === 0 ? ' disabled' : ''}><option value="auto">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="512" max="64000" step="256" value="12000"${running || state.providers.length === 0 ? ' disabled' : ''}></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="1" max="32768" step="1" value="1024"${running || state.providers.length === 0 ? ' disabled' : ''}></label></div></details><div class="actions composer-actions"><button data-agent-run type="submit"${running || state.providers.length === 0 ? ' disabled' : ''}>${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Send'))}</button><button class="secondary" data-agent-plan type="button"${running || state.providers.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Create plan'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div></div>
-			<div class="composer-foot"><label class="consent"><input data-network-consent type="checkbox"${running || state.providers.length === 0 ? ' disabled' : ''}><span>${escapeHtml(vscode.l10n.t('Allow provider network for this turn'))}</span></label><span>${escapeHtml(vscode.l10n.t('Enter to send, Shift+Enter for a new line'))}</span></div>
+			<label class="field composer"><span class="sr-only">${escapeHtml(strings.prompt)}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(researchMode ? vscode.l10n.t('Research a technical question and ask for cited findings...') : vscode.l10n.t('Ask Fikeya to inspect, edit, run, or review this project...'))}"${controlsDisabled ? ' disabled' : ''} required></textarea></label>
+			<div class="composer-bar"><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${controlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label><details class="run-controls"><summary>${escapeHtml(vscode.l10n.t('Model and context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="auto">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="512" max="64000" step="256" value="12000"${controlsDisabled ? ' disabled' : ''}></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="1" max="32768" step="1" value="1024"${controlsDisabled ? ' disabled' : ''}></label></div></details><div class="actions composer-actions"><button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Send'))}</button><button class="secondary" data-agent-plan type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Create plan'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div></div>
+			<div class="composer-foot"><label class="consent"><input data-network-consent type="checkbox"${controlsDisabled ? ' disabled' : ''}><span>${escapeHtml(vscode.l10n.t('Allow provider network for this turn'))}</span></label><span>${escapeHtml(vscode.l10n.t('Enter to send, Shift+Enter for a new line'))}</span></div>
 		</form>
-		<div class="agent-status" data-tone="${statusTone}" role="status">${escapeHtml(state.providers.length === 0 ? vscode.l10n.t('Add a model in Fikeya Settings to begin.') : agentStatusLabel(state.agent, strings))}</div>
+		<div class="agent-status" data-tone="${statusTone}" role="status">${escapeHtml(state.providers.length === 0 ? vscode.l10n.t('Add a model in Fikeya Settings to begin.') : planOperationInProgress ? vscode.l10n.t('Chat is paused while the current plan executes or cancels.') : agentStatusLabel(state.agent, strings))}</div>
 		${runDetails}
 		${state.agent.sessionId ? `<div class="actions"><button class="secondary" data-receipts-refresh type="button"${state.agent.receiptsStatus === 'loading' ? ' disabled' : ''}>${escapeHtml(strings.refreshReceipts)}</button></div>` : ''}
 	</section>`;

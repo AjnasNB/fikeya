@@ -6,7 +6,7 @@
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { appendConversationMessage, FikeyaConversationMessage } from '../conversation';
-import { buildPlanTimeline, extractPlanSteps } from '../surface';
+import { buildPlanTimeline, buildRecordedPlanTimeline, extractPlanSteps, isChatInteractionBlocked, selectInitialPlanStepId } from '../surface';
 
 function message(index: number, content = `message ${index}`): FikeyaConversationMessage {
 	return {
@@ -79,5 +79,43 @@ describe('Fikeya plan surface', () => {
 			'Edit the parser'
 		]);
 		assert.deepStrictEqual(extractPlanSteps(undefined), []);
+	});
+
+	test('derives terminal lifecycle attention from durable evidence', () => {
+		const step = { status: 'cancelled' as const, approval: null, execution: null, verification: null };
+		const cancelledBeforeApproval = buildRecordedPlanTimeline({ status: 'cancelled', steps: [step] });
+		const failedDuringExecution = buildRecordedPlanTimeline({ status: 'failed', steps: [{ ...step, status: 'failed', approval: {}, execution: {} }] });
+		const failedDuringVerification = buildRecordedPlanTimeline({ status: 'failed', steps: [{ ...step, status: 'failed', approval: {}, execution: {}, verification: {} }] });
+		assert.deepStrictEqual({
+			cancelled: cancelledBeforeApproval.map(stage => stage.status),
+			execution: failedDuringExecution.map(stage => stage.status),
+			verification: failedDuringVerification.map(stage => stage.status)
+		}, {
+			cancelled: ['complete', 'attention', 'pending', 'pending', 'pending'],
+			execution: ['complete', 'complete', 'complete', 'attention', 'pending'],
+			verification: ['complete', 'complete', 'complete', 'complete', 'attention']
+		});
+	});
+
+	test('selects the first live or actionable plan step instead of the last step', () => {
+		assert.strictEqual(selectInitialPlanStepId([
+			{ stepId: 'inspect', status: 'pending' },
+			{ stepId: 'edit', status: 'pending' },
+			{ stepId: 'verify', status: 'pending' }
+		]), 'inspect');
+		assert.strictEqual(selectInitialPlanStepId([
+			{ stepId: 'inspect', status: 'succeeded' },
+			{ stepId: 'edit', status: 'awaiting_approval' },
+			{ stepId: 'verify', status: 'pending' }
+		]), 'edit');
+	});
+
+	test('blocks Chat across agent runs, plan runs, and plan cancellation', () => {
+		assert.deepStrictEqual([
+			isChatInteractionBlocked({ agentRunning: false, planRunning: false, planCancellationInProgress: false }),
+			isChatInteractionBlocked({ agentRunning: true, planRunning: false, planCancellationInProgress: false }),
+			isChatInteractionBlocked({ agentRunning: false, planRunning: true, planCancellationInProgress: false }),
+			isChatInteractionBlocked({ agentRunning: false, planRunning: false, planCancellationInProgress: true })
+		], [false, true, true, true]);
 	});
 });
