@@ -10,6 +10,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'removeProvider'; readonly providerName: string }
 	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: 'auto' | 'off' | 'required'; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
+	| { readonly type: 'clearConversation' }
 	| { readonly type: 'refreshReceipts' }
 	| { readonly type: 'refreshStatistics' }
 	| { readonly type: 'refreshMemory' };
@@ -23,7 +24,9 @@ export type FikeyaCommand =
 	| 'fikeya.mode.terminal'
 	| 'fikeya.mode.review'
 	| 'fikeya.mode.research'
-	| 'fikeya.mode.lab';
+	| 'fikeya.mode.lab'
+	| 'fikeya.view.usage'
+	| 'fikeya.view.setup';
 
 const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.configureProvider',
@@ -34,7 +37,9 @@ const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.mode.terminal',
 	'fikeya.mode.review',
 	'fikeya.mode.research',
-	'fikeya.mode.lab'
+	'fikeya.mode.lab',
+	'fikeya.view.usage',
+	'fikeya.view.setup'
 ];
 
 const maximumPromptBytes = 262_144;
@@ -55,6 +60,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		}
 		case 'refreshProviders':
 		case 'cancelAgent':
+		case 'clearConversation':
 		case 'refreshReceipts':
 		case 'refreshStatistics':
 		case 'refreshMemory':

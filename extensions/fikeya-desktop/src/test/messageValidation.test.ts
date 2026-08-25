@@ -8,11 +8,17 @@ import { describe, test } from 'node:test';
 import { escapeHtml, parseWebviewMessage } from '../messageValidation';
 
 describe('Fikeya webview message validation', () => {
+	test('accepts the bounded local conversation reset action', () => {
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'clearConversation' }), { type: 'clearConversation' });
+	});
+
 	test('accepts only the declared commands and rejects retired surface controls', () => {
 		assert.deepStrictEqual([
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.runDoctor' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.mode.lab' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.mode.research' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.usage' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.setup' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.terminal.sendSequence' }),
 			parseWebviewMessage({ type: 'selectMode', mode: 'review' }),
 			parseWebviewMessage({ type: 'switchLayout', layout: 'agentFocus' })
@@ -20,6 +26,8 @@ describe('Fikeya webview message validation', () => {
 			{ type: 'openCommand', command: 'fikeya.runDoctor' },
 			{ type: 'openCommand', command: 'fikeya.mode.lab' },
 			{ type: 'openCommand', command: 'fikeya.mode.research' },
+			{ type: 'openCommand', command: 'fikeya.view.usage' },
+			{ type: 'openCommand', command: 'fikeya.view.setup' },
 			undefined,
 			undefined,
 			undefined
