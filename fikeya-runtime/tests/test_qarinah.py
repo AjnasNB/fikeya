@@ -23,7 +23,9 @@ from fikeya_runtime.qarinah import (
 from fikeya_runtime.state import StateStore
 
 
-def _valid_item(event_id: str, title: str = "Verified project decision") -> dict[str, object]:
+def _valid_item(
+    event_id: str, title: str = "Verified project decision"
+) -> dict[str, object]:
     return {
         "eventId": event_id,
         "kind": "decision",
@@ -108,8 +110,10 @@ def test_query_uses_stdin_argv_boundary_and_persists_no_content(tmp_path: Path) 
         "coverage": result.receipt.coverage,
         "evidence_count": result.receipt.evidence_count,
         "response": json.loads(result.content),
-        "query_not_in_database": b"private retrieval question" not in state.path.read_bytes(),
-        "response_not_in_database": response.encode("utf-8") not in state.path.read_bytes(),
+        "query_not_in_database": b"private retrieval question"
+        not in state.path.read_bytes(),
+        "response_not_in_database": response.encode("utf-8")
+        not in state.path.read_bytes(),
     } == {
         "argv": ["qarinah", "query", "--stdin-json"],
         "query_not_in_argv": True,
@@ -136,7 +140,10 @@ def test_diagnostic_accepts_only_zero_write_commands(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         state=state,
         runner=runner,
-        environment={"ANTHROPIC_API_KEY": "must-not-reach-cli", "HOME": str(tmp_path.parent)},
+        environment={
+            "ANTHROPIC_API_KEY": "must-not-reach-cli",
+            "HOME": str(tmp_path.parent),
+        },
     )
 
     assert adapter.diagnostic("doctor") == "healthy\n"
@@ -218,11 +225,19 @@ def test_sidecar_memory_prepare_is_root_bound_ephemeral_and_content_free(
         "response_not_in_database": b"manifestHash" not in retained,
         "secret_not_in_child_environment": "OPENAI_API_KEY" not in calls[0]["env"],
         "node_options_not_in_child_environment": "NODE_OPTIONS" not in calls[0]["env"],
-        "node_does_not_enable_electron_mode": "ELECTRON_RUN_AS_NODE" not in calls[0]["env"],
-        "workspace_not_in_child_path": str(workspace.resolve()) not in calls[0]["env"]["PATH"],
-        "installation_in_child_path": str(node.parent.resolve()) in calls[0]["env"]["PATH"],
+        "node_does_not_enable_electron_mode": "ELECTRON_RUN_AS_NODE"
+        not in calls[0]["env"],
+        "workspace_not_in_child_path": str(workspace.resolve())
+        not in calls[0]["env"]["PATH"],
+        "installation_in_child_path": str(node.parent.resolve())
+        in calls[0]["env"]["PATH"],
     } == {
-        "argv": [str(node.resolve()), str(sidecar.resolve()), "--root", str(workspace.resolve())],
+        "argv": [
+            str(node.resolve()),
+            str(sidecar.resolve()),
+            "--root",
+            str(workspace.resolve()),
+        ],
         "cwd": workspace.resolve(),
         "shell": False,
         "query_not_in_argv": True,
@@ -434,7 +449,9 @@ def test_sidecar_rejects_malformed_and_error_responses_without_retaining_them(
     workspace, node, sidecar = _sidecar_paths(tmp_path)
 
     def runner(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="private stderr")
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=stdout, stderr="private stderr"
+        )
 
     state = StateStore(workspace / "state.sqlite3")
     session = state.create_session(session_id="ses_invalid")
@@ -454,7 +471,9 @@ def test_sidecar_rejects_malformed_and_error_responses_without_retaining_them(
     assert b"private query" not in retained
     assert stdout.encode("utf-8") not in retained
     with sqlite3.connect(state.path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM context_receipts").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_receipts"
+        ).fetchone() == (1,)
 
 
 def test_sidecar_rejects_nonzero_exit_and_oversized_output(tmp_path: Path) -> None:
@@ -463,8 +482,12 @@ def test_sidecar_rejects_nonzero_exit_and_oversized_output(tmp_path: Path) -> No
     session = state.create_session(session_id="ses_failures")
     responses = iter(
         [
-            subprocess.CompletedProcess([], 9, stdout="private failure", stderr="secret"),
-            subprocess.CompletedProcess([], 0, stdout="x" * (1024 * 1024 + 1), stderr=""),
+            subprocess.CompletedProcess(
+                [], 9, stdout="private failure", stderr="secret"
+            ),
+            subprocess.CompletedProcess(
+                [], 0, stdout="x" * (1024 * 1024 + 1), stderr=""
+            ),
         ]
     )
 
@@ -483,12 +506,17 @@ def test_sidecar_rejects_nonzero_exit_and_oversized_output(tmp_path: Path) -> No
     with pytest.raises(FikeyaError, match="one-megabyte"):
         adapter.query(session.session_id, "second query")
     with sqlite3.connect(state.path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM context_receipts").fetchone() == (2,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_receipts"
+        ).fetchone() == (2,)
 
 
 @pytest.mark.parametrize(
     "failure",
-    [OSError("private operating-system detail"), subprocess.TimeoutExpired(["node"], 1)],
+    [
+        OSError("private operating-system detail"),
+        subprocess.TimeoutExpired(["node"], 1),
+    ],
 )
 def test_sidecar_process_failures_are_generic_and_content_free(
     tmp_path: Path,
@@ -512,7 +540,9 @@ def test_sidecar_process_failures_are_generic_and_content_free(
         adapter.query(session.session_id, "private process query")
     assert "private" not in str(caught.value)
     with sqlite3.connect(state.path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM context_receipts").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_receipts"
+        ).fetchone() == (0,)
 
 
 @pytest.mark.parametrize("field", ["node", "sidecar"])
@@ -551,14 +581,18 @@ def test_sidecar_requires_trusted_absolute_files_outside_workspace(
         QarinahSidecarAdapter(**arguments)
 
 
-def test_selection_prefers_configured_sidecar_then_installed_cli(tmp_path: Path) -> None:
+def test_selection_prefers_configured_sidecar_then_installed_cli(
+    tmp_path: Path,
+) -> None:
     workspace, node, sidecar = _sidecar_paths(tmp_path)
     state = StateStore(workspace / "state.sqlite3")
     qarinah_cli = node.parent / "qarinah.exe"
     qarinah_cli.write_bytes(b"installed qarinah fixture")
 
     def unexpected_cli_lookup(command: str) -> str | None:
-        raise AssertionError(f"CLI lookup must not run for configured sidecar: {command}")
+        raise AssertionError(
+            f"CLI lookup must not run for configured sidecar: {command}"
+        )
 
     selected = select_qarinah_adapter(
         workspace_root=workspace,

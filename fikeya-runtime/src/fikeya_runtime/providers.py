@@ -33,6 +33,7 @@ class ProviderKind(str, enum.Enum):
     ANTHROPIC = "anthropic"
     OPENROUTER = "openrouter"
     NVIDIA_NIM = "nvidia-nim"
+    GOOGLE_GEMINI = "google-gemini"
     OLLAMA = "ollama"
     OPENAI_COMPATIBLE = "openai-compatible"
 
@@ -89,6 +90,14 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         secret_required=True,
         default_api_mode="chat-completions",
         supported_api_modes=("responses", "chat-completions"),
+    ),
+    ProviderKind.GOOGLE_GEMINI: ProviderDefinition(
+        kind=ProviderKind.GOOGLE_GEMINI,
+        default_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        default_credential_type="bearer",
+        secret_required=True,
+        default_api_mode="chat-completions",
+        supported_api_modes=("chat-completions",),
     ),
     ProviderKind.OLLAMA: ProviderDefinition(
         kind=ProviderKind.OLLAMA,

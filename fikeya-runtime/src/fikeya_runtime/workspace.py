@@ -88,9 +88,13 @@ class WorkspaceBoundary:
         try:
             common = Path(os.path.commonpath((self.root, candidate)))
         except ValueError as error:
-            raise WorkspaceError("Path is on a different filesystem from the workspace.") from error
+            raise WorkspaceError(
+                "Path is on a different filesystem from the workspace."
+            ) from error
         if os.path.normcase(str(common)) != os.path.normcase(str(self.root)):
-            raise WorkspaceError(f"Path escapes the workspace boundary: {relative_path}")
+            raise WorkspaceError(
+                f"Path escapes the workspace boundary: {relative_path}"
+            )
         return candidate
 
 

@@ -13,6 +13,7 @@ authors = [
   { name = "Fikeya contributors" },
 ]
 dependencies = [
+  "fikeya-agent-core==0.1.0a1",
   "keyring>=25.6,<27",
 ]
 keywords = ["ai", "ai-code-editor", "coding-agent", "context-management", "developer-tools", "provider-neutral"]
@@ -50,6 +51,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 fikeya_runtime = ["py.typed", "presets/*.preset.json"]
+
+[tool.uv.sources]
+fikeya-agent-core = { path = "../fikeya-agent-core" }
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"

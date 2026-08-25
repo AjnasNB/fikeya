@@ -93,16 +93,20 @@ class QarinahAdapter:
         self.boundary = WorkspaceBoundary(workspace_root)
         executable_path = Path(executable).expanduser()
         executable_name = executable_path.name.lower()
-        if executable_path.suffix.lower() in _SHELL_WRAPPER_SUFFIXES or executable_name in {
-            "cmd",
-            "cmd.exe",
-            "powershell",
-            "powershell.exe",
-            "pwsh",
-            "pwsh.exe",
-            "sh",
-            "bash",
-        }:
+        if (
+            executable_path.suffix.lower() in _SHELL_WRAPPER_SUFFIXES
+            or executable_name
+            in {
+                "cmd",
+                "cmd.exe",
+                "powershell",
+                "powershell.exe",
+                "pwsh",
+                "pwsh.exe",
+                "sh",
+                "bash",
+            }
+        ):
             raise ConfigurationError("Qarinah executable must be a command name.")
         if executable_path.is_absolute():
             resolved_executable = _trusted_external_file(
@@ -112,7 +116,9 @@ class QarinahAdapter:
             )
             executable = str(resolved_executable)
         elif executable_path.name != executable:
-            raise ConfigurationError("Qarinah executable must be a command name or absolute path.")
+            raise ConfigurationError(
+                "Qarinah executable must be a command name or absolute path."
+            )
         self.state = state
         self.executable = executable
         self._runner = runner
@@ -154,7 +160,9 @@ class QarinahAdapter:
                 shell=False,
             )
         except (OSError, subprocess.SubprocessError) as error:
-            raise FikeyaError("The installed Qarinah CLI could not complete the query.") from error
+            raise FikeyaError(
+                "The installed Qarinah CLI could not complete the query."
+            ) from error
         duration_ms = max(0, round((time.monotonic() - start) * 1_000))
         if completed.returncode != 0:
             self._record_receipt(
@@ -248,7 +256,9 @@ class QarinahAdapter:
                 shell=False,
             )
         except (OSError, subprocess.SubprocessError) as error:
-            raise FikeyaError(f"The installed Qarinah CLI could not run {command}.") from error
+            raise FikeyaError(
+                f"The installed Qarinah CLI could not run {command}."
+            ) from error
         if completed.returncode != 0:
             raise FikeyaError(
                 f"Qarinah {command} failed with exit code {completed.returncode}."
@@ -341,7 +351,9 @@ class QarinahSidecarAdapter:
                 shell=False,
             )
         except (OSError, subprocess.SubprocessError) as error:
-            raise FikeyaError("The configured Qarinah sidecar could not complete the query.") from error
+            raise FikeyaError(
+                "The configured Qarinah sidecar could not complete the query."
+            ) from error
 
         duration_ms = max(0, round((time.monotonic() - start) * 1_000))
         if completed.returncode != 0:
@@ -513,7 +525,9 @@ def _trusted_external_file(value: str | Path, label: str, workspace_root: Path) 
     try:
         resolved = supplied.resolve(strict=True)
     except OSError as error:
-        raise ConfigurationError(f"{label} does not resolve to an existing file.") from error
+        raise ConfigurationError(
+            f"{label} does not resolve to an existing file."
+        ) from error
     if not resolved.is_file():
         raise ConfigurationError(f"{label} must resolve to a file.")
     try:
@@ -572,7 +586,9 @@ def _parse_sidecar_result(content: str) -> dict[str, object]:
             ),
         )
     except (json.JSONDecodeError, ValueError) as error:
-        raise FikeyaError("Qarinah sidecar returned an invalid JSON-RPC response.") from error
+        raise FikeyaError(
+            "Qarinah sidecar returned an invalid JSON-RPC response."
+        ) from error
     if not isinstance(message, dict):
         raise FikeyaError("Qarinah sidecar returned an invalid JSON-RPC response.")
     if message.get("jsonrpc") != "2.0" or message.get("id") != _SIDECAR_REQUEST_ID:
@@ -638,7 +654,9 @@ def _validated_context_content(
     if pack_query != query:
         raise FikeyaError("Qarinah context pack does not match the requested query.")
     if pack["contentRole"] != "untrusted-data":
-        raise FikeyaError("Qarinah context pack is missing its untrusted-data boundary.")
+        raise FikeyaError(
+            "Qarinah context pack is missing its untrusted-data boundary."
+        )
     _bounded_string(pack["manifestHash"], "manifestHash", 71, 71, _HASH_PATTERN)
     if not isinstance(pack["truncated"], bool):
         raise FikeyaError("Qarinah context pack truncated must be a boolean.")
@@ -650,7 +668,9 @@ def _validated_context_content(
 
     items = pack["items"]
     if not isinstance(items, list) or len(items) > min(limit, 1_000):
-        raise FikeyaError("Qarinah context pack items exceed the requested result limit.")
+        raise FikeyaError(
+            "Qarinah context pack items exceed the requested result limit."
+        )
     for index, item in enumerate(items):
         _validate_context_item(_record(item, f"items[{index}]"), index)
 
@@ -665,7 +685,9 @@ def _validated_context_content(
     if content_characters > used_characters or content_characters > maximum_characters:
         raise FikeyaError("Qarinah context pack content exceeds its declared budget.")
     if coverage not in {"none", "partial", "direct"}:
-        raise FikeyaError("Qarinah context pack coverage is invalid for a non-empty query.")
+        raise FikeyaError(
+            "Qarinah context pack coverage is invalid for a non-empty query."
+        )
     return content
 
 
@@ -685,9 +707,13 @@ def _validate_budget(budget: dict[str, object], maximum_characters: int) -> None
         token_keys,
         "budget",
     )
-    max_characters = _bounded_integer(budget["maxChars"], "budget.maxChars", 512, 1_000_000)
+    max_characters = _bounded_integer(
+        budget["maxChars"], "budget.maxChars", 512, 1_000_000
+    )
     if max_characters != maximum_characters:
-        raise FikeyaError("Qarinah context pack does not honor the requested character budget.")
+        raise FikeyaError(
+            "Qarinah context pack does not honor the requested character budget."
+        )
     _bounded_integer(budget["usedChars"], "budget.usedChars", 0, max_characters)
     _bounded_integer(budget["estimatedTokens"], "budget.estimatedTokens", 0, 1_000_000)
     present_token_keys = token_keys.intersection(budget)
@@ -695,10 +721,14 @@ def _validate_budget(budget: dict[str, object], maximum_characters: int) -> None
         raise FikeyaError("Qarinah context pack token budget fields are incomplete.")
     if not present_token_keys:
         return
-    max_tokens = _bounded_integer(budget["maxTokens"], "budget.maxTokens", 128, 1_000_000)
+    max_tokens = _bounded_integer(
+        budget["maxTokens"], "budget.maxTokens", 128, 1_000_000
+    )
     _bounded_integer(budget["usedTokens"], "budget.usedTokens", 0, max_tokens)
     _bounded_integer(budget["reservedTokens"], "budget.reservedTokens", 0, max_tokens)
-    _bounded_integer(budget["availableTokens"], "budget.availableTokens", 64, max_tokens)
+    _bounded_integer(
+        budget["availableTokens"], "budget.availableTokens", 64, max_tokens
+    )
     _bounded_string(
         budget["reservationPolicyHash"],
         "budget.reservationPolicyHash",
@@ -745,7 +775,11 @@ def _validate_retrieval(
         },
         "retrieval",
     )
-    _enum(retrieval["strategy"], "retrieval.strategy", {"hybrid-local-v1", "admission-first-hybrid-v2"})
+    _enum(
+        retrieval["strategy"],
+        "retrieval.strategy",
+        {"hybrid-local-v1", "admission-first-hybrid-v2"},
+    )
     _enum(
         retrieval["supersessionPolicy"],
         "retrieval.supersessionPolicy",
@@ -753,11 +787,23 @@ def _validate_retrieval(
     )
     _bounded_string(retrieval["asOf"], "retrieval.asOf", 24, 24, _TIMESTAMP_PATTERN)
     if "rankingProfile" in retrieval:
-        _enum(retrieval["rankingProfile"], "retrieval.rankingProfile", {"balanced-v1", "admission-first-v2"})
+        _enum(
+            retrieval["rankingProfile"],
+            "retrieval.rankingProfile",
+            {"balanced-v1", "admission-first-v2"},
+        )
     if "temporalBoundary" in retrieval:
-        _enum(retrieval["temporalBoundary"], "retrieval.temporalBoundary", {"inclusive", "strict-before"})
+        _enum(
+            retrieval["temporalBoundary"],
+            "retrieval.temporalBoundary",
+            {"inclusive", "strict-before"},
+        )
     if "readModel" in retrieval:
-        _enum(retrieval["readModel"], "retrieval.readModel", {"sqlite-fts5", "verified-ledger-memory"})
+        _enum(
+            retrieval["readModel"],
+            "retrieval.readModel",
+            {"sqlite-fts5", "verified-ledger-memory"},
+        )
     if "authorityScope" in retrieval:
         _bounded_string(retrieval["authorityScope"], "retrieval.authorityScope", 1, 256)
     for field in ("authorityScopes", "repositoryIds"):
@@ -765,9 +811,18 @@ def _validate_retrieval(
             _bounded_string_list(retrieval[field], f"retrieval.{field}", 64, 256)
     if "queryExpansion" in retrieval:
         expansion = _record(retrieval["queryExpansion"], "retrieval.queryExpansion")
-        _exact_keys(expansion, {"adapter", "addedTermCount"}, set(), "retrieval.queryExpansion")
-        _bounded_string(expansion["adapter"], "retrieval.queryExpansion.adapter", 1, 256)
-        _bounded_integer(expansion["addedTermCount"], "retrieval.queryExpansion.addedTermCount", 0, 16)
+        _exact_keys(
+            expansion, {"adapter", "addedTermCount"}, set(), "retrieval.queryExpansion"
+        )
+        _bounded_string(
+            expansion["adapter"], "retrieval.queryExpansion.adapter", 1, 256
+        )
+        _bounded_integer(
+            expansion["addedTermCount"],
+            "retrieval.queryExpansion.addedTermCount",
+            0,
+            16,
+        )
     if "evidenceSufficiency" in retrieval:
         _validate_evidence_sufficiency(
             _record(retrieval["evidenceSufficiency"], "retrieval.evidenceSufficiency")
@@ -776,9 +831,14 @@ def _validate_retrieval(
         filters = _record(retrieval["filters"], "retrieval.filters")
         names = {"expired", "future", "notYetValid", "stale", "unauthorized"}
         _exact_keys(filters, names, set(), "retrieval.filters")
-        values = [_bounded_integer(filters[name], f"retrieval.filters.{name}", 0, 1_000_000) for name in names]
+        values = [
+            _bounded_integer(filters[name], f"retrieval.filters.{name}", 0, 1_000_000)
+            for name in names
+        ]
         if not any(values):
-            raise FikeyaError("Qarinah retrieval filters must report at least one exclusion.")
+            raise FikeyaError(
+                "Qarinah retrieval filters must report at least one exclusion."
+            )
     if "conflicts" in retrieval:
         _validate_conflicts(retrieval["conflicts"])
     if "exclusions" in retrieval:
@@ -818,7 +878,9 @@ def _validate_retrieval(
         4_096,
     )
     if exact_terms > query_terms:
-        raise FikeyaError("Qarinah coverage exact-term count exceeds its query-term count.")
+        raise FikeyaError(
+            "Qarinah coverage exact-term count exceeds its query-term count."
+        )
     _bounded_number(
         coverage["bestExactTermRatio"],
         "retrieval.coverage.bestExactTermRatio",
@@ -868,7 +930,11 @@ def _validate_evidence_sufficiency(value: dict[str, object]) -> None:
         "retrieval.evidenceSufficiency.state",
         {"DIRECTLY_SUPPORTED", "PARTIALLY_SUPPORTED", "INSUFFICIENT_EVIDENCE"},
     )
-    _enum(value["decision"], "retrieval.evidenceSufficiency.decision", {"ACCEPT_DIRECT", "ABSTAIN"})
+    _enum(
+        value["decision"],
+        "retrieval.evidenceSufficiency.decision",
+        {"ACCEPT_DIRECT", "ABSTAIN"},
+    )
     for field in (
         "score",
         "directThreshold",
@@ -878,11 +944,30 @@ def _validate_evidence_sufficiency(value: dict[str, object]) -> None:
         "codeEntityCoverage",
     ):
         _bounded_number(value[field], f"retrieval.evidenceSufficiency.{field}", 0, 1)
-    _bounded_number(value["topLexicalScore"], "retrieval.evidenceSufficiency.topLexicalScore", 0, 1_000_000)
-    _bounded_integer(value["supportingCandidateCount"], "retrieval.evidenceSufficiency.supportingCandidateCount", 0, 1_000_000)
-    _bounded_integer(value["codeEntityCount"], "retrieval.evidenceSufficiency.codeEntityCount", 0, 64)
-    _bounded_integer(value["matchedCodeEntityCount"], "retrieval.evidenceSufficiency.matchedCodeEntityCount", 0, 64)
-    _bounded_string_list(value["reasonCodes"], "retrieval.evidenceSufficiency.reasonCodes", 10, 64)
+    _bounded_number(
+        value["topLexicalScore"],
+        "retrieval.evidenceSufficiency.topLexicalScore",
+        0,
+        1_000_000,
+    )
+    _bounded_integer(
+        value["supportingCandidateCount"],
+        "retrieval.evidenceSufficiency.supportingCandidateCount",
+        0,
+        1_000_000,
+    )
+    _bounded_integer(
+        value["codeEntityCount"], "retrieval.evidenceSufficiency.codeEntityCount", 0, 64
+    )
+    _bounded_integer(
+        value["matchedCodeEntityCount"],
+        "retrieval.evidenceSufficiency.matchedCodeEntityCount",
+        0,
+        64,
+    )
+    _bounded_string_list(
+        value["reasonCodes"], "retrieval.evidenceSufficiency.reasonCodes", 10, 64
+    )
 
 
 def _validate_conflicts(value: object) -> None:
@@ -907,8 +992,15 @@ def _validate_exclusions(value: object) -> None:
         raise FikeyaError("Qarinah retrieval exclusions are invalid.")
     for index, item in enumerate(value):
         exclusion = _record(item, f"retrieval.exclusions[{index}]")
-        _exact_keys(exclusion, {"eventId", "reason", "by"}, set(), f"retrieval.exclusions[{index}]")
-        _bounded_string(exclusion["eventId"], f"retrieval.exclusions[{index}].eventId", 1, 64)
+        _exact_keys(
+            exclusion,
+            {"eventId", "reason", "by"},
+            set(),
+            f"retrieval.exclusions[{index}]",
+        )
+        _bounded_string(
+            exclusion["eventId"], f"retrieval.exclusions[{index}].eventId", 1, 64
+        )
         if exclusion["reason"] != "superseded":
             raise FikeyaError("Qarinah retrieval exclusion reason is invalid.")
         _bounded_string_list(
@@ -924,7 +1016,16 @@ def _validate_context_item(item: dict[str, object], index: int) -> None:
     label = f"items[{index}]"
     _exact_keys(
         item,
-        {"eventId", "kind", "timestamp", "title", "excerpt", "confidence", "reason", "hash"},
+        {
+            "eventId",
+            "kind",
+            "timestamp",
+            "title",
+            "excerpt",
+            "confidence",
+            "reason",
+            "hash",
+        },
         {"authority", "temporal", "repository", "disclosure"},
         label,
     )
@@ -933,20 +1034,34 @@ def _validate_context_item(item: dict[str, object], index: int) -> None:
     _bounded_string(item["timestamp"], f"{label}.timestamp", 24, 24, _TIMESTAMP_PATTERN)
     _bounded_string(item["title"], f"{label}.title", 0, 512)
     _bounded_string(item["excerpt"], f"{label}.excerpt", 0, 65_536)
-    _enum(item["confidence"], f"{label}.confidence", {"extracted", "inferred", "claimed", "verified"})
+    _enum(
+        item["confidence"],
+        f"{label}.confidence",
+        {"extracted", "inferred", "claimed", "verified"},
+    )
     _bounded_string(item["reason"], f"{label}.reason", 0, 512)
     _bounded_string(item["hash"], f"{label}.hash", 71, 71, _HASH_PATTERN)
     if "authority" in item:
         authority = _record(item["authority"], f"{label}.authority")
         _exact_keys(
             authority,
-            {"scope", "rank", "assignedBy", "assignedAt", "expiresAt", "revokedAt", "basis"},
+            {
+                "scope",
+                "rank",
+                "assignedBy",
+                "assignedAt",
+                "expiresAt",
+                "revokedAt",
+                "basis",
+            },
             set(),
             f"{label}.authority",
         )
         _bounded_string(authority["scope"], f"{label}.authority.scope", 1, 256)
         _bounded_integer(authority["rank"], f"{label}.authority.rank", 0, 100)
-        _bounded_string(authority["assignedBy"], f"{label}.authority.assignedBy", 1, 256)
+        _bounded_string(
+            authority["assignedBy"], f"{label}.authority.assignedBy", 1, 256
+        )
         _bounded_string(authority["assignedAt"], f"{label}.authority.assignedAt", 1, 24)
         for field in ("expiresAt", "revokedAt"):
             if authority[field] is not None:
@@ -956,9 +1071,21 @@ def _validate_context_item(item: dict[str, object], index: int) -> None:
         temporal = _record(item["temporal"], f"{label}.temporal")
         _exact_keys(temporal, set(), {"validFrom", "validUntil"}, f"{label}.temporal")
         if "validFrom" in temporal:
-            _bounded_string(temporal["validFrom"], f"{label}.temporal.validFrom", 24, 24, _TIMESTAMP_PATTERN)
+            _bounded_string(
+                temporal["validFrom"],
+                f"{label}.temporal.validFrom",
+                24,
+                24,
+                _TIMESTAMP_PATTERN,
+            )
         if "validUntil" in temporal and temporal["validUntil"] is not None:
-            _bounded_string(temporal["validUntil"], f"{label}.temporal.validUntil", 24, 24, _TIMESTAMP_PATTERN)
+            _bounded_string(
+                temporal["validUntil"],
+                f"{label}.temporal.validUntil",
+                24,
+                24,
+                _TIMESTAMP_PATTERN,
+            )
     if "repository" in item:
         repository = _record(item["repository"], f"{label}.repository")
         _exact_keys(repository, {"id"}, {"branch", "commit"}, f"{label}.repository")
@@ -969,9 +1096,17 @@ def _validate_context_item(item: dict[str, object], index: int) -> None:
             _bounded_string(repository["commit"], f"{label}.repository.commit", 7, 128)
     if "disclosure" in item:
         disclosure = _record(item["disclosure"], f"{label}.disclosure")
-        _exact_keys(disclosure, {"scopes", "classification"}, set(), f"{label}.disclosure")
-        _bounded_string_list(disclosure["scopes"], f"{label}.disclosure.scopes", 64, 256)
-        _enum(disclosure["classification"], f"{label}.disclosure.classification", {"public", "workspace", "restricted"})
+        _exact_keys(
+            disclosure, {"scopes", "classification"}, set(), f"{label}.disclosure"
+        )
+        _bounded_string_list(
+            disclosure["scopes"], f"{label}.disclosure.scopes", 64, 256
+        )
+        _enum(
+            disclosure["classification"],
+            f"{label}.disclosure.classification",
+            {"public", "workspace", "restricted"},
+        )
 
 
 def _record(value: object, label: str) -> dict[str, object]:
@@ -1009,7 +1144,11 @@ def _bounded_string(
 
 
 def _bounded_integer(value: object, label: str, minimum: int, maximum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not minimum <= value <= maximum
+    ):
         raise FikeyaError(f"Qarinah context pack {label} is invalid.")
     return value
 

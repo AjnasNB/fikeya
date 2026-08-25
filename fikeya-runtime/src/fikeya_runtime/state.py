@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS provider_call_receipts (
     session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     provider_name TEXT NOT NULL,
     model_name TEXT NOT NULL,
-    api_mode TEXT NOT NULL CHECK (api_mode IN ('responses', 'chat-completions')),
+    api_mode TEXT NOT NULL CHECK (api_mode IN ('responses', 'chat-completions', 'native')),
     request_sha256 TEXT NOT NULL,
     response_sha256 TEXT NOT NULL,
     request_bytes INTEGER NOT NULL CHECK (request_bytes >= 0),
@@ -108,7 +108,30 @@ CREATE INDEX IF NOT EXISTS usage_by_session ON usage_records(session_id, created
 CREATE INDEX IF NOT EXISTS receipts_by_session ON context_receipts(session_id, created_at);
 CREATE INDEX IF NOT EXISTS provider_calls_by_session
     ON provider_call_receipts(session_id, created_at);
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
+"""
+
+_PROVIDER_RECEIPT_V4 = """
+CREATE TABLE provider_call_receipts (
+    call_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    provider_name TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    api_mode TEXT NOT NULL CHECK (api_mode IN ('responses', 'chat-completions', 'native')),
+    request_sha256 TEXT NOT NULL,
+    response_sha256 TEXT NOT NULL,
+    request_bytes INTEGER NOT NULL CHECK (request_bytes >= 0),
+    response_bytes INTEGER NOT NULL CHECK (response_bytes >= 0),
+    status_code INTEGER NOT NULL CHECK (status_code >= 100 AND status_code <= 599),
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    usage_measurement TEXT NOT NULL
+        CHECK (usage_measurement IN ('provider-reported', 'unavailable')),
+    input_tokens INTEGER CHECK (input_tokens IS NULL OR input_tokens >= 0),
+    output_tokens INTEGER CHECK (output_tokens IS NULL OR output_tokens >= 0),
+    cached_input_tokens INTEGER
+        CHECK (cached_input_tokens IS NULL OR cached_input_tokens >= 0),
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -132,13 +155,43 @@ class StateStore:
 
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise StateError(f"Unsupported state schema version: {version}")
+            # Schema v2 introduced provider_call_receipts with the original two-mode
+            # CHECK constraint. Schema v3 added tool enablements but retained that table.
+            # Both versions therefore require the same lossless table rebuild.
+            if version in (2, 3):
+                self._migrate_provider_receipts_v4(connection)
             connection.executescript(_SCHEMA)
         try:
             self.path.chmod(0o600)
         except OSError:
             pass
+
+    @staticmethod
+    def _migrate_provider_receipts_v4(connection: sqlite3.Connection) -> None:
+        """Add Anthropic's native API mode without discarding existing receipts."""
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "ALTER TABLE provider_call_receipts RENAME TO provider_call_receipts_v3"
+            )
+            connection.execute(_PROVIDER_RECEIPT_V4)
+            connection.execute(
+                """
+                INSERT INTO provider_call_receipts
+                SELECT * FROM provider_call_receipts_v3
+                """
+            )
+            connection.execute("DROP TABLE provider_call_receipts_v3")
+            connection.execute("PRAGMA user_version = 4")
+            connection.commit()
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise StateError(
+                "Could not migrate provider receipts to schema version 4."
+            ) from error
 
     def create_session(
         self,
@@ -467,7 +520,7 @@ class StateStore:
         """Persist one content-free provider receipt and optional exact usage."""
 
         self.get_session(session_id)
-        if api_mode not in {"responses", "chat-completions"}:
+        if api_mode not in {"responses", "chat-completions", "native"}:
             raise StateError("Provider receipt API mode is unsupported.")
         if usage_measurement not in {"provider-reported", "unavailable"}:
             raise StateError("Provider receipt usage measurement is unsupported.")
@@ -574,6 +627,76 @@ class StateStore:
             ),
             "inputTokens": int(row["input_tokens"]),
             "outputTokens": int(row["output_tokens"]),
+        }
+
+    def workspace_statistics(self) -> dict[str, object]:
+        """Return local, content-free usage statistics for this workspace.
+
+        Token totals include only calls whose provider returned exact usage. Calls
+        without provider usage remain visible in the call counters and are never
+        estimated from prompt or response content.
+        """
+
+        self.initialize()
+        with self._connect() as connection:
+            totals = connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM sessions) AS sessions,
+                    COUNT(*) AS provider_calls,
+                    COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                      THEN 1 ELSE 0 END), 0) AS measured_calls,
+                    COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                      THEN input_tokens ELSE 0 END), 0) AS input_tokens,
+                    COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                      THEN cached_input_tokens ELSE 0 END), 0) AS cached_input_tokens,
+                    COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                      THEN output_tokens ELSE 0 END), 0) AS output_tokens,
+                    (SELECT COUNT(*) FROM context_receipts) AS context_receipts,
+                    (SELECT MAX(updated_at) FROM sessions) AS last_activity
+                FROM provider_call_receipts
+                """
+            ).fetchone()
+            rows = connection.execute(
+                """
+                SELECT provider_name, model_name, COUNT(*) AS calls,
+                       COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                         THEN 1 ELSE 0 END), 0) AS measured_calls,
+                       COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                         THEN input_tokens ELSE 0 END), 0) AS input_tokens,
+                       COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                         THEN cached_input_tokens ELSE 0 END), 0) AS cached_input_tokens,
+                       COALESCE(SUM(CASE WHEN usage_measurement = 'provider-reported'
+                                         THEN output_tokens ELSE 0 END), 0) AS output_tokens,
+                       MAX(created_at) AS last_activity
+                FROM provider_call_receipts
+                GROUP BY provider_name, model_name
+                ORDER BY calls DESC, provider_name ASC, model_name ASC
+                """
+            ).fetchall()
+        assert totals is not None
+        return {
+            "sessions": int(totals["sessions"]),
+            "providerCalls": int(totals["provider_calls"]),
+            "measuredProviderCalls": int(totals["measured_calls"]),
+            "inputTokens": int(totals["input_tokens"]),
+            "cachedInputTokens": int(totals["cached_input_tokens"]),
+            "outputTokens": int(totals["output_tokens"]),
+            "qarinahContextReceipts": int(totals["context_receipts"]),
+            "lastActivity": totals["last_activity"],
+            "breakdown": [
+                {
+                    "provider": row["provider_name"],
+                    "model": row["model_name"],
+                    "calls": int(row["calls"]),
+                    "measuredCalls": int(row["measured_calls"]),
+                    "inputTokens": int(row["input_tokens"]),
+                    "cachedInputTokens": int(row["cached_input_tokens"]),
+                    "outputTokens": int(row["output_tokens"]),
+                    "lastActivity": row["last_activity"],
+                }
+                for row in rows
+            ],
         }
 
     def _finish_session(

@@ -115,14 +115,16 @@ class AgentRunner:
             }
         )
         try:
-            system, memory = self._prepare_memory(
+            system, memory = self.prepare_memory(
                 session.session_id,
                 prompt,
                 memory_mode=memory_mode,
                 maximum_characters=context_max_characters,
             )
         except Exception:
-            self.state.cancel_session(session.session_id, "required context unavailable")
+            self.state.cancel_session(
+                session.session_id, "required context unavailable"
+            )
             raise
         request = InferenceRequest(
             prompt=prompt,
@@ -218,7 +220,7 @@ class AgentRunner:
             memory=memory,
         )
 
-    def _prepare_memory(
+    def prepare_memory(
         self,
         session_id: str,
         prompt: str,

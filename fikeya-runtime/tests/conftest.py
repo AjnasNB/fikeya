@@ -4,8 +4,15 @@
 from __future__ import annotations
 
 import socket
+import sys
+from pathlib import Path
 
 import pytest
+
+
+_AGENT_CORE_SOURCE = Path(__file__).resolve().parents[2] / "fikeya-agent-core" / "src"
+if _AGENT_CORE_SOURCE.is_dir():
+    sys.path.insert(0, str(_AGENT_CORE_SOURCE))
 
 
 @pytest.fixture(autouse=True)

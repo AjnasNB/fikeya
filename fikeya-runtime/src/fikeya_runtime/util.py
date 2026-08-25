@@ -67,7 +67,9 @@ def read_json_object(path: Path) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ConfigurationError(f"Could not read valid JSON from {path}: {error}") from error
+        raise ConfigurationError(
+            f"Could not read valid JSON from {path}: {error}"
+        ) from error
     if not isinstance(value, dict):
         raise ConfigurationError(f"Expected a JSON object in {path}.")
     return value

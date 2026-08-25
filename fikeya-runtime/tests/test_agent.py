@@ -49,7 +49,11 @@ def _valid_context_pack(
             "workspaceId": f"ws_{'a' * 32}",
             "query": query,
             "contentRole": "untrusted-data",
-            "budget": {"maxChars": 12_000, "usedChars": 12_000, "estimatedTokens": 3_000},
+            "budget": {
+                "maxChars": 12_000,
+                "usedChars": 12_000,
+                "estimatedTokens": 3_000,
+            },
             "retrieval": {
                 "strategy": "hybrid-local-v1",
                 "supersessionPolicy": "prefer-current",
@@ -237,6 +241,7 @@ def test_agent_uses_ephemeral_qarinah_context_and_keeps_only_receipts(
 def test_long_prompt_uses_a_bounded_head_and_tail_memory_query(tmp_path: Path) -> None:
     runner, transport = _runner(tmp_path)
     captured_query: dict[str, str] = {}
+
     def qarinah_process(
         argv: list[str], **kwargs: object
     ) -> subprocess.CompletedProcess[str]:

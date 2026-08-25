@@ -401,10 +401,24 @@ wheels = [
 ]
 
 [[package]]
+name = "fikeya-agent-core"
+version = "0.1.0a1"
+source = { directory = "../fikeya-agent-core" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<10" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25,<2" },
+    { name = "ruff", marker = "extra == 'test'", specifier = ">=0.12,<1" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "fikeya-runtime"
 version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
+    { name = "fikeya-agent-core" },
     { name = "keyring" },
 ]
 
@@ -419,6 +433,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "azure-identity", marker = "extra == 'azure'", specifier = ">=1.20,<2" },
+    { name = "fikeya-agent-core", directory = "../fikeya-agent-core" },
     { name = "keyring", specifier = ">=25.6,<27" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<10" },
 ]

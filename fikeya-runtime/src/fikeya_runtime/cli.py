@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import getpass
 import json
 import signal
@@ -41,6 +42,7 @@ from .tool_presets import (
     ToolPreset,
     ToolPresetLoader,
 )
+from .util import utc_now
 from .workspace import Workspace, initialize_workspace, runtime_home
 
 
@@ -63,6 +65,12 @@ def _parser() -> argparse.ArgumentParser:
     doctor = subcommands.add_parser("doctor", help="Verify local runtime dependencies.")
     doctor.add_argument("path", nargs="?", default=".")
     doctor.add_argument("--json", action="store_true")
+
+    statistics = subcommands.add_parser(
+        "stats", help="Show local, content-free workspace usage statistics."
+    )
+    statistics.add_argument("--workspace", default=".")
+    statistics.add_argument("--json", action="store_true")
 
     provider = subcommands.add_parser("provider", help="Manage model providers.")
     provider_commands = provider.add_subparsers(dest="provider_command", required=True)
@@ -144,6 +152,34 @@ def _parser() -> argparse.ArgumentParser:
     agent_run.add_argument("--context-max-characters", type=int, default=12_000)
     agent_run.add_argument("--json", action="store_true")
 
+    agent_execute = agent_commands.add_parser(
+        "execute",
+        help="Run the approval-gated plan, act, observe, and review coding loop.",
+    )
+    agent_execute.add_argument("path", nargs="?", default=".")
+    agent_execute.add_argument("--provider", required=True)
+    agent_execute.add_argument(
+        "--protocol-stdin",
+        action="store_true",
+        help="Read one bounded start message and exact approval decisions as JSON Lines.",
+    )
+    agent_execute.add_argument("--allow-network", action="store_true")
+    agent_execute.add_argument("--timeout", type=float, default=60.0)
+    agent_execute.add_argument("--max-output-tokens", type=int, default=1_024)
+    agent_execute.add_argument(
+        "--memory",
+        choices=("auto", "off", "required"),
+        default="auto",
+    )
+    agent_execute.add_argument("--context-max-characters", type=int, default=12_000)
+    agent_execute.add_argument(
+        "--allow-executable",
+        action="append",
+        default=[],
+        help="Replace the default process allowlist with this repeatable executable name.",
+    )
+    agent_execute.add_argument("--json-lines", action="store_true")
+
     agent_cancel = agent_commands.add_parser(
         "cancel", help="Cancel one active durable session."
     )
@@ -201,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_init(args)
         if args.command == "doctor":
             return _run_doctor(args)
+        if args.command == "stats":
+            return _run_stats(args)
         if args.command == "provider":
             return _run_provider(args)
         if args.command == "agent":
@@ -322,6 +360,22 @@ def _run_doctor(args: argparse.Namespace) -> int:
     return 0 if required_ok else 1
 
 
+def _run_stats(args: argparse.Namespace) -> int:
+    workspace = Workspace.load(args.workspace)
+    statistics = StateStore(workspace.state_path).workspace_statistics()
+    _emit(
+        {
+            "ok": True,
+            "source": "local-runtime-sqlite",
+            "measurement": "provider-reported-only",
+            "generatedAt": utc_now(),
+            **statistics,
+        },
+        as_json=args.json,
+    )
+    return 0
+
+
 def _run_provider(args: argparse.Namespace) -> int:
     store = ProviderStore(runtime_home(args.home))
     if args.provider_command == "list":
@@ -438,7 +492,9 @@ def _read_provider_secret(
 
 
 def _run_agent(args: argparse.Namespace) -> int:
-    workspace_path = args.path if args.agent_command == "run" else args.workspace
+    workspace_path = (
+        args.path if args.agent_command in {"run", "execute"} else args.workspace
+    )
     workspace = Workspace.load(workspace_path)
     store = ProviderStore(runtime_home(args.home))
     runner = AgentRunner(workspace, store)
@@ -500,6 +556,8 @@ def _run_agent(args: argparse.Namespace) -> int:
             as_json=args.json,
         )
         return 0
+    if args.agent_command == "execute":
+        return _run_coding_agent(args, workspace, store)
     if args.agent_command == "cancel":
         runner.cancel(args.session_id, args.reason)
         _emit(
@@ -517,6 +575,114 @@ def _run_agent(args: argparse.Namespace) -> int:
     raise AssertionError("argparse accepted an unknown agent command")
 
 
+def _run_coding_agent(
+    args: argparse.Namespace,
+    workspace: Workspace,
+    store: ProviderStore,
+) -> int:
+    if not args.protocol_stdin or not args.json_lines:
+        raise ProviderError(
+            "The coding loop requires --protocol-stdin and --json-lines so every tool can pause for an exact decision."
+        )
+    # A JSON-escaped UTF-8 prompt can occupy substantially more bytes than the decoded text.
+    # Bound the wire representation independently, then enforce the decoded prompt limit below.
+    start = _read_protocol_message((MAX_REQUEST_BYTES * 4) + 4_096)
+    if set(start) != {"prompt", "type"} or start.get("type") != "start":
+        raise ProviderError(
+            "The first protocol message must contain only type=start and prompt."
+        )
+    prompt = start.get("prompt")
+    if (
+        not isinstance(prompt, str)
+        or not prompt
+        or len(prompt.encode("utf-8")) > MAX_REQUEST_BYTES
+    ):
+        raise ProviderError(f"Agent prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes.")
+
+    try:
+        from fikeya_agent_core import (
+            AgentCoreError,
+            ApprovalDecision,
+            CancellationToken as CoreCancellationToken,
+        )
+        from .coding import CodingAgentRunner
+    except ImportError as error:
+        raise ProviderError(
+            "Fikeya Agent Core is unavailable. Install the matched fikeya-agent-core package."
+        ) from error
+
+    async def approve(request: dict[str, object]) -> ApprovalDecision:
+        _emit_protocol_message(request)
+        response = await asyncio.to_thread(_read_protocol_message, 65_536)
+        if (
+            set(response) != {"decision", "requestId", "type"}
+            or response.get("type") != "approval"
+        ):
+            raise ProviderError(
+                "Approval responses must contain only type, requestId, and decision."
+            )
+        if response.get("requestId") != request["requestId"]:
+            raise ProviderError("Approval response does not match the active request.")
+        try:
+            return ApprovalDecision(response.get("decision"))
+        except ValueError as error:
+            raise ProviderError(
+                "Approval decision must be allow_once, deny_once, or cancel."
+            ) from error
+
+    allowed = frozenset(args.allow_executable) if args.allow_executable else None
+    runner = CodingAgentRunner(workspace, store, allowed_executables=allowed)
+    cancellation = CoreCancellationToken()
+    try:
+        with _cancellation_signals(cancellation):
+            result = asyncio.run(
+                runner.run(
+                    provider_name=args.provider,
+                    prompt=prompt,
+                    allow_network=args.allow_network,
+                    timeout=args.timeout,
+                    max_output_tokens=args.max_output_tokens,
+                    cancellation=cancellation,
+                    approval_handler=approve,
+                    progress_handler=_emit_protocol_message,
+                    memory_mode=args.memory,
+                    context_max_characters=args.context_max_characters,
+                )
+            )
+    except AgentCoreError as error:
+        raise ProviderError(f"Coding loop stopped safely: {error}") from error
+    _emit_protocol_message({"type": "result", **result.as_json()})
+    return 0 if result.status in {"completed", "cancelled"} else 2
+
+
+def _read_protocol_message(maximum_bytes: int) -> dict[str, object]:
+    line = sys.stdin.buffer.readline(maximum_bytes + 1)
+    if not line:
+        raise ProviderError(
+            "The coding protocol ended before a required message arrived."
+        )
+    if len(line) > maximum_bytes or not line.endswith(b"\n"):
+        raise ProviderError(
+            "A coding protocol message exceeded its byte limit or lacked a newline."
+        )
+    try:
+        value = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ProviderError(
+            "Coding protocol messages must be UTF-8 JSON objects."
+        ) from error
+    if not isinstance(value, dict):
+        raise ProviderError("Coding protocol messages must be JSON objects.")
+    return value
+
+
+def _emit_protocol_message(value: dict[str, object]) -> None:
+    print(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+        flush=True,
+    )
+
+
 def _run_tool(args: argparse.Namespace) -> int:
     catalog = PresetCatalog()
     loader = ToolPresetLoader(catalog)
@@ -524,10 +690,7 @@ def _run_tool(args: argparse.Namespace) -> int:
         enablements = None
         if args.workspace is not None:
             enablements = ToolEnablementStore(Workspace.load(args.workspace))
-        tools = [
-            _tool_entry(preset, loader, enablements)
-            for preset in catalog.list()
-        ]
+        tools = [_tool_entry(preset, loader, enablements) for preset in catalog.list()]
         _emit({"ok": True, "tools": tools}, as_json=args.json)
         return 0
     workspace = Workspace.load(args.workspace)
@@ -574,8 +737,7 @@ def _run_tool(args: argparse.Namespace) -> int:
             {
                 "ok": True,
                 "tools": [
-                    _tool_entry(preset, loader, enablements)
-                    for preset in presets
+                    _tool_entry(preset, loader, enablements) for preset in presets
                 ],
                 "workspaceId": workspace.config.workspace_id,
             },

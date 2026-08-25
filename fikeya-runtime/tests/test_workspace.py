@@ -11,14 +11,17 @@ from fikeya_runtime.errors import WorkspaceError
 from fikeya_runtime.workspace import Workspace, WorkspaceBoundary, initialize_workspace
 
 
-def test_initialize_is_idempotent_and_creates_private_local_state(tmp_path: Path) -> None:
+def test_initialize_is_idempotent_and_creates_private_local_state(
+    tmp_path: Path,
+) -> None:
     workspace, created = initialize_workspace(tmp_path)
     reloaded, created_again = initialize_workspace(tmp_path)
 
     assert {
         "created": created,
         "created_again": created_again,
-        "workspace_id_stable": workspace.config.workspace_id == reloaded.config.workspace_id,
+        "workspace_id_stable": workspace.config.workspace_id
+        == reloaded.config.workspace_id,
         "config_exists": (tmp_path / ".fikeya" / "workspace.json").is_file(),
         "state_exists": workspace.state_path.is_file(),
         "ignore": (tmp_path / ".fikeya" / ".gitignore").read_text(encoding="utf-8"),
@@ -46,6 +49,7 @@ def test_boundary_rejects_absolute_and_parent_traversal(tmp_path: Path) -> None:
 def test_boundary_resolves_a_safe_nonexistent_output(tmp_path: Path) -> None:
     boundary = WorkspaceBoundary(tmp_path)
 
-    assert boundary.resolve("generated/result.txt") == (
-        tmp_path / "generated" / "result.txt"
-    ).resolve()
+    assert (
+        boundary.resolve("generated/result.txt")
+        == (tmp_path / "generated" / "result.txt").resolve()
+    )

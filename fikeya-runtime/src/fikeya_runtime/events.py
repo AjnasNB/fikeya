@@ -42,7 +42,9 @@ def _reject_sensitive_keys(value: object, path: str = "payload") -> None:
             if not isinstance(key, str):
                 raise StateError(f"{path} contains a non-string JSON key.")
             if _SENSITIVE_KEY.search(key):
-                raise StateError(f"{path}.{key} looks like credential material and cannot be stored.")
+                raise StateError(
+                    f"{path}.{key} looks like credential material and cannot be stored."
+                )
             _reject_sensitive_keys(child, f"{path}.{key}")
     elif isinstance(value, list):
         for index, child in enumerate(value):

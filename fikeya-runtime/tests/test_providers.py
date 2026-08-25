@@ -44,6 +44,7 @@ def test_registry_contains_all_first_party_provider_shapes() -> None:
     assert {kind.value for kind in PROVIDER_REGISTRY} == {
         "anthropic",
         "azure-openai",
+        "google-gemini",
         "nvidia-nim",
         "ollama",
         "openai",
@@ -53,6 +54,14 @@ def test_registry_contains_all_first_party_provider_shapes() -> None:
     azure = PROVIDER_REGISTRY[ProviderKind.AZURE_OPENAI]
     assert azure.default_credential_type == "entra-id"
     assert azure.default_api_mode == "responses"
+
+    gemini = build_profile(
+        name="gemini",
+        kind=ProviderKind.GOOGLE_GEMINI,
+        model="gemini-2.5-flash",
+    )
+    assert gemini.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert gemini.api_mode == "chat-completions"
 
 
 def test_provider_secret_never_enters_metadata_and_rotation_deletes_old_ref(
