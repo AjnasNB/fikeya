@@ -16,8 +16,8 @@ import * as task from './lib/gulp/task.ts';
 import buildfile from './buildfile.ts';
 import * as optimize from './lib/optimize.ts';
 import { inlineMeta } from './lib/inlineMeta.ts';
-import packageJson from '../package.json' with { type: 'json' };
 import product from '../product.json' with { type: 'json' };
+import fikeyaDistribution from '../fikeya-distribution.json' with { type: 'json' };
 import * as crypto from 'crypto';
 import * as cp from 'child_process';
 import * as i18n from './lib/i18n.ts';
@@ -311,12 +311,8 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		const sources = es.merge(src, extensions)
 			.pipe(filter(sourceFilterPattern, { dot: true }));
 
-		let version = packageJson.version;
+		const version = fikeyaDistribution.version;
 		const quality = (product as { quality?: string }).quality;
-
-		if (quality && quality !== 'stable') {
-			version += '-' + quality;
-		}
 
 		const name = product.nameShort;
 		const packageJsonUpdates: Record<string, unknown> = { name, version };
@@ -657,9 +653,8 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 			glob('**/tgrep.exe', { cwd }),
 			glob('**/*explorer_command*.dll', { cwd }),
 		])).flatMap(o => o);
-		const packageJson = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'package.json'), 'utf8'));
 		const product = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'product.json'), 'utf8'));
-		const baseVersion = packageJson.version.replace(/-.*$/, '');
+		const baseVersion = fikeyaDistribution.desktopNumericVersion;
 
 		const patchPromises = deps.map<Promise<unknown>>(async dep => {
 			const basename = path.basename(dep);
@@ -681,12 +676,12 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 				'version-string': {
 					'CompanyName': 'Microsoft Corporation',
 					'FileDescription': product.nameLong,
-					'FileVersion': packageJson.version,
+					'FileVersion': fikeyaDistribution.version,
 					'InternalName': basename,
 					'LegalCopyright': 'Copyright (C) 2026 Microsoft. All rights reserved',
 					'OriginalFilename': basename,
 					'ProductName': product.nameLong,
-					'ProductVersion': packageJson.version,
+					'ProductVersion': fikeyaDistribution.version,
 				}
 			});
 		});
