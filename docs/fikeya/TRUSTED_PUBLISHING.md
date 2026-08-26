@@ -16,6 +16,8 @@ Azure Artifact Signing Public Trust does not currently onboard an India-based in
 
 Microsoft documents all three options in its [Windows code-signing guide](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options). For Fikeya, Microsoft Store MSIX is the lowest-friction immediate option; SignPath Foundation is worth applying to in parallel. A commercial OV certificate is the direct-download fallback.
 
+The project's public release roles, manual approval boundary, privacy disclosure, update rules, and SignPath attribution are defined in the [Fikeya code-signing policy](CODE_SIGNING_POLICY.md). The attribution is explicitly conditional until SignPath Foundation accepts the application and a verification manifest reports a valid signature.
+
 ## Azure Artifact Signing eligibility
 
 [Azure Artifact Signing](https://learn.microsoft.com/en-us/azure/artifact-signing/overview) is Microsoft's managed Authenticode service, formerly called Trusted Signing. Public Trust onboarding currently has both subscription and identity-location requirements:
