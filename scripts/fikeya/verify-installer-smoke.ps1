@@ -87,12 +87,16 @@ try {
 	}
 	$icon.Dispose()
 
-	$launcherOutput = @(& $launcher --version)
-	if ($LASTEXITCODE -ne 0) {
-		throw "Installed Fikeya launcher exited with code $LASTEXITCODE."
-	}
-	if ($launcherOutput.Count -lt 1 -or $launcherOutput[0].Trim() -cne $PublicVersion) {
-		throw "Installed Fikeya launcher did not report $PublicVersion."
+	$launcherVersions = [ordered]@{}
+	foreach ($versionArgument in @("--version", "-v")) {
+		$launcherOutput = @(& $launcher $versionArgument)
+		if ($LASTEXITCODE -ne 0) {
+			throw "Installed Fikeya launcher $versionArgument exited with code $LASTEXITCODE."
+		}
+		if ($launcherOutput.Count -lt 1 -or $launcherOutput[0].Trim() -cne $PublicVersion) {
+			throw "Installed Fikeya launcher $versionArgument did not report $PublicVersion."
+		}
+		$launcherVersions[$versionArgument] = $launcherOutput[0].Trim()
 	}
 
 	[ordered]@{
@@ -102,7 +106,8 @@ try {
 		numericVersion = $version.FileVersionRaw.ToString()
 		publisher = $version.CompanyName
 		authenticodeStatus = [string]$signature.Status
-		launcherVersion = $launcherOutput[0].Trim()
+		launcherVersion = $launcherVersions["--version"]
+		launcherVersionAlias = $launcherVersions["-v"]
 	} | ConvertTo-Json -Compress | Write-Output
 } finally {
 	$uninstaller = Join-Path $installRoot "unins000.exe"
