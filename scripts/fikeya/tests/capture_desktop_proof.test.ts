@@ -183,15 +183,32 @@ test('Electron Chat proof validates a real 360px-class responsive panel', async 
 	assert.match(scenario, /resizeFikeyaPanel\(code, page, 380\)/u);
 	assert.match(scenario, /document\.documentElement\.scrollWidth/u);
 	assert.match(scenario, /document\.body\.scrollWidth/u);
-	assert.match(scenario, /\[data-open-plan\]/u);
+	assert.match(scenario, /\.chat-plan-details/u);
 	assert.match(scenario, /\[data-agent-form\] \[name="prompt"\]/u);
+	assert.match(scenario, /\[data-agent-form\] \[name="chatMode"\]/u);
+	assert.match(scenario, /option\.value === 'multitask'/u);
 	assert.match(scenario, /\[data-agent-run\]/u);
-	assert.match(scenario, /\[data-agent-plan\]/u);
 	assert.match(scenario, /\[data-network-confirmation\]/u);
 	assert.match(scenario, /\[data-network-confirm\]/u);
 	assert.match(scenario, /\.run-controls > summary/u);
+	assert.match(scenario, /\.composer-route > summary/u);
+	assert.match(scenario, /composerAnchored/u);
 	assert.match(scenario, /minimumPanelWidth = 340/u);
 	assert.match(scenario, /maximumPanelWidth = 420/u);
+});
+
+test('Electron proof uses chat-first inline Plan and dialog overlays', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /mode\.value = 'plan'/u);
+	assert.match(scenario, /type: 'createPlan'/u);
+	assert.match(scenario, /\.chat-plan-details/u);
+	assert.match(scenario, /\[data-modal-open="context"\]/u);
+	assert.match(scenario, /\[data-workspace-modal="context"\]/u);
+	assert.match(scenario, /\[data-modal-open="usage"\]/u);
+	assert.match(scenario, /\[data-workspace-modal="usage"\]/u);
+	assert.doesNotMatch(scenario, /data-surface-tab/u);
+	assert.doesNotMatch(scenario, /data-open-plan/u);
+	assert.doesNotMatch(scenario, /data-agent-plan/u);
 });
 
 test('Electron proof selects an evidence-linked Qarinah node at the narrow width', async () => {
