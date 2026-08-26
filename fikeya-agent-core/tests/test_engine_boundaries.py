@@ -11,6 +11,7 @@ import pytest
 from fikeya_agent_core import (
     AgentEvent,
     AgentLimits,
+    AgentNoProgressError,
     AgentOrchestrator,
     ApprovalDecision,
     ApprovalResponse,
@@ -216,3 +217,46 @@ async def test_step_limit_stops_continue_review_loop() -> None:
         await collect(orchestrator, session.session_id)
 
     assert orchestrator.state(session.session_id).stage == Stage.FAILED
+
+
+@pytest.mark.asyncio
+async def test_repeated_provider_state_fails_before_another_paid_request() -> None:
+    provider = QueueProvider(
+        provider_result(ProviderDecision(DecisionKind.PLAN, content="plan")),
+        provider_result(ProviderDecision(DecisionKind.ANSWER, content="candidate")),
+        provider_result(
+            ProviderDecision(
+                DecisionKind.REVIEW,
+                content="revise once more",
+                review_action=ReviewAction.CONTINUE,
+            )
+        ),
+        provider_result(ProviderDecision(DecisionKind.ANSWER, content="candidate")),
+        provider_result(
+            ProviderDecision(
+                DecisionKind.REVIEW,
+                content="revise once more",
+                review_action=ReviewAction.CONTINUE,
+            )
+        ),
+    )
+    orchestrator = AgentOrchestrator(
+        provider,
+        Broker(),
+        InMemoryCheckpointStore(),
+        AgentLimits(max_steps=12),
+    )
+    session = orchestrator.start("detect a stalled loop", session_id="session:no-progress")
+
+    with pytest.raises(AgentNoProgressError, match="identical provider request"):
+        await collect(orchestrator, session.session_id)
+
+    state = orchestrator.state(session.session_id)
+    assert provider.calls == 5
+    assert state.stage == Stage.FAILED
+    assert state.failure_code == "agent_no_progress"
+    assert state.events[-1].kind == EventKind.SESSION_FAILED
+    assert state.events[-1].data == {
+        "errorType": "AgentNoProgressError",
+        "reason": "agent_no_progress",
+    }

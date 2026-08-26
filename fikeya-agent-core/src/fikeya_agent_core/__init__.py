@@ -8,6 +8,7 @@ from .checkpoints import CheckpointStore, InMemoryCheckpointStore, SqliteCheckpo
 from .engine import AgentOrchestrator
 from .errors import (
     AgentCoreError,
+    AgentNoProgressError,
     BrokerOutcomeUncertainError,
     CancellationError,
     ConfigurationError,
@@ -49,6 +50,7 @@ from .provider import (
 
 __all__ = [
     "AgentCoreError",
+    "AgentNoProgressError",
     "AgentEvent",
     "AgentLimits",
     "AgentOrchestrator",

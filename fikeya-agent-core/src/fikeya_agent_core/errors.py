@@ -8,6 +8,10 @@ class AgentCoreError(Exception):
     """Base class for failures with stable orchestration meaning."""
 
 
+class AgentNoProgressError(AgentCoreError):
+    """Raised before repeating an unchanged provider request within one run."""
+
+
 class ConfigurationError(AgentCoreError):
     """Raised when a caller supplies an unsafe or contradictory configuration."""
 
