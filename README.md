@@ -1,6 +1,6 @@
 # Fikeya
 
-Fikeya is an open, provider-neutral AI code editor and coding-agent runtime with two interfaces: a desktop editor for visual work and a CLI for headless automation. It is designed to plan, edit, run, and review software work while compiling only the bounded project context a turn needs.
+Fikeya is an open, provider-neutral AI code editor and coding-agent runtime with two interfaces: a desktop editor for visual work and a CLI for headless automation. Bring your model and spend fewer tokens while Fikeya plans, edits, runs, and reviews software work using only the bounded project context a turn needs.
 
 Its optimization goal is **verified work per dollar**: preserve task quality and external verification while reducing unnecessary context, recording exact provider usage when available, and avoiding lock-in to one model or agent. That is a product target measured by matched evaluations, not a claim that every Fikeya run is already cheaper than another system.
 
