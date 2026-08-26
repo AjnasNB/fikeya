@@ -99,10 +99,16 @@ jobs:
 
       - name: Check Codex protocol client is in sync
         run: |
-          git fetch --no-tags --depth=1 origin "$CODEX_SYNC_BASE" || true
+          if [ -z "$CODEX_SYNC_BASE" ]; then
+            git fetch --no-tags --depth=1 origin "$CODEX_DEFAULT_BRANCH:refs/remotes/origin/$CODEX_DEFAULT_BRANCH"
+            CODEX_SYNC_BASE="origin/$CODEX_DEFAULT_BRANCH"
+          else
+            git fetch --no-tags --depth=1 origin "$CODEX_SYNC_BASE"
+          fi
           node build/codex/check-protocol-sync.ts --if-changed --base "$CODEX_SYNC_BASE"
         env:
           CODEX_SYNC_BASE: ${{ github.event.pull_request.base.sha }}
+          CODEX_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
       - name: Check cyclic dependencies
         run: node build/lib/checkCyclicDependencies.ts out-build
