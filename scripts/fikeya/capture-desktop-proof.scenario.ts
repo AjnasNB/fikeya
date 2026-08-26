@@ -307,7 +307,7 @@ async function waitForVerifiedStep(
 		const execution = /^ok · (sha256:[0-9a-f]{64})$/.exec(receipt[3] ?? '');
 		const verification = /^passed · (sha256:[0-9a-f]{64})$/.exec(receipt[4] ?? '');
 		const check = detail?.querySelector('.plan-lines li')?.textContent?.trim() ?? '';
-		const next = ${nextStepId ? `surface?.querySelector('[data-plan-step="${nextStepId}"] .plan-step-status')?.textContent?.trim()` : "'none'"};
+		const next = ${nextStepId ? `surface?.querySelector('[data-plan-step="${nextStepId}"] .plan-step-status')?.textContent?.trim()` : '"none"'};
 		const value = {
 			badge: surface?.querySelector('.badge')?.textContent?.trim() ?? '',
 			stepId: '${stepId}',
@@ -319,7 +319,7 @@ async function waitForVerifiedStep(
 			&& /^apr_[a-z0-9]+ · consumed$/.test(receipt[1] ?? '')
 			&& execution && verification
 			&& check.startsWith('✓ tool_status · ')
-			&& ${nextStepId ? "next === 'Awaiting Approval'" : "value.badge === 'Succeeded'"}
+			&& ${nextStepId ? 'next === "Awaiting Approval"' : 'value.badge === "Succeeded"'}
 			? value
 			: false;
 	})()`, `The safe ${stepId} operation did not expose execution and verification receipts.`, 60_000);
