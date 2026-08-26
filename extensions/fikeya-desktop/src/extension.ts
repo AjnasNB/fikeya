@@ -153,12 +153,12 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 async function runDesktopOnboarding(context: vscode.ExtensionContext, provider: FikeyaWebviewViewProvider): Promise<void> {
-	const onboardingKey = 'fikeya.desktop.onboarding.v2';
-	if (context.globalState.get<boolean>(onboardingKey)) {
+	const completedKey = 'fikeya.desktop.onboarding.completed.v3';
+	const shownKey = 'fikeya.desktop.onboarding.shown.v3';
+	if (context.globalState.get<boolean>(completedKey) || context.globalState.get<boolean>(shownKey)) {
 		return;
 	}
-	await vscode.workspace.getConfiguration('workbench').update('colorTheme', 'Fikeya Dark', vscode.ConfigurationTarget.Global);
-	await context.globalState.update(onboardingKey, true);
+	await context.globalState.update(shownKey, true);
 	// Start in the non-modal Agent workspace. Its empty state explains the available
 	// surfaces and links to Setup when no provider exists, while Code remains one
 	// click away. A modal Quick Pick here can race the command that activated the
@@ -170,6 +170,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	public static readonly viewType = 'fikeya.dashboard';
 	private static readonly panelViewType = 'fikeya.workspace';
 	private static readonly currentPlanKey = 'fikeya.plan.current.v1';
+	private static readonly previousPlanKey = 'fikeya.plan.previous.v1';
 	private static readonly conversationKey = 'fikeya.chat.conversation.v1';
 	private view: vscode.WebviewView | undefined;
 	private viewBinding: vscode.Disposable | undefined;
@@ -180,6 +181,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private activePlanProposalRun: FikeyaPlanProposalRunHandle | undefined;
 	private activePlanRun: FikeyaPlanRunHandle | undefined;
 	private planCancellationInProgress = false;
+	private previousConversation: readonly FikeyaConversationMessage[] | undefined;
 
 	public constructor(private readonly context: vscode.ExtensionContext) {
 		const persistConversation = this.conversationPersistenceEnabled();
@@ -346,6 +348,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			case 'newPlan':
 				await this.startNewPlan();
 				break;
+			case 'restorePlan':
+				await this.restorePreviousPlan();
+				break;
 			case 'refreshPlan':
 				await this.refreshPlan(true);
 				break;
@@ -361,7 +366,25 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 					planRunning: this.activePlanRun !== undefined,
 					planCancellationInProgress: this.planCancellationInProgress
 				})) {
+					const confirmation = vscode.l10n.t('Start New Chat');
+					const accepted = await vscode.window.showWarningMessage(
+						vscode.l10n.t('Start a new chat? The current conversation can be restored until this Fikeya window closes.'),
+						{ modal: true },
+						confirmation
+					);
+					if (accepted !== confirmation) {
+						break;
+					}
+					this.previousConversation = this.state.conversation;
 					this.state = { ...this.state, conversation: [] };
+					await this.persistConversation();
+					this.refresh();
+				}
+				break;
+			case 'restoreConversation':
+				if (this.state.conversation.length === 0 && this.previousConversation) {
+					this.state = { ...this.state, conversation: this.previousConversation };
+					this.previousConversation = undefined;
 					await this.persistConversation();
 					this.refresh();
 				}
@@ -474,6 +497,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 
 		await this.refreshProviders(false);
+		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
 		void vscode.window.showInformationMessage(vscode.l10n.t('{0} was configured in Fikeya Runtime.', profileLabel.trim()));
 	}
 
@@ -953,9 +977,36 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			|| this.state.plan.status === 'loading' || this.state.plan.status === 'running') {
 			return;
 		}
+		const currentPlanId = this.currentPlanId();
+		if (currentPlanId) {
+			const confirmation = vscode.l10n.t('Start New Plan');
+			const accepted = await vscode.window.showWarningMessage(
+				vscode.l10n.t('Start a new plan? The current plan remains stored in the workspace and can be restored.'),
+				{ modal: true },
+				confirmation
+			);
+			if (accepted !== confirmation) {
+				return;
+			}
+			await this.context.workspaceState.update(FikeyaWebviewViewProvider.previousPlanKey, currentPlanId);
+		}
 		await this.context.workspaceState.update(FikeyaWebviewViewProvider.currentPlanKey, undefined);
 		this.state = { ...this.state, activeMode: 'plan', plan: { status: 'idle' } };
 		this.refresh();
+	}
+
+	private async restorePreviousPlan(): Promise<void> {
+		if (this.currentPlanId() || this.activePlanRun || this.activePlanProposalRun || this.planCancellationInProgress) {
+			return;
+		}
+		const previousPlanId = this.context.workspaceState.get<string>(FikeyaWebviewViewProvider.previousPlanKey);
+		if (!previousPlanId) {
+			return;
+		}
+		await this.context.workspaceState.update(FikeyaWebviewViewProvider.currentPlanKey, previousPlanId);
+		await this.context.workspaceState.update(FikeyaWebviewViewProvider.previousPlanKey, undefined);
+		this.state = { ...this.state, activeMode: 'plan', plan: { status: 'idle' } };
+		await this.refreshPlan(true);
 	}
 
 	private async createPlan(specification: FikeyaPlanSpecification): Promise<void> {
@@ -1021,6 +1072,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 
 		if (action === 'cancel') {
+			const confirmation = vscode.l10n.t('Cancel Plan');
+			const accepted = await vscode.window.showWarningMessage(
+				vscode.l10n.t('Cancel this plan? Completed step evidence remains available, but pending work will stop.'),
+				{ modal: true },
+				confirmation
+			);
+			if (accepted !== confirmation) {
+				return;
+			}
 			this.planCancellationInProgress = true;
 			this.state = { ...this.state, plan: { ...this.state.plan, status: 'loading', failure: undefined } };
 			this.refresh();
@@ -1237,8 +1297,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const strings = getWebviewStrings();
 		const providerCards = renderProviderCards(this.state, strings);
 		const planOperationInProgress = this.activePlanRun !== undefined || this.planCancellationInProgress;
-		const agentSurface = renderAgentSurface(this.state, strings, this.state.activeMode === 'research', planOperationInProgress);
-		const planSurface = renderPlanSurface(this.state, strings);
+		const agentSurface = renderAgentSurface(this.state, strings, this.state.activeMode === 'research', planOperationInProgress, this.previousConversation !== undefined);
+		const planSurface = renderPlanSurface(this.state, strings, this.context.workspaceState.get<string>(FikeyaWebviewViewProvider.previousPlanKey) !== undefined);
 		const statisticsSurface = renderStatistics(this.state.statistics, strings);
 		const memoryGraph = renderMemoryGraph(this.state, strings);
 		const memoryGraphData = serializeForHtml(this.state.memory.snapshot ?? { nodes: [], edges: [] });
@@ -1548,6 +1608,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		const persistedState = vscode.getState() || {};
+		const persistUiState = patch => vscode.setState({ ...(vscode.getState() || {}), ...patch });
 		const surfaceRoot = document.querySelector('[data-initial-surface]');
 		const surfaceTabs = Array.from(document.querySelectorAll('[data-surface-tab]'));
 		const surfaceTargets = Array.from(document.querySelectorAll('[data-surface-target]'));
@@ -1639,6 +1700,26 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const planNetworkConsent = planProposalForm?.querySelector('[data-plan-network-consent]');
 		const planProposalButton = planProposalForm?.querySelector('[data-plan-proposal-run]');
 		if (planProposalForm && planNetworkConsent && planProposalButton) {
+			const planPromptField = planProposalForm.querySelector('[name="prompt"]');
+			const planProviderField = planProposalForm.querySelector('[name="providerName"]');
+			const planMemoryField = planProposalForm.querySelector('[name="memoryMode"]');
+			const planContextField = planProposalForm.querySelector('[name="contextMaxCharacters"]');
+			const planOutputField = planProposalForm.querySelector('[name="maxOutputTokens"]');
+			if (planPromptField && typeof persistedState.planDraft === 'string') planPromptField.value = persistedState.planDraft;
+			if (planProviderField && Array.from(planProviderField.options).some(option => option.value === persistedState.planProvider)) planProviderField.value = persistedState.planProvider;
+			if (planMemoryField && ['auto', 'off', 'required'].includes(persistedState.planMemoryMode)) planMemoryField.value = persistedState.planMemoryMode;
+			if (planContextField && Number.isSafeInteger(persistedState.planContextBudget)) planContextField.value = String(persistedState.planContextBudget);
+			if (planOutputField && Number.isSafeInteger(persistedState.planOutputBudget)) planOutputField.value = String(persistedState.planOutputBudget);
+			if (typeof persistedState.planNetworkConsent === 'boolean') planNetworkConsent.checked = persistedState.planNetworkConsent;
+			const savePlanComposer = () => persistUiState({
+				planDraft: planPromptField?.value || '',
+				planProvider: planProviderField?.value || '',
+				planMemoryMode: planMemoryField?.value || 'auto',
+				planContextBudget: Number(planContextField?.value),
+				planOutputBudget: Number(planOutputField?.value),
+				planNetworkConsent: Boolean(planNetworkConsent.checked)
+			});
+			for (const input of [planPromptField, planProviderField, planMemoryField, planContextField, planOutputField, planNetworkConsent]) input?.addEventListener(input === planPromptField ? 'input' : 'change', savePlanComposer);
 			const updatePlanProposalButton = () => { planProposalButton.disabled = !planNetworkConsent.checked; };
 			planNetworkConsent.addEventListener('change', updatePlanProposalButton);
 			updatePlanProposalButton();
@@ -1651,11 +1732,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				const memoryMode = planProposalForm.querySelector('[name="memoryMode"]')?.value;
 				if (!planNetworkConsent.checked || !providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return;
 				planProposalButton.disabled = true;
+				persistUiState({ planDraft: '', planNetworkConsent: false });
 				vscode.postMessage({ type: 'proposePlan', providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true });
 			});
 		}
 		document.querySelector('[data-plan-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshPlan' }));
 		document.querySelector('[data-plan-new]')?.addEventListener('click', () => vscode.postMessage({ type: 'newPlan' }));
+		document.querySelector('[data-plan-restore]')?.addEventListener('click', () => vscode.postMessage({ type: 'restorePlan' }));
 		document.querySelectorAll('[data-plan-action]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'planAction', action: button.dataset.planAction, stepId: button.dataset.planActionStep })));
 		document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openCommand', command: button.dataset.command })));
 		document.querySelector('[data-action="refresh-providers"]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshProviders' }));
@@ -1663,6 +1746,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		document.querySelectorAll('[data-provider-remove]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'removeProvider', providerName: button.dataset.providerRemove })));
 		document.querySelector('[data-agent-cancel]')?.addEventListener('click', () => vscode.postMessage({ type: 'cancelAgent' }));
 		document.querySelector('[data-conversation-clear]')?.addEventListener('click', () => vscode.postMessage({ type: 'clearConversation' }));
+		document.querySelector('[data-conversation-restore]')?.addEventListener('click', () => vscode.postMessage({ type: 'restoreConversation' }));
 		document.querySelectorAll('[data-copy-message]').forEach(button => button.addEventListener('click', () => {
 			const content = button.closest('.chat-message')?.querySelector('.message-content')?.textContent || '';
 			if (content) vscode.postMessage({ type: 'copyText', text: content });
@@ -1684,9 +1768,31 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const runButton = document.querySelector('[data-agent-run]');
 		const planButton = document.querySelector('[data-agent-plan]');
 		const promptField = agentForm?.querySelector('[name="prompt"]');
+		const providerField = agentForm?.querySelector('[name="providerName"]');
+		const memoryModeField = agentForm?.querySelector('[name="memoryMode"]');
+		const contextBudgetField = agentForm?.querySelector('[name="contextMaxCharacters"]');
+		const outputBudgetField = agentForm?.querySelector('[name="maxOutputTokens"]');
+		if (promptField && typeof persistedState.chatDraft === 'string') promptField.value = persistedState.chatDraft;
+		if (providerField && Array.from(providerField.options).some(option => option.value === persistedState.chatProvider)) providerField.value = persistedState.chatProvider;
+		if (memoryModeField && ['auto', 'off', 'required'].includes(persistedState.chatMemoryMode)) memoryModeField.value = persistedState.chatMemoryMode;
+		if (contextBudgetField && Number.isSafeInteger(persistedState.chatContextBudget)) contextBudgetField.value = String(persistedState.chatContextBudget);
+		if (outputBudgetField && Number.isSafeInteger(persistedState.chatOutputBudget)) outputBudgetField.value = String(persistedState.chatOutputBudget);
+		if (networkConsent && typeof persistedState.chatNetworkConsent === 'boolean') networkConsent.checked = persistedState.chatNetworkConsent;
+		const saveComposer = () => persistUiState({
+			chatDraft: promptField?.value || '',
+			chatProvider: providerField?.value || '',
+			chatMemoryMode: memoryModeField?.value || 'auto',
+			chatContextBudget: Number(contextBudgetField?.value),
+			chatOutputBudget: Number(outputBudgetField?.value),
+			chatNetworkConsent: Boolean(networkConsent?.checked)
+		});
+		for (const input of [promptField, providerField, memoryModeField, contextBudgetField, outputBudgetField, networkConsent]) {
+			input?.addEventListener(input === promptField ? 'input' : 'change', saveComposer);
+		}
 		document.querySelectorAll('[data-prompt-value]').forEach(button => button.addEventListener('click', () => {
 			if (!promptField) return;
 			promptField.value = button.dataset.promptValue ?? '';
+			saveComposer();
 			promptField.focus();
 		}));
 		if (agentForm && networkConsent && runButton) {
@@ -1711,12 +1817,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				const request = readAgentRequest();
 				if (!request) return;
 				setRunButtonsDisabled(true);
+				persistUiState({ chatDraft: '', chatNetworkConsent: false });
 				vscode.postMessage({ type: 'runAgent', ...request });
 			});
 			planButton?.addEventListener('click', () => {
 				const request = readAgentRequest();
 				if (!request) return;
 				setRunButtonsDisabled(true);
+				persistUiState({ chatDraft: '', chatNetworkConsent: false });
 				vscode.postMessage({ type: 'proposePlan', ...request });
 			});
 			promptField?.addEventListener('keydown', event => {
@@ -1726,7 +1834,31 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			});
 		}
 		const chatThread = document.querySelector('[data-chat-thread]');
-		if (chatThread) chatThread.scrollTop = chatThread.scrollHeight;
+		if (chatThread) {
+			const messageCount = Number(chatThread.dataset.messageCount || 0);
+			chatThread.scrollTop = persistedState.chatMessageCount === messageCount && Number.isFinite(persistedState.chatScrollTop)
+				? persistedState.chatScrollTop
+				: chatThread.scrollHeight;
+			persistUiState({ chatMessageCount: messageCount, chatScrollTop: chatThread.scrollTop });
+			chatThread.addEventListener('scroll', () => persistUiState({ chatMessageCount: messageCount, chatScrollTop: chatThread.scrollTop }));
+		}
+		if (Number.isFinite(persistedState.pageScrollY)) window.scrollTo(0, persistedState.pageScrollY);
+		window.addEventListener('scroll', () => persistUiState({ pageScrollY: window.scrollY }), { passive: true });
+		document.addEventListener('focusin', event => {
+			const element = event.target;
+			if (!(element instanceof HTMLElement)) return;
+			const name = element.getAttribute('name');
+			const graphSearch = element.hasAttribute('data-graph-search');
+			if (name || graphSearch) persistUiState({ focusTarget: graphSearch ? 'graph-search' : name, focusSurface: (vscode.getState() || {}).surface });
+		});
+		if (persistedState.focusSurface === initialSurface) {
+			const focusTarget = persistedState.focusTarget === 'graph-search'
+				? document.querySelector('[data-graph-search]')
+				: ['prompt', 'providerName', 'memoryMode', 'contextMaxCharacters', 'maxOutputTokens'].includes(persistedState.focusTarget)
+					? document.querySelector('[data-surface-panel="' + initialSurface + '"] [name="' + persistedState.focusTarget + '"]')
+					: null;
+			focusTarget?.focus({ preventScroll: true });
+		}
 		document.querySelectorAll('[data-memory-refresh]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'refreshMemory' })));
 		const graphDataElement = document.getElementById('fikeya-memory-graph-data');
 		const graphSvg = document.querySelector('[data-memory-graph]');
@@ -1964,7 +2096,7 @@ function renderStatistics(state: StatisticsSurfaceState, strings: WebviewStrings
 	</section>`;
 }
 
-function renderPlanSurface(state: DashboardState, strings: WebviewStrings): string {
+function renderPlanSurface(state: DashboardState, strings: WebviewStrings, canRestorePlan: boolean): string {
 	const plan = state.plan.record;
 	const sample = JSON.stringify({
 		schemaVersion: 1,
@@ -1988,6 +2120,7 @@ function renderPlanSurface(state: DashboardState, strings: WebviewStrings): stri
 			<div class="plan-heading"><div><h2 id="plan-surface-title">${escapeHtml(vscode.l10n.t('Plan to proof'))}</h2><p>${escapeHtml(narrativeBoundary)}</p></div><span class="badge">${escapeHtml(state.plan.status === 'loading' ? vscode.l10n.t('Creating') : vscode.l10n.t('No tool has run'))}</span></div>
 			<ol class="plan-lifecycle" aria-label="${escapeHtml(vscode.l10n.t('Plan lifecycle'))}"><li data-status="active"><span>1</span><strong>${escapeHtml(vscode.l10n.t('Draft'))}</strong></li><li><span>2</span><strong>${escapeHtml(vscode.l10n.t('Review'))}</strong></li><li><span>3</span><strong>${escapeHtml(vscode.l10n.t('Approval'))}</strong></li><li><span>4</span><strong>${escapeHtml(vscode.l10n.t('Execute'))}</strong></li><li><span>5</span><strong>${escapeHtml(vscode.l10n.t('Verify'))}</strong></li></ol>
 			${state.plan.failure ? `<p class="plan-boundary" role="alert">${escapeHtml(state.plan.failure)}</p>` : ''}
+			${canRestorePlan ? `<div class="actions"><button class="secondary" data-plan-restore type="button">${escapeHtml(vscode.l10n.t('Restore prior plan'))}</button></div>` : ''}
 			<form class="agent-form plan-proposal-form" data-plan-proposal-form autocomplete="off">
 				<label class="field composer"><span>${escapeHtml(vscode.l10n.t('What should Fikeya build or change?'))}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(vscode.l10n.t('Describe the outcome, constraints, and how you want it verified...'))}"${controlsDisabled ? ' disabled' : ''} required></textarea></label>
 				<div class="composer-bar"><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${controlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label><details class="run-controls"><summary>${escapeHtml(vscode.l10n.t('Model and context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label></div></details><div class="actions composer-actions"><button data-plan-proposal-run type="submit"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Draft plan'))}</button></div></div>
@@ -2130,7 +2263,7 @@ function formatRunProgress(progress: FikeyaRunProgress): string {
 	}
 }
 
-function renderAgentSurface(state: DashboardState, strings: WebviewStrings, researchMode: boolean, planOperationInProgress: boolean): string {
+function renderAgentSurface(state: DashboardState, strings: WebviewStrings, researchMode: boolean, planOperationInProgress: boolean, canRestoreConversation: boolean): string {
 	const running = state.agent.status === 'running';
 	const interactionBlocked = isChatInteractionBlocked({ agentRunning: running, planRunning: planOperationInProgress, planCancellationInProgress: false });
 	const controlsDisabled = interactionBlocked || state.providers.length === 0;
@@ -2138,8 +2271,9 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, rese
 		? `<option value="">${escapeHtml(strings.noProviders)}</option>`
 		: state.providers.map(provider => `<option value="${escapeHtml(provider.name)}"${state.agent.providerName === provider.name ? ' selected' : ''}>${escapeHtml(`${provider.name} | ${provider.model}`)}</option>`).join('');
 	const statusTone = state.agent.status === 'failed' || state.agent.status === 'cancelled' ? 'error' : 'normal';
+	const emptyActions = `${state.providers.length === 0 ? `<button data-command="fikeya.configureProvider" type="button">${escapeHtml(strings.configureProvider)}</button>` : ''}${canRestoreConversation ? `<button class="secondary" data-conversation-restore type="button">${escapeHtml(vscode.l10n.t('Restore prior chat'))}</button>` : ''}`;
 	const conversation = state.conversation.length === 0
-		? `<div class="chat-empty"><strong>${escapeHtml(researchMode ? vscode.l10n.t('Research the codebase') : vscode.l10n.t('Ask Fikeya about this project'))}</strong><p>${escapeHtml(researchMode ? vscode.l10n.t('Request a cited technical investigation using the configured model and approved tools.') : vscode.l10n.t('Chat, edit, run, or review. Fikeya retrieves bounded Qarinah evidence for each turn and asks before a tool runs.'))}</p><div class="prompt-suggestions"><button class="quiet" data-prompt-value="Explain this project and cite the files that matter." type="button">${escapeHtml(vscode.l10n.t('Explain this project'))}</button><button class="quiet" data-prompt-value="Inspect the current changes and identify the highest-risk issue." type="button">${escapeHtml(vscode.l10n.t('Review current changes'))}</button><button class="quiet" data-prompt-value="Run the relevant tests, diagnose any failure, and propose the smallest fix." type="button">${escapeHtml(vscode.l10n.t('Diagnose failing tests'))}</button></div></div>`
+		? `<div class="chat-empty"><strong>${escapeHtml(researchMode ? vscode.l10n.t('Research the codebase') : vscode.l10n.t('Ask Fikeya about this project'))}</strong><p>${escapeHtml(researchMode ? vscode.l10n.t('Request a cited technical investigation using the configured model and approved tools.') : vscode.l10n.t('Chat, edit, run, or review. Fikeya retrieves bounded Qarinah evidence for each turn and asks before a tool runs.'))}</p>${emptyActions ? `<div class="actions">${emptyActions}</div>` : ''}<div class="prompt-suggestions"><button class="quiet" data-prompt-value="Explain this project and cite the files that matter." type="button">${escapeHtml(vscode.l10n.t('Explain this project'))}</button><button class="quiet" data-prompt-value="Inspect the current changes and identify the highest-risk issue." type="button">${escapeHtml(vscode.l10n.t('Review current changes'))}</button><button class="quiet" data-prompt-value="Run the relevant tests, diagnose any failure, and propose the smallest fix." type="button">${escapeHtml(vscode.l10n.t('Diagnose failing tests'))}</button></div></div>`
 		: state.conversation.map(renderConversationMessage).join('');
 	const progress = running
 		? `<article class="chat-message assistant-message" aria-label="${escapeHtml(vscode.l10n.t('Fikeya is working'))}"><div class="message-meta"><strong>${escapeHtml(vscode.l10n.t('Fikeya'))}</strong><span class="thinking-dot" aria-hidden="true"></span><span>${escapeHtml(state.agent.progress ? formatRunProgress(state.agent.progress) : vscode.l10n.t('Starting a bounded run'))}</span></div></article>`
@@ -2152,7 +2286,7 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, rese
 	return `<section class="card agent-surface" aria-labelledby="agent-run-title">
 		<div class="agent-heading"><div><h2 id="agent-run-title">${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Chat'))}</h2><p>${escapeHtml(researchMode ? vscode.l10n.t('Cited investigation with the same project and permission boundary.') : vscode.l10n.t('A live conversation beside the editor. Chat is process-local unless workspace history is explicitly enabled in Fikeya settings.'))}</p></div><div class="agent-heading-actions"><button class="quiet" data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button><span class="badge">${escapeHtml(planOperationInProgress ? vscode.l10n.t('Plan active') : agentStatusLabel(state.agent, strings))}</span></div></div>
 		${chatPlan}
-		<div class="chat-thread" data-chat-thread aria-live="polite">${conversation}${progress}</div>
+		<div class="chat-thread" data-chat-thread data-message-count="${state.conversation.length}" aria-live="polite">${conversation}${progress}</div>
 		<form class="agent-form" data-agent-form autocomplete="off">
 			<label class="field composer"><span class="sr-only">${escapeHtml(strings.prompt)}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(researchMode ? vscode.l10n.t('Research a technical question and ask for cited findings...') : vscode.l10n.t('Ask Fikeya to inspect, edit, run, or review this project...'))}"${controlsDisabled ? ' disabled' : ''} required></textarea></label>
 			<div class="composer-bar"><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${controlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label><details class="run-controls"><summary>${escapeHtml(vscode.l10n.t('Model and context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label></div></details><div class="actions composer-actions"><button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Send'))}</button><button class="secondary" data-agent-plan type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Create plan'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div></div>
