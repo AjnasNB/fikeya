@@ -3,11 +3,10 @@
  *  Copyright (C) 2026 Fikeya contributors
  *--------------------------------------------------------------------------------------------*/
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+const fs = require('node:fs');
+const path = require('node:path');
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const repositoryRoot = path.resolve(__dirname, '..', '..');
 const readJson = relative => JSON.parse(fs.readFileSync(path.join(repositoryRoot, relative), 'utf8'));
 const readText = relative => fs.readFileSync(path.join(repositoryRoot, relative), 'utf8');
 const distribution = readJson('fikeya-distribution.json');
