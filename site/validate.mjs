@@ -106,7 +106,7 @@ assert(html.includes('inspect measured token and verification receipts'), 'Measu
 assert(html.includes('The product target is lower billed input tokens on matched coding tasks, not an unqualified savings claim.'), 'Matched-task token target boundary is missing');
 assert(html.includes('Windows will continue to show an unknown-publisher warning until the installer is Authenticode-signed with a trusted certificate.'), 'Authenticode release gate is missing');
 assert(!html.includes('reproducible VSIX packaging'), 'Unproven cross-platform reproducibility claim is present');
-assert(html.includes('Fikeya 0.1.0-beta.1 · Desktop, VS Code extension, and CLI'), 'Public beta status is missing');
+assert(html.includes('Fikeya 0.1.0-beta.2 source candidate · Desktop, VS Code extension, and CLI'), 'Current source candidate status is missing');
 assert(!html.includes('stable release available'), 'The site must not claim a stable release before the release gates pass');
 assert(html.includes('src="/qarinah-standalone-graph.png"'), 'Standalone Qarinah graph capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-editor.jpg"'), 'Real editor capture is missing');

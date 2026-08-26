@@ -38,4 +38,12 @@ for (const id of ['agent-core', 'runtime']) {
 	if (actual !== pythonVersion) throw new Error(`components.json ${id} version ${actual ?? 'missing'} must be ${pythonVersion}.`);
 }
 
+const homePage = readText('site/index.html');
+const downloadPage = readText('site/download/index.html');
+for (const [relative, contents] of [['site/index.html', homePage], ['site/download/index.html', downloadPage]]) {
+	if (!contents.includes(`${productVersion} source candidate`)) {
+		throw new Error(`${relative} must advertise the current source candidate ${productVersion}.`);
+	}
+}
+
 console.log(`Fikeya version alignment verified: ${productVersion} / Python ${pythonVersion}`);
