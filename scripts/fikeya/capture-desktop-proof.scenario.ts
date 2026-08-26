@@ -24,6 +24,7 @@ interface ScenarioContext {
 	readonly code: ScenarioCode;
 	readonly page: {
 		waitForSelector(selector: string, options: { readonly state: 'visible'; readonly timeout: number }): Promise<unknown>;
+		evaluate<T>(expression: string): Promise<T>;
 		readonly keyboard: { press(key: string): Promise<unknown> };
 	};
 	readonly workbench: {
@@ -61,6 +62,36 @@ interface DraftState {
 	readonly title: string;
 	readonly badge: string;
 	readonly steps: number;
+}
+
+interface DesktopWindowBounds {
+	readonly width: number;
+	readonly height: number;
+}
+
+interface NarrowPanelState {
+	readonly viewportWidth: number;
+	readonly documentWidth: number;
+	readonly bodyWidth: number;
+	readonly chatVisible: boolean;
+	readonly planTabVisible: boolean;
+	readonly openPlanVisible: boolean;
+	readonly promptVisible: boolean;
+	readonly sendVisible: boolean;
+	readonly createPlanVisible: boolean;
+}
+
+interface NarrowGraphState {
+	readonly viewportWidth: number;
+	readonly documentWidth: number;
+	readonly bodyWidth: number;
+	readonly canvasLeft: number;
+	readonly canvasRight: number;
+	readonly canvasWidth: number;
+	readonly nodeCount: number;
+	readonly hasSelectedNode: boolean;
+	readonly selectedTitle: string;
+	readonly selectedEvidence: string;
 }
 
 interface ReviewedState {
@@ -161,6 +192,8 @@ const planSpecification = {
 
 const pause = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+let proofWindowBounds: DesktopWindowBounds | undefined;
+
 async function waitFor<T>(predicate: () => Promise<T | false | undefined> | T | false | undefined, message: string, timeoutMilliseconds = 45_000): Promise<T> {
 	const deadline = Date.now() + timeoutMilliseconds;
 	let detail: T | false | string | undefined;
@@ -205,6 +238,41 @@ async function waitForFikeya<T>(code: ScenarioCode, expression: string, message:
 		message,
 		timeoutMilliseconds
 	);
+}
+
+async function resizeFikeyaPanel(
+	code: ScenarioCode,
+	page: ScenarioContext['page'],
+	targetWidth: number
+): Promise<number> {
+	const minimumPanelWidth = 340;
+	const maximumPanelWidth = 420;
+	for (let attempt = 0; attempt < 6; attempt += 1) {
+		const viewportWidth = await evaluateFikeya<number>(code, 'window.innerWidth');
+		if (viewportWidth >= minimumPanelWidth && viewportWidth <= maximumPanelWidth) {
+			return viewportWidth;
+		}
+		const bounds = await page.evaluate<DesktopWindowBounds>('({ width: window.outerWidth, height: window.outerHeight })');
+		const adjustedWidth = Math.max(420, bounds.width + targetWidth - viewportWidth);
+		await page.evaluate<void>(`window.resizeTo(${Math.round(adjustedWidth)}, ${Math.max(760, Math.round(bounds.height))})`);
+		await pause(500);
+	}
+	const viewportWidth = await evaluateFikeya<number>(code, 'window.innerWidth');
+	throw new Error(`The Electron window could not produce a 340-420px Fikeya panel; observed ${viewportWidth}px.`);
+}
+
+async function restoreProofWindow(code: ScenarioCode, page: ScenarioContext['page']): Promise<void> {
+	if (!proofWindowBounds) {
+		return;
+	}
+	await page.evaluate<void>(`window.resizeTo(${proofWindowBounds.width}, ${proofWindowBounds.height})`);
+	await waitForFikeya<number>(
+		code,
+		'window.innerWidth >= 700 ? window.innerWidth : false',
+		'The proof window did not return to its wide layout.',
+		15_000
+	);
+	proofWindowBounds = undefined;
 }
 
 async function runWorkbenchCommand(
@@ -486,10 +554,132 @@ const scenario: Scenario = {
 			}
 		},
 		{
+			id: 'narrow-chat-panel',
+			title: 'Use Chat and its current Plan at a 360px-class panel width',
+			async run({ code, page }) {
+				proofWindowBounds = await page.evaluate<DesktopWindowBounds>('({ width: window.outerWidth, height: window.outerHeight })');
+				await evaluateFikeya<boolean>(code, `(() => {
+					const chatTab = document.querySelector('[data-surface-tab="chat"]');
+					if (!chatTab) return false;
+					chatTab.click();
+					return true;
+				})()`);
+				await resizeFikeyaPanel(code, page, 380);
+				const narrow = await waitForFikeya<NarrowPanelState>(code, `(() => {
+					const visible = element => {
+						if (!element || element.hidden) return false;
+						const rect = element.getBoundingClientRect();
+						return rect.width > 0 && rect.height > 0 && rect.left >= -1 && rect.right <= window.innerWidth + 1;
+					};
+					const chatTab = document.querySelector('[data-surface-tab="chat"]');
+					const planTab = document.querySelector('[data-surface-tab="plan"]');
+					const openPlan = document.querySelector('[data-open-plan]');
+					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
+					const send = document.querySelector('[data-agent-run]');
+					const createPlan = document.querySelector('[data-agent-plan]');
+					const value = {
+						viewportWidth: window.innerWidth,
+						documentWidth: document.documentElement.scrollWidth,
+						bodyWidth: document.body.scrollWidth,
+						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden && visible(chatTab),
+						planTabVisible: visible(planTab),
+						openPlanVisible: visible(openPlan),
+						promptVisible: visible(prompt),
+						sendVisible: visible(send),
+						createPlanVisible: visible(createPlan)
+					};
+					return value.viewportWidth >= 340 && value.viewportWidth <= 420
+						&& value.documentWidth <= value.viewportWidth + 1
+						&& value.bodyWidth <= value.viewportWidth + 1
+						&& Object.entries(value).filter(([key]) => key.endsWith('Visible')).every(([, shown]) => shown === true)
+						? value
+						: false;
+				})()`, 'The real Chat panel overflowed or hid a primary control at its narrow width.', 20_000);
+				const planOpened = await evaluateFikeya<boolean>(code, `(() => {
+					const openPlan = document.querySelector('[data-open-plan]');
+					if (!openPlan) return false;
+					openPlan.click();
+					const panel = document.querySelector('[data-surface-panel="plan"]');
+					const review = document.querySelector('[data-plan-action="review"]');
+					const rect = review?.getBoundingClientRect();
+					const usable = !panel?.hidden && rect && rect.width > 0 && rect.right <= window.innerWidth + 1;
+					document.querySelector('[data-surface-tab="chat"]')?.click();
+					document.querySelector('[data-agent-form]')?.scrollIntoView({ block: 'end' });
+					return Boolean(usable);
+				})()`);
+				if (!planOpened) {
+					throw new Error('Open Plan did not expose the draft review control at the narrow panel width.');
+				}
+				return `At ${narrow.viewportWidth}px, Chat, Plan, Open Plan, the composer, Send, and Create plan remained usable with no horizontal document overflow.`;
+			}
+		},
+		{
+			id: 'narrow-memory-graph',
+			title: 'Select a real Qarinah memory node at the narrow panel width',
+			async run({ code }) {
+				const opened = await evaluateFikeya<boolean>(code, `(() => {
+					const contextTab = document.querySelector('[data-surface-tab="context"]');
+					if (!contextTab) return false;
+					contextTab.click();
+					return true;
+				})()`);
+				if (!opened) {
+					throw new Error('The Context tab was not available at the narrow panel width.');
+				}
+				await waitForFikeya<number>(code, `(() => {
+					const nodes = document.querySelectorAll('.graph-node');
+					return nodes.length > 0 ? nodes.length : false;
+				})()`, 'The real Qarinah graph did not render any nodes.', 30_000);
+				const graph = await evaluateFikeya<NarrowGraphState>(code, `(() => {
+					const canvas = document.querySelector('[data-memory-graph]');
+					const nodes = Array.from(document.querySelectorAll('.graph-node'));
+					if (!canvas || nodes.length === 0) throw new Error('The rendered graph disappeared before inspection.');
+					let selectedTitle = '';
+					let selectedEvidence = '';
+					for (const node of nodes) {
+						node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+						selectedTitle = document.querySelector('[data-graph-title]')?.textContent?.trim() ?? '';
+						selectedEvidence = document.querySelector('[data-graph-detail="evidence"]')?.textContent?.trim() ?? '';
+						if (/^sha256:[0-9a-f]{64}$/.test(selectedEvidence)) break;
+					}
+					const rect = canvas.getBoundingClientRect();
+					const selected = document.querySelector('.graph-node[data-selected="true"]');
+					return {
+						viewportWidth: window.innerWidth,
+						documentWidth: document.documentElement.scrollWidth,
+						bodyWidth: document.body.scrollWidth,
+						canvasLeft: rect.left,
+						canvasRight: rect.right,
+						canvasWidth: rect.width,
+						nodeCount: nodes.length,
+						hasSelectedNode: Boolean(selected),
+						selectedTitle,
+						selectedEvidence
+					};
+				})()`);
+				const failures = [
+					graph.canvasWidth > 0 ? undefined : 'canvas has no width',
+					graph.canvasLeft >= -1 ? undefined : `canvas begins at ${graph.canvasLeft}px`,
+					graph.canvasRight <= graph.viewportWidth + 1 ? undefined : `canvas ends at ${graph.canvasRight}px beyond ${graph.viewportWidth}px`,
+					graph.documentWidth <= graph.viewportWidth + 1 ? undefined : `document is ${graph.documentWidth}px for a ${graph.viewportWidth}px viewport`,
+					graph.bodyWidth <= graph.viewportWidth + 1 ? undefined : `body is ${graph.bodyWidth}px for a ${graph.viewportWidth}px viewport`,
+					graph.hasSelectedNode ? undefined : 'no node is selected',
+					graph.selectedTitle && graph.selectedTitle !== 'Choose a node' ? undefined : 'selected node title is missing',
+					/^sha256:[0-9a-f]{64}$/u.test(graph.selectedEvidence) ? undefined : `selected evidence is ${JSON.stringify(graph.selectedEvidence)}`
+				].filter((failure): failure is string => Boolean(failure));
+				if (failures.length > 0) {
+					throw new Error(`The real Qarinah graph failed its narrow-panel proof: ${failures.join('; ')}. Diagnostics: ${JSON.stringify(graph)}`);
+				}
+				return `At ${graph.viewportWidth}px, selected "${graph.selectedTitle}" from ${graph.nodeCount} real graph nodes with evidence ${graph.selectedEvidence}.`;
+			}
+		},
+		{
 			id: 'reviewed-plan',
 			title: 'Review the immutable plan without approving tools',
-			async run({ code }) {
+			async run({ code, page }) {
+				await restoreProofWindow(code, page);
 				const clicked = await evaluateFikeya<boolean>(code, `(() => {
+					document.querySelector('[data-surface-tab="plan"]')?.click();
 					const button = document.querySelector('[data-plan-action="review"]');
 					if (!button || button.disabled) return false;
 					button.click();

@@ -82,6 +82,8 @@ interface EvidenceSummary {
 	readonly manifestPath: string;
 	readonly chatScreenshot: string;
 	readonly draftScreenshot: string;
+	readonly narrowChatScreenshot: string;
+	readonly narrowGraphScreenshot: string;
 	readonly reviewedScreenshot: string;
 	readonly approvalScreenshot: string;
 	readonly exactApprovalScreenshot: string;
@@ -431,6 +433,8 @@ async function readEvidenceSummary(runDirectory: string): Promise<EvidenceSummar
 		manifestPath,
 		chatScreenshot: screenshotFor('successful-chat'),
 		draftScreenshot: screenshotFor('draft-plan'),
+		narrowChatScreenshot: screenshotFor('narrow-chat-panel'),
+		narrowGraphScreenshot: screenshotFor('narrow-memory-graph'),
 		reviewedScreenshot: screenshotFor('reviewed-plan'),
 		approvalScreenshot: screenshotFor('awaiting-approval'),
 		exactApprovalScreenshot: screenshotFor('exact-step-approved'),
@@ -549,6 +553,8 @@ async function publishStableEvidence(summary: EvidenceSummary, outputDirectory: 
 	const copies: readonly (readonly [string, string])[] = [
 		['fikeya-chat-real.png', summary.chatScreenshot],
 		['fikeya-plan-draft-real.png', summary.draftScreenshot],
+		['fikeya-chat-narrow-real.png', summary.narrowChatScreenshot],
+		['fikeya-context-graph-narrow-real.png', summary.narrowGraphScreenshot],
 		['fikeya-plan-reviewed-real.png', summary.reviewedScreenshot],
 		['fikeya-plan-awaiting-approval-real.png', summary.approvalScreenshot],
 		['fikeya-plan-exact-approval-real.png', summary.exactApprovalScreenshot],
@@ -624,6 +630,15 @@ async function captureDesktopProof(options: CaptureOptions) {
 			'--outDir',
 			scenarioBuildDirectory
 		]);
+		// The native desktop resolves an extension-owned PyInstaller executable rather
+		// than the Python source tree. Rebuild that executable together with the VSIX
+		// before launching Electron so a protocol change cannot be tested against a
+		// stale runtime binary.
+		await runProcess(process.execPath, [
+			path.join(repositoryRoot, 'extensions', 'fikeya-desktop', 'scripts', 'package-extension.mjs')
+		], {
+			cwd: path.join(repositoryRoot, 'extensions', 'fikeya-desktop')
+		});
 	}
 	const runner = path.join(repositoryRoot, 'test', 'scenario', 'out', 'runScenario.js');
 	await stat(runner).catch(() => {

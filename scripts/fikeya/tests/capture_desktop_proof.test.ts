@@ -24,6 +24,8 @@ const {
 const evidenceStepIds = [
 	'successful-chat',
 	'draft-plan',
+	'narrow-chat-panel',
+	'narrow-memory-graph',
 	'reviewed-plan',
 	'awaiting-approval',
 	'exact-step-approved',
@@ -105,6 +107,12 @@ test('capture arguments default to a compiled real-app run', () => {
 	assert.ok(path.isAbsolute(options.outputDirectory));
 });
 
+test('compiled desktop proof rebuilds the extension-owned runtime before Electron', async () => {
+	const capture = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.ts'), 'utf8');
+	assert.match(capture, /package-extension\.mjs/u);
+	assert.match(capture, /stale runtime binary/u);
+});
+
 test('capture arguments support check, output, and skip-compile', () => {
 	const options = parseCaptureArguments(['--check', '--skip-compile', '--output', 'proof-output']);
 	assert.equal(options.compile, false);
@@ -167,6 +175,28 @@ test('Electron Chat proof submits a natively valid bounded context budget', asyn
 	const value = Number(match[1]);
 	assert.equal((value - 512) % 256, 0, 'context budget must satisfy min=512 and step=256');
 	assert.match(scenario, /if \(!form\.checkValidity\(\)\) return false;/u);
+});
+
+test('Electron Chat proof validates a real 360px-class responsive panel', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /window\.resizeTo/u);
+	assert.match(scenario, /resizeFikeyaPanel\(code, page, 380\)/u);
+	assert.match(scenario, /document\.documentElement\.scrollWidth/u);
+	assert.match(scenario, /document\.body\.scrollWidth/u);
+	assert.match(scenario, /\[data-open-plan\]/u);
+	assert.match(scenario, /\[data-agent-form\] \[name="prompt"\]/u);
+	assert.match(scenario, /\[data-agent-run\]/u);
+	assert.match(scenario, /\[data-agent-plan\]/u);
+	assert.match(scenario, /minimumPanelWidth = 340/u);
+	assert.match(scenario, /maximumPanelWidth = 420/u);
+});
+
+test('Electron proof selects an evidence-linked Qarinah node at the narrow width', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /id: 'narrow-memory-graph'/u);
+	assert.match(scenario, /\[data-memory-graph\]/u);
+	assert.match(scenario, /\.graph-node\[data-selected="true"\]/u);
+	assert.match(scenario, /\[data-graph-detail="evidence"\]/u);
 });
 
 test('Desktop Plan proof grants exact approvals and verifies only safe workspace tools', async () => {
@@ -245,7 +275,9 @@ test('stable evidence copies only passed real-run screenshots and hashes them', 
 	const completedProof = await readCompletedPlanProof(completedProofWorkspace);
 	const published = await publishStableEvidence(summary, output, completedProof);
 	assert.equal(published.proofManifest.outcome, 'passed');
-	assert.equal(published.proofManifest.screenshots.length, 7);
+	assert.equal(published.proofManifest.screenshots.length, 9);
+	assert.ok(published.proofManifest.screenshots.some((item: { readonly name: string }) => item.name === 'fikeya-chat-narrow-real.png'));
+	assert.ok(published.proofManifest.screenshots.some((item: { readonly name: string }) => item.name === 'fikeya-context-graph-narrow-real.png'));
 	assert.ok(published.proofManifest.screenshots.every((item: { readonly sha256: string }) => /^sha256:[0-9a-f]{64}$/u.test(item.sha256)));
 	assert.match(published.proofManifest.planProof.sha256, /^sha256:[0-9a-f]{64}$/u);
 	assert.equal(published.proofManifest.planProof.status, 'succeeded');
