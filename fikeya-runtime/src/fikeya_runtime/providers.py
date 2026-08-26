@@ -418,8 +418,16 @@ class ProviderStore:
         elif secret is not None:
             account = f"provider-{profile.name}-{uuid.uuid4().hex}"
             secret_ref = self.secrets.set(account, secret)
-        elif previous is not None and previous.secret_ref is not None:
+        elif (
+            previous is not None
+            and previous.secret_ref is not None
+            and _credential_trust_boundary(previous) == _credential_trust_boundary(profile)
+        ):
             secret_ref = previous.secret_ref
+        elif previous is not None and previous.secret_ref is not None:
+            raise ProviderError(
+                "Provider endpoint or credential boundary changed. Enter the secret again."
+            )
         else:
             raise ProviderError(
                 "A provider secret is required. Use the hidden prompt or stdin."
@@ -471,7 +479,6 @@ class ProviderStore:
         if profile.secret_ref is None:
             return None
         return self.secrets.get(profile.secret_ref)
-
     def _load(self) -> dict[str, ProviderProfile]:
         if not self.path.exists():
             return {}
@@ -507,6 +514,18 @@ class ProviderStore:
                     "Provider metadata unexpectedly contains a secret field."
                 )
         atomic_write_text(self.path, f"{serialized}\n")
+
+
+def _credential_trust_boundary(profile: ProviderProfile) -> tuple[str, str, str, str, str | None]:
+    """Return fields across which an existing credential must never be reused."""
+
+    return (
+        profile.kind.value,
+        profile.base_url,
+        profile.credential_type,
+        profile.api_mode,
+        profile.organization,
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -109,6 +109,34 @@ def test_provider_secret_never_enters_metadata_and_rotation_deletes_old_ref(
     }
 
 
+def test_provider_secret_reuse_requires_the_same_trust_boundary(tmp_path: Path) -> None:
+    secrets = MemorySecrets()
+    store = ProviderStore(tmp_path, secrets)
+    original = build_profile(
+        name="work",
+        kind=ProviderKind.OPENROUTER,
+        model="openai/gpt-oss-20b",
+    )
+    stored = store.configure(original, "private-value")
+    same_boundary = build_profile(
+        name="work",
+        kind=ProviderKind.OPENROUTER,
+        model="openai/gpt-oss-120b",
+    )
+    reused = store.configure(same_boundary, None)
+    moved_endpoint = build_profile(
+        name="work",
+        kind=ProviderKind.OPENROUTER,
+        base_url="https://example.com/v1",
+        model="openai/gpt-oss-120b",
+    )
+
+    assert reused.secret_ref == stored.secret_ref
+    with pytest.raises(ProviderError, match="Enter the secret again"):
+        store.configure(moved_endpoint, None)
+    assert store.resolve_secret(store.get("work")) == "private-value"
+
+
 def test_remote_plain_http_is_rejected_but_loopback_ollama_is_allowed() -> None:
     with pytest.raises(ConfigurationError, match="loopback"):
         build_profile(
