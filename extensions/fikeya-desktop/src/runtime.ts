@@ -5,7 +5,7 @@
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'child_process';
+import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'node:util';
 import type { FikeyaProviderHistoryMessage } from './conversation';
 
@@ -17,6 +17,7 @@ const runtimeTimeoutMilliseconds = 30_000;
 const agentTimeoutMilliseconds = 15 * 60_000;
 const maximumProtocolLineBytes = 1024 * 1024;
 const maximumProgressEvents = 4_096;
+const processTerminationGraceMilliseconds = 2_000;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
@@ -1335,6 +1336,32 @@ function parseProviderReport(value: unknown): FikeyaRuntimeReport {
 	};
 }
 
+function terminateChildTree(child: ChildProcess): void {
+	child.stdin?.destroy();
+	if (process.platform === 'win32' && child.pid) {
+		const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+			stdio: 'ignore',
+			windowsHide: true,
+			shell: false
+		});
+		killer.unref();
+		return;
+	}
+	try {
+		child.kill('SIGTERM');
+	} catch {
+		return;
+	}
+	const force = setTimeout(() => {
+		try {
+			child.kill('SIGKILL');
+		} catch {
+			// The child already closed between the grace timer and the kill request.
+		}
+	}, Math.floor(processTerminationGraceMilliseconds / 2));
+	force.unref();
+}
+
 function runFikeyaCli(
 	args: readonly string[],
 	workspacePath: string,
@@ -1355,6 +1382,8 @@ function runFikeyaCli(
 		let outputBytes = 0;
 		let settled = false;
 		let timeout: NodeJS.Timeout | undefined;
+		let requestedFailure: FikeyaRuntimeFailure | undefined;
+		let forcedFinish: NodeJS.Timeout | undefined;
 
 		const finish = (result: FikeyaRuntimeResult): void => {
 			if (!settled) {
@@ -1362,15 +1391,25 @@ function runFikeyaCli(
 				if (timeout) {
 					clearTimeout(timeout);
 				}
+				if (forcedFinish) {
+					clearTimeout(forcedFinish);
+				}
 				resolve(result);
 			}
+		};
+		const stop = (failure: FikeyaRuntimeFailure): void => {
+			if (settled || requestedFailure) {
+				return;
+			}
+			requestedFailure = failure;
+			terminateChildTree(child);
+			forcedFinish = setTimeout(() => finish({ ok: false, exitCode: null, failure }), processTerminationGraceMilliseconds);
 		};
 
 		const capture = (chunk: Buffer, retain: boolean): void => {
 			outputBytes += chunk.byteLength;
 			if (outputBytes > maximumOutputBytes) {
-				child.kill();
-				finish({ ok: false, exitCode: null, failure: 'output-limit' });
+				stop('output-limit');
 				return;
 			}
 			if (retain) {
@@ -1379,13 +1418,16 @@ function runFikeyaCli(
 		};
 
 		if (!child.stdout || !child.stderr) {
-			child.kill();
-			finish({ ok: false, exitCode: null, failure: 'runtime-error' });
+			stop('runtime-error');
 			return;
 		}
 		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
 		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
 		child.on('error', error => {
+			if (requestedFailure) {
+				finish({ ok: false, exitCode: null, failure: requestedFailure });
+				return;
+			}
 			finish({
 				ok: false,
 				exitCode: null,
@@ -1393,6 +1435,10 @@ function runFikeyaCli(
 			});
 		});
 		child.on('close', exitCode => {
+			if (requestedFailure) {
+				finish({ ok: false, exitCode, failure: requestedFailure });
+				return;
+			}
 			if (exitCode !== 0) {
 				finish({ ok: false, exitCode, failure: 'runtime-error' });
 				return;
@@ -1414,8 +1460,7 @@ function runFikeyaCli(
 		}
 
 		timeout = setTimeout(() => {
-			child.kill();
-			finish({ ok: false, exitCode: null, failure: 'timeout' });
+			stop('timeout');
 		}, runtimeTimeoutMilliseconds);
 	});
 }
@@ -1453,7 +1498,9 @@ function startBoundedJsonCli<T>(
 		let outputBytes = 0;
 		let settled = false;
 		let cancellationRequested = false;
+		let requestedFailure: FikeyaRuntimeFailure | undefined;
 		let timeout: NodeJS.Timeout | undefined;
+		let forcedFinish: NodeJS.Timeout | undefined;
 		const outputDecoder = new TextDecoder('utf-8', { fatal: true });
 
 		const finish = (operationResult: FikeyaCliResult<T>): void => {
@@ -1464,7 +1511,18 @@ function startBoundedJsonCli<T>(
 			if (timeout) {
 				clearTimeout(timeout);
 			}
+			if (forcedFinish) {
+				clearTimeout(forcedFinish);
+			}
 			resolve(operationResult);
+		};
+		const stop = (failure: FikeyaRuntimeFailure): void => {
+			if (settled || requestedFailure) {
+				return;
+			}
+			requestedFailure = failure;
+			terminateChildTree(child);
+			forcedFinish = setTimeout(() => finish({ ok: false, exitCode: null, failure }), processTerminationGraceMilliseconds);
 		};
 
 		cancelOperation = (): void => {
@@ -1472,38 +1530,33 @@ function startBoundedJsonCli<T>(
 				return;
 			}
 			cancellationRequested = true;
-			if (!child.kill()) {
-				finish({ ok: false, exitCode: null, failure: 'cancelled' });
-			}
+			stop('cancelled');
 		};
 
 		const capture = (chunk: Buffer, retain: boolean): void => {
 			outputBytes += chunk.byteLength;
 			if (outputBytes > outputLimitBytes) {
-				child.kill();
-				finish({ ok: false, exitCode: null, failure: 'output-limit' });
+				stop('output-limit');
 				return;
 			}
 			if (retain) {
 				try {
 					output += outputDecoder.decode(chunk, { stream: true });
 				} catch {
-					child.kill();
-					finish({ ok: false, exitCode: null, failure: 'invalid-json' });
+					stop('invalid-json');
 				}
 			}
 		};
 
 		if (!child.stdout || !child.stderr) {
-			child.kill();
-			finish({ ok: false, exitCode: null, failure: 'runtime-error' });
+			stop('runtime-error');
 			return;
 		}
 		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
 		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
 		child.on('error', error => {
-			if (cancellationRequested) {
-				finish({ ok: false, exitCode: null, failure: 'cancelled' });
+			if (requestedFailure) {
+				finish({ ok: false, exitCode: null, failure: requestedFailure });
 				return;
 			}
 			finish({
@@ -1513,8 +1566,8 @@ function startBoundedJsonCli<T>(
 			});
 		});
 		child.on('close', exitCode => {
-			if (cancellationRequested) {
-				finish({ ok: false, exitCode, failure: 'cancelled' });
+			if (requestedFailure) {
+				finish({ ok: false, exitCode, failure: requestedFailure });
 				return;
 			}
 			if (exitCode === null || !acceptedExitCodes.includes(exitCode)) {
@@ -1538,15 +1591,13 @@ function startBoundedJsonCli<T>(
 				if (cancellationRequested) {
 					return;
 				}
-				child.kill();
-				finish({ ok: false, exitCode: null, failure: 'runtime-error' });
+				stop('runtime-error');
 			});
 			child.stdin.end(stdinPayload, 'utf8');
 		}
 
 		timeout = setTimeout(() => {
-			child.kill();
-			finish({ ok: false, exitCode: null, failure: 'timeout' });
+			stop('timeout');
 		}, timeoutMilliseconds);
 	});
 	return { result, cancel: () => cancelOperation() };
@@ -1715,7 +1766,9 @@ function startPlanProtocolCli(
 		let outputBytes = 0;
 		let finalValue: FikeyaPlanView | undefined;
 		let settled = false;
+		let requestedFailure: FikeyaRuntimeFailure | undefined;
 		let timeout: NodeJS.Timeout | undefined;
+		let forcedFinish: NodeJS.Timeout | undefined;
 		let processing = Promise.resolve();
 		let progressCount = 0;
 		let lastProgressSequence = -1;
@@ -1728,14 +1781,19 @@ function startPlanProtocolCli(
 			if (timeout) {
 				clearTimeout(timeout);
 			}
+			if (forcedFinish) {
+				clearTimeout(forcedFinish);
+			}
 			progressChannel.close();
 			resolve(operationResult);
 		};
 		const stop = (failure: FikeyaRuntimeFailure): void => {
-			if (!settled) {
-				child.kill();
-				finish({ ok: false, exitCode: null, failure });
+			if (settled || requestedFailure) {
+				return;
 			}
+			requestedFailure = failure;
+			terminateChildTree(child);
+			forcedFinish = setTimeout(() => finish({ ok: false, exitCode: null, failure }), processTerminationGraceMilliseconds);
 		};
 		cancelOperation = (): void => stop('cancelled');
 
@@ -1810,6 +1868,10 @@ function startPlanProtocolCli(
 		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
 		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
 		child.on('error', error => {
+			if (requestedFailure) {
+				finish({ ok: false, exitCode: null, failure: requestedFailure });
+				return;
+			}
 			finish({
 				ok: false,
 				exitCode: null,
@@ -1817,6 +1879,10 @@ function startPlanProtocolCli(
 			});
 		});
 		child.on('close', exitCode => {
+			if (requestedFailure) {
+				finish({ ok: false, exitCode, failure: requestedFailure });
+				return;
+			}
 			if (buffered.length !== 0) {
 				const finalLine = buffered;
 				buffered = Buffer.alloc(0);
@@ -1869,7 +1935,9 @@ function startAgentProtocolCli(
 		let finalValue: FikeyaAgentTurn | undefined;
 		let protocolFailure: FikeyaRuntimeFailure | undefined;
 		let settled = false;
+		let requestedFailure: FikeyaRuntimeFailure | undefined;
 		let timeout: NodeJS.Timeout | undefined;
+		let forcedFinish: NodeJS.Timeout | undefined;
 		let processing = Promise.resolve();
 		let progressCount = 0;
 		let lastProgressSequence = -1;
@@ -1882,14 +1950,19 @@ function startAgentProtocolCli(
 			if (timeout) {
 				clearTimeout(timeout);
 			}
+			if (forcedFinish) {
+				clearTimeout(forcedFinish);
+			}
 			progressChannel.close();
 			resolve(operationResult);
 		};
 		const stop = (failure: FikeyaRuntimeFailure): void => {
-			if (!settled) {
-				child.kill();
-				finish({ ok: false, exitCode: null, failure });
+			if (settled || requestedFailure) {
+				return;
 			}
+			requestedFailure = failure;
+			terminateChildTree(child);
+			forcedFinish = setTimeout(() => finish({ ok: false, exitCode: null, failure }), processTerminationGraceMilliseconds);
 		};
 		cancelOperation = (): void => stop('cancelled');
 
@@ -1996,6 +2069,10 @@ function startAgentProtocolCli(
 			}
 		});
 		child.on('error', error => {
+			if (requestedFailure) {
+				finish({ ok: false, exitCode: null, failure: requestedFailure });
+				return;
+			}
 			finish({
 				ok: false,
 				exitCode: null,
@@ -2005,6 +2082,10 @@ function startAgentProtocolCli(
 		child.on('close', exitCode => {
 			void processing.then(() => {
 				if (settled) {
+					return;
+				}
+				if (requestedFailure) {
+					finish({ ok: false, exitCode, failure: requestedFailure });
 					return;
 				}
 				if (buffered.length !== 0) {

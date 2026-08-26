@@ -484,7 +484,9 @@ describe('Fikeya runtime protocol', () => {
 			);
 			const operation = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
 			operation.onProgress(() => operation.cancel());
-			assert.deepStrictEqual(await operation.result, { ok: false, exitCode: null, failure: 'cancelled' });
+			const cancelled = await operation.result;
+			assert.deepStrictEqual({ ok: cancelled.ok, failure: cancelled.failure }, { ok: false, failure: 'cancelled' });
+			assert.notStrictEqual(cancelled.exitCode, 0);
 		} finally {
 			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 		}
