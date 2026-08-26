@@ -2138,6 +2138,20 @@ function renderStatistics(state: StatisticsSurfaceState, strings: WebviewStrings
 			<tbody>${snapshot.breakdown.map(item => `<tr><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.model)}</td><td>${item.calls.toLocaleString()}</td><td>${item.measuredCalls.toLocaleString()}</td><td>${escapeHtml(formatUsageValue(item.inputTokens))}</td><td>${escapeHtml(formatUsageValue(item.cachedInputTokens))}</td><td>${escapeHtml(formatUsageValue(item.outputTokens))}</td><td>${escapeHtml(item.lastActivity ?? strings.noRecordedActivity)}</td></tr>`).join('')}</tbody>
 		</table></div>`
 		: `<p class="empty">${escapeHtml(strings.noStatisticsBreakdown)}</p>`;
+	const comparison = snapshot?.matchedComparison;
+	const matchedComparison = comparison
+		? `<section class="matched-comparison" aria-labelledby="matched-comparison-title">
+			<h2 id="matched-comparison-title">${escapeHtml(strings.matchedComparison)}</h2>
+			<p>${escapeHtml(vscode.l10n.t('{0} matched task pairs with the same pinned model and conditions.', comparison.pairCount))}</p>
+			<div class="statistics-grid">
+				<div class="statistics-metric"><span>${escapeHtml(strings.baselineBilledTokens)}</span><strong>${comparison.baselineBilledTokens.toLocaleString()}</strong></div>
+				<div class="statistics-metric"><span>${escapeHtml(strings.fikeyaBilledTokens)}</span><strong>${comparison.fikeyaBilledTokens.toLocaleString()}</strong></div>
+				<div class="statistics-metric"><span>${escapeHtml(strings.tokenDifference)}</span><strong>${comparison.billedTokenReductionPercent.toLocaleString(undefined, { maximumFractionDigits: 4 })}%</strong></div>
+				<div class="statistics-metric"><span>${escapeHtml(strings.verifiedSolveRate)}</span><strong>${(comparison.baselineVerifiedSolveRate * 100).toFixed(1)}% → ${(comparison.fikeyaVerifiedSolveRate * 100).toFixed(1)}%</strong></div>
+			</div>
+			<p class="usage-basis">${escapeHtml(strings.comparisonReceipt)} ${escapeHtml(comparison.reportSha256)}</p>
+		</section>`
+		: `<section class="matched-comparison" aria-labelledby="matched-comparison-title"><h2 id="matched-comparison-title">${escapeHtml(strings.matchedComparison)}</h2><p class="empty">${escapeHtml(strings.noMatchedComparison)}</p></section>`;
 
 	return `<section class="card" aria-labelledby="statistics-title">
 		<div class="statistics-status">
@@ -2161,6 +2175,7 @@ function renderStatistics(state: StatisticsSurfaceState, strings: WebviewStrings
 			<dt>${escapeHtml(strings.runtimeStatisticsApi)}</dt><dd>${escapeHtml(runtimeApiStatus)}</dd>
 			<dt>${escapeHtml(strings.extensionUpdateStatus)}</dt><dd>${escapeHtml(strings.extensionUpdateManual)}</dd>
 		</dl>
+		${matchedComparison}
 		<h2>${escapeHtml(strings.providerModelBreakdown)}</h2>
 		${breakdown}
 	</section>`;
@@ -2518,6 +2533,13 @@ interface WebviewStrings {
 	readonly extensionUpdateManual: string;
 	readonly providerModelBreakdown: string;
 	readonly noStatisticsBreakdown: string;
+	readonly matchedComparison: string;
+	readonly noMatchedComparison: string;
+	readonly baselineBilledTokens: string;
+	readonly fikeyaBilledTokens: string;
+	readonly tokenDifference: string;
+	readonly verifiedSolveRate: string;
+	readonly comparisonReceipt: string;
 	readonly getStarted: string;
 	readonly initialized: string;
 	readonly notInitialized: string;
@@ -2666,6 +2688,13 @@ function getWebviewStrings(): WebviewStrings {
 		extensionUpdateManual: vscode.l10n.t('Managed by the current VSIX host. This view does not claim Marketplace or native auto-update.'),
 		providerModelBreakdown: vscode.l10n.t('Provider and Model Breakdown'),
 		noStatisticsBreakdown: vscode.l10n.t('No provider or model usage has been recorded in this local workspace.'),
+		matchedComparison: vscode.l10n.t('Matched Verified Baseline'),
+		noMatchedComparison: vscode.l10n.t('No matched verified comparison is recorded. Fikeya will not infer a saving from unrelated calls.'),
+		baselineBilledTokens: vscode.l10n.t('Baseline Billed Tokens'),
+		fikeyaBilledTokens: vscode.l10n.t('Fikeya Billed Tokens'),
+		tokenDifference: vscode.l10n.t('Billed Token Reduction'),
+		verifiedSolveRate: vscode.l10n.t('Verified Solve Rate'),
+		comparisonReceipt: vscode.l10n.t('Aggregate report receipt:'),
 		getStarted: vscode.l10n.t('Get Started'),
 		initialized: vscode.l10n.t('Initialized'),
 		notInitialized: vscode.l10n.t('Not Initialized'),

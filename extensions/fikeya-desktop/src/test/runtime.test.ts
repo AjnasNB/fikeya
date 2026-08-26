@@ -860,6 +860,16 @@ describe('Fikeya runtime protocol', () => {
 			outputTokens: 512,
 			qarinahContextReceipts: 2,
 			lastActivity: '2026-08-25T07:29:00.000Z',
+			matchedComparison: {
+				status: 'matched',
+				pairCount: 2,
+				baselineBilledTokens: 1_000,
+				fikeyaBilledTokens: 600,
+				baselineVerifiedSolveRate: 1,
+				fikeyaVerifiedSolveRate: 1,
+				billedTokenReductionPercent: 40,
+				reportSha256: `sha256:${'a'.repeat(64)}`
+			},
 			breakdown: [{
 				provider: 'azure-primary',
 				model: 'gpt-coding',
@@ -883,7 +893,8 @@ describe('Fikeya runtime protocol', () => {
 			outputTokens: value.outputTokens,
 			qarinahContextReceipts: value.qarinahContextReceipts,
 			lastActivity: value.lastActivity,
-			breakdown: value.breakdown
+			breakdown: value.breakdown,
+			matchedComparison: value.matchedComparison
 		});
 	});
 
@@ -901,6 +912,7 @@ describe('Fikeya runtime protocol', () => {
 			outputTokens: null,
 			qarinahContextReceipts: 0,
 			lastActivity: null,
+			matchedComparison: null,
 			breakdown: [{
 				provider: 'local',
 				model: 'unknown',
@@ -916,6 +928,7 @@ describe('Fikeya runtime protocol', () => {
 		assert.strictEqual(parseStatistics({ ...unavailable, inputTokens: 0 }), undefined);
 		assert.strictEqual(parseStatistics({ ...unavailable, measuredProviderCalls: 1 }), undefined);
 		assert.strictEqual(parseStatistics({ ...unavailable, generatedAt: 'not-a-date' }), undefined);
+		assert.strictEqual(parseStatistics({ ...unavailable, matchedComparison: { status: 'matched' } }), undefined);
 	});
 
 	test('rejects provider metadata and probes outside the bounded schema', () => {

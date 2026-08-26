@@ -161,6 +161,17 @@ export interface FikeyaStatisticsBreakdown {
 	readonly lastActivity: string | null;
 }
 
+export interface FikeyaMatchedComparison {
+	readonly status: 'matched';
+	readonly pairCount: number;
+	readonly baselineBilledTokens: number;
+	readonly fikeyaBilledTokens: number;
+	readonly baselineVerifiedSolveRate: number;
+	readonly fikeyaVerifiedSolveRate: number;
+	readonly billedTokenReductionPercent: number;
+	readonly reportSha256: string;
+}
+
 /** Content-free aggregate metrics read from the local Fikeya Runtime SQLite database. */
 export interface FikeyaStatistics {
 	readonly source: 'local-runtime-sqlite';
@@ -175,6 +186,7 @@ export interface FikeyaStatistics {
 	readonly qarinahContextReceipts: number;
 	readonly lastActivity: string | null;
 	readonly breakdown: readonly FikeyaStatisticsBreakdown[];
+	readonly matchedComparison: FikeyaMatchedComparison | null;
 }
 
 export type FikeyaPlanStatus = 'draft' | 'reviewed' | 'awaiting_approval' | 'executing' | 'verifying' | 'succeeded' | 'failed' | 'cancelled';
@@ -1612,6 +1624,7 @@ export function parseStatistics(value: unknown): FikeyaStatistics | undefined {
 	const inputTokens = nullableBoundedInteger(record?.inputTokens);
 	const cachedInputTokens = nullableBoundedInteger(record?.cachedInputTokens);
 	const outputTokens = nullableBoundedInteger(record?.outputTokens);
+	const matchedComparison = record?.matchedComparison === null ? null : parseMatchedComparison(record?.matchedComparison);
 	if (!record || record.ok !== true
 		|| source !== 'local-runtime-sqlite'
 		|| (measurement !== 'provider-reported-only' && measurement !== 'unavailable')
@@ -1621,6 +1634,7 @@ export function parseStatistics(value: unknown): FikeyaStatistics | undefined {
 		|| !isBoundedInteger(record.measuredProviderCalls, 0, Number.MAX_SAFE_INTEGER)
 		|| record.measuredProviderCalls > record.providerCalls
 		|| inputTokens === undefined || cachedInputTokens === undefined || outputTokens === undefined
+		|| matchedComparison === undefined
 		|| !isBoundedInteger(record.qarinahContextReceipts, 0, Number.MAX_SAFE_INTEGER)
 		|| !Array.isArray(record.breakdown) || record.breakdown.length > 128) {
 		return undefined;
@@ -1664,7 +1678,43 @@ export function parseStatistics(value: unknown): FikeyaStatistics | undefined {
 		outputTokens,
 		qarinahContextReceipts: record.qarinahContextReceipts,
 		lastActivity,
-		breakdown
+		breakdown,
+		matchedComparison
+	};
+}
+
+function parseMatchedComparison(value: unknown): FikeyaMatchedComparison | undefined {
+	const record = asRecord(value);
+	const reportSha256 = strictBoundedString(record?.reportSha256, 71);
+	if (!record || !hasExactRecordKeys(record, [
+		'baselineBilledTokens',
+		'baselineVerifiedSolveRate',
+		'billedTokenReductionPercent',
+		'fikeyaBilledTokens',
+		'fikeyaVerifiedSolveRate',
+		'pairCount',
+		'reportSha256',
+		'status'
+	])
+		|| record.status !== 'matched'
+		|| !isBoundedInteger(record.pairCount, 1, 100_000)
+		|| !isBoundedInteger(record.baselineBilledTokens, 1, Number.MAX_SAFE_INTEGER)
+		|| !isBoundedInteger(record.fikeyaBilledTokens, 1, Number.MAX_SAFE_INTEGER)
+		|| !isBoundedFiniteNumber(record.baselineVerifiedSolveRate, 0, 1)
+		|| !isBoundedFiniteNumber(record.fikeyaVerifiedSolveRate, 0, 1)
+		|| !isBoundedFiniteNumber(record.billedTokenReductionPercent, -1_000_000, 100)
+		|| !reportSha256 || !/^sha256:[0-9a-f]{64}$/.test(reportSha256)) {
+		return undefined;
+	}
+	return {
+		status: 'matched',
+		pairCount: record.pairCount,
+		baselineBilledTokens: record.baselineBilledTokens,
+		fikeyaBilledTokens: record.fikeyaBilledTokens,
+		baselineVerifiedSolveRate: record.baselineVerifiedSolveRate,
+		fikeyaVerifiedSolveRate: record.fikeyaVerifiedSolveRate,
+		billedTokenReductionPercent: record.billedTokenReductionPercent,
+		reportSha256
 	};
 }
 
@@ -2187,6 +2237,10 @@ function strictBoundedUtf8String(value: unknown, maximumBytes: number): string |
 
 function isBoundedInteger(value: unknown, minimum: number, maximum: number): value is number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+}
+
+function isBoundedFiniteNumber(value: unknown, minimum: number, maximum: number): value is number {
+	return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
 }
 
 function nullableBoundedInteger(value: unknown): number | null | undefined {
