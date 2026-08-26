@@ -134,6 +134,32 @@ describe('Fikeya webview message validation', () => {
 		]);
 	});
 
+	test('accepts only bounded consented parallel-agent selections', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			prompt: 'Review the same change independently.',
+			allowNetwork: true
+		}), {
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			prompt: 'Review the same change independently.',
+			allowNetwork: true
+		});
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer', 'security-reviewer'],
+			prompt: 'Duplicate selection.',
+			allowNetwork: true
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer'],
+			prompt: 'No consent.',
+			allowNetwork: false
+		}), undefined);
+	});
+
 	test('accepts an exact bounded plan specification and declared lifecycle actions', () => {
 		const specification = {
 			schemaVersion: 1,

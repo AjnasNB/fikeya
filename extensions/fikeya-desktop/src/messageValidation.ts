@@ -12,6 +12,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
 	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly prompt: string; readonly allowNetwork: true }
 	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
@@ -32,6 +33,7 @@ export type FikeyaWebviewMessage =
 
 export type FikeyaCommand =
 	| 'fikeya.configureProvider'
+	| 'fikeya.configureAgents'
 	| 'fikeya.initializeWorkspace'
 	| 'fikeya.runDoctor'
 	| 'fikeya.mode.editor'
@@ -46,6 +48,7 @@ export type FikeyaCommand =
 
 const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.configureProvider',
+	'fikeya.configureAgents',
 	'fikeya.initializeWorkspace',
 	'fikeya.runDoctor',
 	'fikeya.mode.editor',
@@ -140,6 +143,25 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				maxOutputTokens: value.maxOutputTokens,
 				contextMaxCharacters: value.contextMaxCharacters,
 				memoryMode: value.memoryMode,
+				allowNetwork: true
+			};
+		}
+		case 'runMultiAgent': {
+			if (typeof value.prompt !== 'string'
+				|| value.prompt.trim().length === 0
+				|| Buffer.byteLength(value.prompt, 'utf8') > maximumPromptBytes
+				|| value.allowNetwork !== true
+				|| !Array.isArray(value.selectedAgentIds)
+				|| value.selectedAgentIds.length < 1
+				|| value.selectedAgentIds.length > 16
+				|| new Set(value.selectedAgentIds).size !== value.selectedAgentIds.length
+				|| value.selectedAgentIds.some(agentId => !isProviderName(agentId))) {
+				return undefined;
+			}
+			return {
+				type: value.type,
+				selectedAgentIds: value.selectedAgentIds as string[],
+				prompt: value.prompt,
 				allowNetwork: true
 			};
 		}

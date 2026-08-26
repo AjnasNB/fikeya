@@ -27,6 +27,7 @@
 		"onView:fikeya.dashboard",
 		"onCommand:fikeya.open",
 		"onCommand:fikeya.configureProvider",
+		"onCommand:fikeya.configureAgents",
 		"onCommand:fikeya.initializeWorkspace",
 		"onCommand:fikeya.runDoctor",
 		"onCommand:fikeya.mode.research",
@@ -66,6 +67,12 @@
 				"title": "%command.configureProvider.title%",
 				"category": "%command.category%",
 				"icon": "$(key)"
+			},
+			{
+				"command": "fikeya.configureAgents",
+				"title": "%command.configureAgents.title%",
+				"category": "%command.category%",
+				"icon": "$(organization)"
 			},
 			{
 				"command": "fikeya.chat.deleteSavedHistory",
