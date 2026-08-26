@@ -102,7 +102,7 @@ function renderLink(label: string, rawTarget: string): string {
 }
 
 function isProjectRelativePath(value: string): boolean {
-	if (!value || value.length > 4096 || value.includes('\\') || value.startsWith('/') || /^[a-zA-Z]:/.test(value)) {
+	if (!value || value.length > 4096 || value.includes('\\') || value.startsWith('/') || /[:?#\u0000-\u001f]/.test(value)) {
 		return false;
 	}
 	return value.split('/').every(part => part.length > 0 && part !== '.' && part !== '..');

@@ -16,10 +16,12 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
+	| { readonly type: 'restorePlan' }
 	| { readonly type: 'refreshPlan' }
 	| { readonly type: 'selectSurface'; readonly surface: 'chat' | 'plan' | 'context' | 'usage' }
 	| { readonly type: 'planAction'; readonly action: 'review' | 'approve-all' | 'approve-step' | 'run' | 'resume' | 'cancel'; readonly stepId?: string }
 	| { readonly type: 'clearConversation' }
+	| { readonly type: 'restoreConversation' }
 	| { readonly type: 'copyText'; readonly text: string }
 	| { readonly type: 'openFile'; readonly path: string }
 	| { readonly type: 'openExternal'; readonly url: string }
@@ -77,8 +79,10 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'refreshProviders':
 		case 'cancelAgent':
 		case 'newPlan':
+		case 'restorePlan':
 		case 'refreshPlan':
 		case 'clearConversation':
+		case 'restoreConversation':
 		case 'refreshReceipts':
 		case 'refreshStatistics':
 		case 'refreshMemory':
@@ -243,11 +247,11 @@ function parsePlanVerificationSpecification(value: unknown): Record<string, unkn
 }
 
 function isProjectRelativeVerificationPath(value: string): boolean {
-	if (!value || value === '.' || value.includes('\\') || value.startsWith('/') || /^[a-zA-Z]:/.test(value)) {
+	if (!value || value === '.' || value.includes('\\') || value.startsWith('/') || /[:?#\u0000-\u001f]/.test(value)) {
 		return false;
 	}
 	const parts = value.split('/');
-	return !parts.includes('..') && !parts.some(part => part.toLowerCase() === '.fikeya');
+	return !parts.some(part => part.length === 0 || part === '.' || part === '..' || part.toLowerCase() === '.fikeya');
 }
 
 function hasExactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
