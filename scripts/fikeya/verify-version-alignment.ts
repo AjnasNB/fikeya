@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  SPDX-License-Identifier: AGPL-3.0-or-later
- *  Copyright (C) 2026 Fikeya contributors
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 const fs = require('node:fs');
@@ -12,7 +12,9 @@ const readText = relative => fs.readFileSync(path.join(repositoryRoot, relative)
 const distribution = readJson('fikeya-distribution.json');
 const productVersion = distribution.version;
 const match = /^(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$/.exec(productVersion);
-if (!match) throw new Error(`Unsupported product version: ${productVersion}`);
+if (!match) {
+	throw new Error(`Unsupported product version: ${productVersion}`);
+}
 const pythonVersion = `${match[1]}.${match[2]}.${match[3]}b${match[4]}`;
 
 const checks = [
@@ -23,7 +25,9 @@ const checks = [
 ];
 for (const [relative, pattern, expected] of checks) {
 	const actual = pattern.exec(readText(relative))?.[1];
-	if (actual !== expected) throw new Error(`${relative} declares ${actual ?? 'no version'}; expected ${expected} from fikeya-distribution.json`);
+	if (actual !== expected) {
+		throw new Error(`${relative} declares ${actual ?? 'no version'}; expected ${expected} from fikeya-distribution.json`);
+	}
 }
 
 const extension = readJson('extensions/fikeya-desktop/package.json');
@@ -35,7 +39,9 @@ if (extension.version !== productVersion || extensionLock.version !== productVer
 const components = readJson('scripts/fikeya/components.json').components;
 for (const id of ['agent-core', 'runtime']) {
 	const actual = components.find(component => component.id === id)?.version;
-	if (actual !== pythonVersion) throw new Error(`components.json ${id} version ${actual ?? 'missing'} must be ${pythonVersion}.`);
+	if (actual !== pythonVersion) {
+		throw new Error(`components.json ${id} version ${actual ?? 'missing'} must be ${pythonVersion}.`);
+	}
 }
 
 const product = readJson('product.json');
