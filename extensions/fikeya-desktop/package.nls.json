@@ -8,6 +8,7 @@
 	"command.category": "Fikeya",
 	"command.open.title": "Open Fikeya Chat",
 	"command.configureProvider.title": "Configure Provider",
+	"command.chat.deleteSavedHistory.title": "Delete Saved Chat History",
 	"command.initializeWorkspace.title": "Initialize Workspace",
 	"command.runDoctor.title": "Run Doctor",
 	"command.mode.editor.title": "Open Editor Mode",
@@ -17,5 +18,6 @@
 	"command.mode.research.title": "Open Research Mode",
 	"command.mode.lab.title": "Open Context Graph",
 	"command.view.usage.title": "Open Local Usage",
-	"command.view.setup.title": "Open Setup"
+	"command.view.setup.title": "Open Setup",
+	"configuration.chat.persistWorkspaceHistory.description": "Persist a bounded, credential-redacted copy of Fikeya Chat messages in this workspace. Disabled by default; when disabled, Chat remains process-local."
 }

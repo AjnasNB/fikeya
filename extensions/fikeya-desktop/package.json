@@ -68,6 +68,12 @@
 				"icon": "$(key)"
 			},
 			{
+				"command": "fikeya.chat.deleteSavedHistory",
+				"title": "%command.chat.deleteSavedHistory.title%",
+				"category": "%command.category%",
+				"icon": "$(trash)"
+			},
+			{
 				"command": "fikeya.initializeWorkspace",
 				"title": "%command.initializeWorkspace.title%",
 				"category": "%command.category%",
@@ -126,6 +132,17 @@
 				"enablement": "fikeya.isDesktop"
 			}
 		],
+		"configuration": {
+			"title": "Fikeya",
+			"properties": {
+				"fikeya.chat.persistWorkspaceHistory": {
+					"type": "boolean",
+					"default": false,
+					"scope": "resource",
+					"description": "%configuration.chat.persistWorkspaceHistory.description%"
+				}
+			}
+		},
 		"keybindings": [
 			{
 				"command": "fikeya.open",

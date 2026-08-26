@@ -123,6 +123,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.configureProvider', async () => {
 		await provider.configureProvider();
 	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.chat.deleteSavedHistory', async () => {
+		await provider.deleteSavedConversation();
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.initializeWorkspace', async () => {
 		await provider.runRuntimeCommand('init');
 	}));
@@ -178,10 +181,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private planCancellationInProgress = false;
 
 	public constructor(private readonly context: vscode.ExtensionContext) {
+		const persistConversation = this.conversationPersistenceEnabled();
 		this.state = {
 			isDesktop: vscode.env.appName === 'Fikeya' || vscode.env.appName === 'Fikeya Dev',
 			activeMode: 'chat',
-			conversation: parseConversationState(context.workspaceState.get<string>(FikeyaWebviewViewProvider.conversationKey) ?? ''),
+			conversation: persistConversation
+				? parseConversationState(context.workspaceState.get<string>(FikeyaWebviewViewProvider.conversationKey) ?? '')
+				: [],
 			workspaceName: getWorkspaceName(),
 			providersStatus: 'not-loaded',
 			providers: [],
@@ -195,6 +201,16 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			runtimeProviderCount: undefined,
 			qarinah: vscode.l10n.t('Not checked')
 		};
+		if (!persistConversation) {
+			void context.workspaceState.update(FikeyaWebviewViewProvider.conversationKey, undefined);
+		}
+	}
+
+	public async deleteSavedConversation(): Promise<void> {
+		await this.context.workspaceState.update(FikeyaWebviewViewProvider.conversationKey, undefined);
+		this.state = { ...this.state, conversation: [] };
+		this.refresh();
+		void vscode.window.showInformationMessage(vscode.l10n.t('Saved Fikeya Chat history was deleted from this workspace.'));
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -851,6 +867,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 	private async persistConversation(): Promise<void> {
 		try {
+			if (!this.conversationPersistenceEnabled()) {
+				await this.context.workspaceState.update(FikeyaWebviewViewProvider.conversationKey, undefined);
+				return;
+			}
 			await this.context.workspaceState.update(
 				FikeyaWebviewViewProvider.conversationKey,
 				this.state.conversation.length === 0 ? undefined : serializeConversationState(this.state.conversation)
@@ -858,6 +878,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		} catch {
 			void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya could not retain this conversation in the local workspace store. The current window can continue.'));
 		}
+	}
+
+	private conversationPersistenceEnabled(): boolean {
+		return vscode.workspace.getConfiguration('fikeya').get<boolean>('chat.persistWorkspaceHistory', false);
 	}
 
 	private async approveAgentTool(request: FikeyaAgentApproval): Promise<FikeyaAgentApprovalDecision> {
@@ -2069,7 +2093,7 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, rese
 		? `<details class="run-details"><summary>${escapeHtml(vscode.l10n.t('Inspect latest run'))}</summary><div class="run-details-body">${outcome}<dl class="receipt"><dt>${escapeHtml(strings.session)}</dt><dd><code>${escapeHtml(state.agent.sessionId)}</code></dd><dt>${escapeHtml(strings.call)}</dt><dd><code>${escapeHtml(state.agent.callId ?? strings.unavailable)}</code></dd><dt>${escapeHtml(strings.usageBasis)}</dt><dd>${escapeHtml(state.agent.usage?.measurement ?? strings.unavailable)}</dd><dt>${escapeHtml(strings.context)}</dt><dd>${escapeHtml(formatContextStatus(state.agent.memory, strings))}</dd>${state.agent.memory?.receiptId ? `<dt>${escapeHtml(strings.contextReceipt)}</dt><dd><code>${escapeHtml(state.agent.memory.receiptId)}</code></dd>` : ''}${state.agent.memory?.responseSha256 ? `<dt>${escapeHtml(strings.contextEvidence)}</dt><dd><code>${escapeHtml(state.agent.memory.responseSha256)}</code></dd>` : ''}</dl></div></details>`
 		: '';
 	return `<section class="card agent-surface" aria-labelledby="agent-run-title">
-		<div class="agent-heading"><div><h2 id="agent-run-title">${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Chat'))}</h2><p>${escapeHtml(researchMode ? vscode.l10n.t('Cited investigation with the same project and permission boundary.') : vscode.l10n.t('A live conversation beside the editor. Bounded follow-up history is retained locally for this workspace.'))}</p></div><div class="agent-heading-actions"><button class="quiet" data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button><span class="badge">${escapeHtml(planOperationInProgress ? vscode.l10n.t('Plan active') : agentStatusLabel(state.agent, strings))}</span></div></div>
+		<div class="agent-heading"><div><h2 id="agent-run-title">${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Chat'))}</h2><p>${escapeHtml(researchMode ? vscode.l10n.t('Cited investigation with the same project and permission boundary.') : vscode.l10n.t('A live conversation beside the editor. Chat is process-local unless workspace history is explicitly enabled in Fikeya settings.'))}</p></div><div class="agent-heading-actions"><button class="quiet" data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button><span class="badge">${escapeHtml(planOperationInProgress ? vscode.l10n.t('Plan active') : agentStatusLabel(state.agent, strings))}</span></div></div>
 		${chatPlan}
 		<div class="chat-thread" data-chat-thread aria-live="polite">${conversation}${progress}</div>
 		<form class="agent-form" data-agent-form autocomplete="off">

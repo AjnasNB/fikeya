@@ -108,7 +108,7 @@ Every persisted step currently has:
 
 ### Chat
 
-- Shows a bounded process-local multi-turn conversation; it is not provider-native session replay.
+- Shows a bounded multi-turn conversation; it is process-local by default and can be persisted only when the developer explicitly enables credential-redacted workspace history. It is not provider-native session replay.
 - Exposes provider, model, context mode, and effort or output budget without turning the composer into a settings page.
 - Starts either an ordinary interactive agent run or a separate planning-only proposal call from the same composer.
 - Provides direct actions for stop, create/open plan, open context, usage, and settings.

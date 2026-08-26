@@ -51,8 +51,9 @@ const redactedCredential = '[REDACTED CREDENTIAL]';
 
 /**
  * Keeps the live chat useful without turning the extension host into an unbounded transcript
- * store. Conversation content remains process-local; durable project evidence belongs to
- * Qarinah and content-free execution metadata belongs to Fikeya Runtime.
+ * store. Conversation content remains process-local unless the developer explicitly enables
+ * workspace history; durable project evidence belongs to Qarinah and content-free execution
+ * metadata belongs to Fikeya Runtime.
  */
 export function appendConversationMessage(
 	messages: readonly FikeyaConversationMessage[],
