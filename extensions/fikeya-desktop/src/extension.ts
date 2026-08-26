@@ -1893,6 +1893,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const persistUiState = patch => vscode.setState({ ...(vscode.getState() || {}), ...patch });
 		const surfaceRoot = document.querySelector('[data-initial-modal]');
 		const activePlanId = surfaceRoot?.dataset.planId || '';
+		const initialSurface = 'chat';
 		const workspaceModals = Array.from(document.querySelectorAll('[data-workspace-modal]'));
 		const openWorkspaceModal = modalName => {
 			const modal = workspaceModals.find(candidate => candidate.dataset.workspaceModal === modalName);
@@ -1918,7 +1919,16 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const serverInitialModal = surfaceRoot?.dataset.initialModal || '';
 		const initialModal = serverInitialModal || (typeof persistedState.modal === 'string' ? persistedState.modal : '');
 		if (initialModal) openWorkspaceModal(initialModal);
-		const initialSurface = 'chat';
+		const chatPlanDetails = document.querySelector('[data-chat-plan-details]');
+		if (chatPlanDetails) {
+			const planStateMatches = persistedState.chatPlanId === activePlanId;
+			if (planStateMatches && typeof persistedState.chatPlanOpen === 'boolean') {
+				chatPlanDetails.open = persistedState.chatPlanOpen;
+			}
+			const saveChatPlanState = () => persistUiState({ chatPlanId: activePlanId, chatPlanOpen: chatPlanDetails.open });
+			chatPlanDetails.addEventListener('toggle', saveChatPlanState);
+			if (!planStateMatches) saveChatPlanState();
+		}
 		const planSteps = Array.from(document.querySelectorAll('[data-plan-step]'));
 		const planDetails = Array.from(document.querySelectorAll('[data-plan-detail]'));
 		const selectPlanStep = (stepId, focus = false) => {
@@ -2191,7 +2201,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			if (!(element instanceof HTMLElement)) return;
 			const name = element.getAttribute('name');
 			const graphSearch = element.hasAttribute('data-graph-search');
-			if (name || graphSearch) persistUiState({ focusTarget: graphSearch ? 'graph-search' : name, focusSurface: (vscode.getState() || {}).surface });
+			if (name || graphSearch) persistUiState({ focusTarget: graphSearch ? 'graph-search' : name, focusSurface: initialSurface });
 		});
 		if (persistedState.focusSurface === initialSurface) {
 			const focusTarget = persistedState.focusTarget === 'graph-search'
@@ -2713,7 +2723,7 @@ function renderChatPlanStrip(plan: FikeyaPlanRecord, operationRunning: boolean, 
 	const step = summary.step
 		? `<div class="chat-plan-step"><span>${escapeHtml(stepLabel)}</span><strong>${escapeHtml(vscode.l10n.t('{0} of {1} · {2}', summary.step.order, summary.totalSteps, summary.step.title))}</strong><span>${escapeHtml(planStepStatusLabel(summary.step.status))}</span></div>`
 		: `<div class="chat-plan-step"><span>${escapeHtml(stepLabel)}</span><strong>${escapeHtml(vscode.l10n.t('No recorded step'))}</strong></div>`;
-	return `<details class="chat-plan-details"><summary class="chat-plan-strip" aria-label="${escapeHtml(vscode.l10n.t('Current plan'))}"><div class="chat-plan-copy"><span>${escapeHtml(vscode.l10n.t('Current plan'))}</span><strong title="${escapeHtml(summary.title)}">${escapeHtml(summary.title)}</strong><span class="chat-plan-status">${escapeHtml(operationRunning ? vscode.l10n.t('Running') : planStatusLabel(summary.status))}</span></div>${step}<span class="plan-expand">${escapeHtml(vscode.l10n.t('Details'))}</span></summary><div class="chat-plan-body">${planSurface}</div></details>`;
+	return `<details class="chat-plan-details" data-chat-plan-details><summary class="chat-plan-strip" aria-label="${escapeHtml(vscode.l10n.t('Current plan'))}"><div class="chat-plan-copy"><span>${escapeHtml(vscode.l10n.t('Current plan'))}</span><strong title="${escapeHtml(summary.title)}">${escapeHtml(summary.title)}</strong><span class="chat-plan-status">${escapeHtml(operationRunning ? vscode.l10n.t('Running') : planStatusLabel(summary.status))}</span></div>${step}<span class="plan-expand">${escapeHtml(vscode.l10n.t('Details'))}</span></summary><div class="chat-plan-body">${planSurface}</div></details>`;
 }
 
 function renderConversationMessage(message: FikeyaConversationMessage): string {
