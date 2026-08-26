@@ -27,6 +27,7 @@ const requiredFiles = [
 	'sitemap.xml',
 	'site.webmanifest',
 	'styles.css',
+	'updates',
 	'worker.ts',
 	'wrangler.jsonc'
 ];
@@ -62,6 +63,7 @@ const headers = await readFile(new URL('_headers', root), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('site.webmanifest', root), 'utf8'));
 const robots = await readFile(new URL('robots.txt', root), 'utf8');
 const sitemap = await readFile(new URL('sitemap.xml', root), 'utf8');
+const updateManifest = JSON.parse(await readFile(new URL('updates/latest.json', root), 'utf8'));
 const wranglerText = await readFile(new URL('wrangler.jsonc', root), 'utf8');
 const workerWranglerText = await readFile(new URL('wrangler.worker.jsonc', root), 'utf8');
 const worker = (await import(new URL('worker.ts', root))).default;
@@ -209,6 +211,42 @@ const assetResponse = await worker.fetch(new Request('https://fikeya.com/'), {
 	ASSETS: { fetch: async () => new Response('asset') }
 });
 assert(assetResponse.status === 200 && await assetResponse.text() === 'asset', 'Apex requests must reach the static asset binding');
+
+assert(updateManifest.enabled === false, 'The source update manifest must stay disabled until a signed release is available');
+assert(updateManifest.timestamped === false, 'The disabled update manifest must not claim a timestamped signature');
+const disabledUpdateResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111'), {
+	ASSETS: { fetch: async () => Response.json(updateManifest) }
+});
+assert(disabledUpdateResponse.status === 204, 'Disabled update manifests must return no update');
+const signedUpdate = {
+	...updateManifest,
+	enabled: true,
+	version: '2222222222222222222222222222222222222222',
+	productVersion: 'v0.1.0-beta.2',
+	authenticodeSubject: 'CN=Ajnas N B',
+	timestamped: true,
+	assets: {
+		'win32-x64-user': {
+			url: 'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.2/FikeyaSetup-0.1.0-beta.2-win32-x64.exe',
+			sha256: 'a'.repeat(64)
+		}
+	}
+};
+const signedUpdateResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111'), {
+	ASSETS: { fetch: async () => Response.json(signedUpdate) }
+});
+assert(signedUpdateResponse.status === 200, 'A valid signed update manifest must return an update');
+const signedUpdatePayload = await signedUpdateResponse.json();
+assert(signedUpdatePayload.version === signedUpdate.version, 'Update response commit is incorrect');
+assert(signedUpdatePayload.productVersion === '0.1.0-beta.2', 'Update response product version is incorrect');
+const unsignedUpdateResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111'), {
+	ASSETS: { fetch: async () => Response.json({ ...signedUpdate, authenticodeSubject: '' }) }
+});
+assert(unsignedUpdateResponse.status === 204, 'An unsigned update manifest must fail closed');
+const updatePostResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111', { method: 'POST' }), {
+	ASSETS: { fetch: async () => Response.json(signedUpdate) }
+});
+assert(updatePostResponse.status === 405, 'The update endpoint must reject non-GET requests');
 
 const allowedExternalLinks = new Set([
 	'https://fikeya.com/',

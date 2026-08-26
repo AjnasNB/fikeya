@@ -23,6 +23,8 @@
 	"win32arm64UserAppId": "{{F40EE1EC-461D-4F75-9F31-1595B7D46B10}",
 	"win32AppUserModelId": "Fikeya.Desktop",
 	"win32ShellNameShort": "&Fikeya",
+	"quality": "stable",
+	"updateUrl": "https://fikeya.com",
 	"win32TunnelServiceMutex": "fikeya-tunnelservice",
 	"win32TunnelMutex": "fikeya-tunnel",
 	"darwinBundleIdentifier": "com.fikeya.desktop",
