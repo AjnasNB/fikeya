@@ -497,22 +497,28 @@ const scenario: Scenario = {
 				}
 				const state = await waitForFikeya<ChatState>(code, `(() => {
 					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim();
-					const metrics = Object.fromEntries(Array.from(document.querySelectorAll('.run-metric')).map(item => [
+					const providerField = document.querySelector('[data-agent-form] [name="providerName"]');
+					const selectedProvider = providerField?.options?.[providerField.selectedIndex]?.textContent?.trim();
+					const usageTab = document.querySelector('[data-surface-tab="usage"]');
+					usageTab?.click();
+					const metrics = Object.fromEntries(Array.from(document.querySelectorAll('[data-surface-panel="usage"] .statistics-metric')).map(item => [
 						item.querySelector('span')?.textContent?.trim(),
 						item.querySelector('strong')?.textContent?.trim()
 					]));
+					const usageBasis = document.querySelector('[data-surface-panel="usage"] .receipt')?.textContent?.trim() ?? '';
+					document.querySelector('[data-surface-tab="chat"]')?.click();
 					const value = {
 						assistant,
 						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden,
 						planTab: document.querySelector('[data-surface-tab="plan"]')?.textContent?.trim(),
-						provider: metrics['Provider / Model'],
+						provider: selectedProvider,
 						usage: metrics,
-						usageBasis: document.querySelector('.usage-basis')?.textContent?.trim()
+						usageBasis
 					};
 					return value.chatVisible
 						&& value.planTab === 'Plan'
 						&& value.assistant === ${JSON.stringify(providerOutput)}
-						&& value.provider === ${JSON.stringify(`${providerName} / fikeya-proof-model`)}
+						&& value.provider === ${JSON.stringify(`${providerName} | fikeya-proof-model`)}
 						&& value.usage['Input Tokens'] === '60'
 						&& value.usage['Cached Input Tokens'] === '12'
 						&& value.usage['Output Tokens'] === '15'
@@ -572,22 +578,21 @@ const scenario: Scenario = {
 						const rect = element.getBoundingClientRect();
 						return rect.width > 0 && rect.height > 0 && rect.left >= -1 && rect.right <= window.innerWidth + 1;
 					};
-					const chatTab = document.querySelector('[data-surface-tab="chat"]');
-					const planTab = document.querySelector('[data-surface-tab="plan"]');
 					const openPlan = document.querySelector('[data-open-plan]');
 					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
 					const send = document.querySelector('[data-agent-run]');
-					const moreOptions = document.querySelector('.run-controls > summary');
+					const modeMenu = document.querySelector('.composer-route > summary');
+					const contextOptions = document.querySelector('.run-controls > summary');
 					const value = {
 						viewportWidth: window.innerWidth,
 						documentWidth: document.documentElement.scrollWidth,
 						bodyWidth: document.body.scrollWidth,
-						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden && visible(chatTab),
-						planTabVisible: visible(planTab),
+						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden,
 						openPlanVisible: visible(openPlan),
 						promptVisible: visible(prompt),
 						sendVisible: visible(send),
-						moreOptionsVisible: visible(moreOptions)
+						modeMenuVisible: visible(modeMenu),
+						contextOptionsVisible: visible(contextOptions)
 					};
 					return value.viewportWidth >= 340 && value.viewportWidth <= 420
 						&& value.documentWidth <= value.viewportWidth + 1
@@ -622,7 +627,7 @@ const scenario: Scenario = {
 				if (!optionsReachable) {
 					throw new Error('More chat options did not expose Create plan at the narrow panel width.');
 				}
-				return `At ${narrow.viewportWidth}px, Chat, Plan, Open Plan, the composer, Send, and the compact More options menu remained usable with no horizontal document overflow.`;
+				return `At ${narrow.viewportWidth}px, Chat, Open Plan, the composer, Send, and the compact mode and context menus remained usable with no horizontal document overflow.`;
 			}
 		},
 		{
