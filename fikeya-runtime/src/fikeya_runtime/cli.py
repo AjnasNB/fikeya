@@ -8,7 +8,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import hashlib
 import json
+import math
 import signal
 import sqlite3
 import sys
@@ -458,17 +460,106 @@ def _run_doctor(args: argparse.Namespace) -> int:
 def _run_stats(args: argparse.Namespace) -> int:
     workspace = Workspace.load(args.workspace)
     statistics = StateStore(workspace.state_path).workspace_statistics()
+    measured_calls = statistics["measuredProviderCalls"]
+    measurement = "provider-reported-only" if measured_calls else "unavailable"
+    if not measured_calls:
+        statistics = {
+            **statistics,
+            "cachedInputTokens": None,
+            "inputTokens": None,
+            "outputTokens": None,
+        }
     _emit(
         {
             "ok": True,
             "source": "local-runtime-sqlite",
-            "measurement": "provider-reported-only",
+            "measurement": measurement,
             "generatedAt": utc_now(),
+            "matchedComparison": _load_matched_comparison(workspace),
             **statistics,
         },
         as_json=args.json,
     )
     return 0
+
+
+def _load_matched_comparison(workspace: Workspace) -> dict[str, object] | None:
+    """Load a bounded, fail-closed aggregate emitted by the offline comparator."""
+
+    report_path = workspace.metadata_directory / "matched-efficiency.json"
+    if not report_path.is_file():
+        return None
+    payload = report_path.read_bytes()
+    if not payload or len(payload) > 1_048_576:
+        return None
+    try:
+        report = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(report, dict) or set(report) != {
+        "baseline",
+        "delta",
+        "fikeya",
+        "matchedFields",
+        "pairCount",
+        "reportVersion",
+        "status",
+    }:
+        return None
+    pair_count = report.get("pairCount")
+    matched_fields = report.get("matchedFields")
+    if (
+        report.get("reportVersion") != "1.0.0"
+        or report.get("status") != "matched"
+        or not isinstance(pair_count, int)
+        or isinstance(pair_count, bool)
+        or pair_count < 1
+        or pair_count > 100_000
+        or not isinstance(matched_fields, list)
+        or not matched_fields
+        or len(matched_fields) > 128
+        or any(not isinstance(field, str) or not field or len(field) > 256 for field in matched_fields)
+    ):
+        return None
+    baseline = _matched_arm(report.get("baseline"))
+    fikeya = _matched_arm(report.get("fikeya"))
+    if baseline is None or fikeya is None:
+        return None
+    baseline_tokens = baseline["billedTokens"]
+    fikeya_tokens = fikeya["billedTokens"]
+    reduction = ((baseline_tokens - fikeya_tokens) / baseline_tokens) * 100
+    return {
+        "baselineBilledTokens": baseline_tokens,
+        "baselineVerifiedSolveRate": baseline["verifiedSolveRate"],
+        "billedTokenReductionPercent": round(reduction, 4),
+        "fikeyaBilledTokens": fikeya_tokens,
+        "fikeyaVerifiedSolveRate": fikeya["verifiedSolveRate"],
+        "pairCount": pair_count,
+        "reportSha256": f"sha256:{hashlib.sha256(payload).hexdigest()}",
+        "status": "matched",
+    }
+
+
+def _matched_arm(value: object) -> dict[str, int | float] | None:
+    if not isinstance(value, dict):
+        return None
+    billed = value.get("billedTokens")
+    solve_rate = value.get("verifiedSolveRate")
+    if not isinstance(billed, dict) or not _finite_number(solve_rate, minimum=0, maximum=1):
+        return None
+    total = billed.get("totalBilled")
+    if not _finite_number(total, minimum=1, maximum=10**15):
+        return None
+    return {"billedTokens": int(total), "verifiedSolveRate": float(solve_rate)}
+
+
+def _finite_number(value: object, *, minimum: float, maximum: float) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and minimum <= value <= maximum
+    )
 
 
 def _run_provider(args: argparse.Namespace) -> int:

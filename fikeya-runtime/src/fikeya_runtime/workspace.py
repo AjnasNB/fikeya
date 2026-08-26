@@ -155,9 +155,21 @@ def initialize_workspace(root: str | Path) -> tuple[Workspace, bool]:
         atomic_write_text(config_path, f"{stable_json(config.as_json())}\n")
     workspace = Workspace.load(resolved_root)
     ignore_path = metadata_directory / ".gitignore"
-    expected_ignore = "state.sqlite3\nstate.sqlite3-*\n*.tmp\n"
+    expected_ignore = "state.sqlite3\nstate.sqlite3-*\nmatched-efficiency.json\n*.tmp\n"
     if not ignore_path.exists():
         atomic_write_text(ignore_path, expected_ignore, mode=0o644)
+    else:
+        current_ignore = ignore_path.read_text(encoding="utf-8")
+        existing = {line.strip() for line in current_ignore.splitlines()}
+        missing = [line for line in expected_ignore.splitlines() if line not in existing]
+        if missing:
+            separator = "" if not current_ignore or current_ignore.endswith("\n") else "\n"
+            appended = "\n".join(missing)
+            atomic_write_text(
+                ignore_path,
+                f"{current_ignore}{separator}{appended}\n",
+                mode=0o644,
+            )
     from .state import StateStore
 
     StateStore(workspace.state_path).initialize()

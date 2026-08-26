@@ -88,19 +88,62 @@ def test_cli_init_and_provider_listing_make_no_network_calls(
     statistics = json.loads(capsys.readouterr().out)
     assert statistics == {
         "breakdown": [],
-        "cachedInputTokens": 0,
+        "cachedInputTokens": None,
         "generatedAt": statistics["generatedAt"],
-        "inputTokens": 0,
+        "inputTokens": None,
         "lastActivity": None,
-        "measurement": "provider-reported-only",
+        "matchedComparison": None,
+        "measurement": "unavailable",
         "measuredProviderCalls": 0,
         "ok": True,
-        "outputTokens": 0,
+        "outputTokens": None,
         "providerCalls": 0,
         "qarinahContextReceipts": 0,
         "sessions": 0,
         "source": "local-runtime-sqlite",
     }
+
+
+def test_cli_stats_exposes_only_a_valid_matched_comparison(
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    report = {
+        "reportVersion": "1.0.0",
+        "status": "matched",
+        "pairCount": 2,
+        "matchedFields": ["task.promptSha256", "model.name"],
+        "baseline": {
+            "verifiedSolveRate": 1.0,
+            "billedTokens": {"totalBilled": 1_000},
+        },
+        "fikeya": {
+            "verifiedSolveRate": 1.0,
+            "billedTokens": {"totalBilled": 600},
+        },
+        "delta": {"billedTokens": -400},
+    }
+    report_path = workspace / ".fikeya" / "matched-efficiency.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    assert main(["stats", "--workspace", str(workspace), "--json"]) == 0
+    statistics = json.loads(capsys.readouterr().out)
+    comparison = statistics["matchedComparison"]
+    assert comparison["status"] == "matched"
+    assert comparison["pairCount"] == 2
+    assert comparison["baselineBilledTokens"] == 1_000
+    assert comparison["fikeyaBilledTokens"] == 600
+    assert comparison["billedTokenReductionPercent"] == 40.0
+    assert comparison["reportSha256"].startswith("sha256:")
+
+    report["status"] = "unmatched"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert main(["stats", "--workspace", str(workspace), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["matchedComparison"] is None
 
 
 def test_cli_agent_requires_stdin_and_explicit_network_opt_in(
