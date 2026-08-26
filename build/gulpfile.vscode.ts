@@ -558,7 +558,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				result = es.merge(result, gulp.src('resources/win32/versioned/bin/code.sh', { base: 'resources/win32/versioned' })
 					.pipe(replace('@@NAME@@', product.nameShort))
 					.pipe(replace('@@PRODNAME@@', product.nameLong))
-					.pipe(replace('@@VERSION@@', version))
+					.pipe(replace('@@VERSION@@', runtimeCompatibilityVersion))
 					.pipe(replace('@@COMMIT@@', String(commit)))
 					.pipe(replace('@@APPNAME@@', product.applicationName))
 					.pipe(replace('@@VERSIONFOLDER@@', versionedResourcesFolder))
@@ -573,7 +573,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				result = es.merge(result, gulp.src('resources/win32/bin/code.sh', { base: 'resources/win32' })
 					.pipe(replace('@@NAME@@', product.nameShort))
 					.pipe(replace('@@PRODNAME@@', product.nameLong))
-					.pipe(replace('@@VERSION@@', version))
+					.pipe(replace('@@VERSION@@', runtimeCompatibilityVersion))
 					.pipe(replace('@@COMMIT@@', String(commit)))
 					.pipe(replace('@@APPNAME@@', product.applicationName))
 					.pipe(replace('@@SERVERDATAFOLDER@@', product.serverDataFolderName || '.vscode-remote'))
@@ -590,7 +590,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 
 			if (quality === 'stable' || quality === 'insider') {
 				result = es.merge(result, gulp.src('.build/win32/appx/**', { base: '.build/win32' }));
-				const rawVersion = version.replace(/-\w+$/, '').split('.');
+				const rawVersion = runtimeCompatibilityVersion.replace(/-\w+$/, '').split('.');
 				const appxVersion = `${rawVersion[0]}.0.${rawVersion[1]}.${rawVersion[2]}`;
 				result = es.merge(result, gulp.src('resources/win32/appx/AppxManifest.xml', { base: '.' })
 					.pipe(replace('@@AppxPackageName@@', product.win32AppUserModelId))
