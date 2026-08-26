@@ -13,6 +13,15 @@ describe('Fikeya webview message validation', () => {
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'clearConversation' }), { type: 'clearConversation' });
 	});
 
+	test('validates message actions without accepting paths or schemes outside the workspace boundary', () => {
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'copyText', text: 'copy me' }), { type: 'copyText', text: 'copy me' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'reviewDiff', content: '@@ -1 +1 @@\n-old\n+new' }), { type: 'reviewDiff', content: '@@ -1 +1 @@\n-old\n+new' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'openFile', path: 'src/index.ts' }), { type: 'openFile', path: 'src/index.ts' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'openFile', path: '../secret.txt' }), undefined);
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'openExternal', url: 'https://fikeya.com/docs/' }), { type: 'openExternal', url: 'https://fikeya.com/docs/' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'openExternal', url: 'javascript:alert(1)' }), undefined);
+	});
+
 	test('accepts only local workspace surfaces', () => {
 		assert.deepStrictEqual([
 			parseWebviewMessage({ type: 'selectSurface', surface: 'chat' }),

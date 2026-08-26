@@ -20,6 +20,10 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'selectSurface'; readonly surface: 'chat' | 'plan' | 'context' | 'usage' }
 	| { readonly type: 'planAction'; readonly action: 'review' | 'approve-all' | 'approve-step' | 'run' | 'resume' | 'cancel'; readonly stepId?: string }
 	| { readonly type: 'clearConversation' }
+	| { readonly type: 'copyText'; readonly text: string }
+	| { readonly type: 'openFile'; readonly path: string }
+	| { readonly type: 'openExternal'; readonly url: string }
+	| { readonly type: 'reviewDiff'; readonly content: string }
 	| { readonly type: 'refreshReceipts' }
 	| { readonly type: 'refreshStatistics' }
 	| { readonly type: 'refreshMemory' };
@@ -79,6 +83,29 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'refreshStatistics':
 		case 'refreshMemory':
 			return { type: value.type };
+		case 'copyText':
+			return typeof value.text === 'string' && Buffer.byteLength(value.text, 'utf8') <= maximumPromptBytes
+				? { type: value.type, text: value.text }
+				: undefined;
+		case 'reviewDiff':
+			return typeof value.content === 'string' && value.content.trim().length > 0 && Buffer.byteLength(value.content, 'utf8') <= maximumPromptBytes
+				? { type: value.type, content: value.content }
+				: undefined;
+		case 'openFile':
+			return typeof value.path === 'string' && isProjectRelativeVerificationPath(value.path) && value.path.length <= 4096
+				? { type: value.type, path: value.path }
+				: undefined;
+		case 'openExternal': {
+			if (typeof value.url !== 'string' || value.url.length > 4096) {
+				return undefined;
+			}
+			try {
+				const url = new URL(value.url);
+				return url.protocol === 'https:' ? { type: value.type, url: url.toString() } : undefined;
+			} catch {
+				return undefined;
+			}
+		}
 		case 'testProvider':
 		case 'removeProvider': {
 			if (isProviderName(value.providerName)) {

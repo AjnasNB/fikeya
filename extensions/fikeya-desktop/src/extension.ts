@@ -8,6 +8,7 @@ import { randomBytes } from 'crypto';
 import { agentComposerConstraints, agentComposerDefaults, invokeAgentRunRequest } from './agentComposer';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
+import { renderSafeMarkdown } from './markdown';
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import { captureCompletedFikeyaRun } from './sessionCapture';
 import { buildChatPlanSummary, buildRecordedPlanTimeline, fikeyaNarrowPanelMaximumWidth, FikeyaPlanStageId, isChatInteractionBlocked, selectInitialPlanStepId } from './surface';
@@ -365,6 +366,20 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 					this.refresh();
 				}
 				break;
+			case 'copyText':
+				await vscode.env.clipboard.writeText(message.text);
+				break;
+			case 'openFile':
+				await this.openProjectFile(message.path);
+				break;
+			case 'openExternal':
+				await vscode.env.openExternal(vscode.Uri.parse(message.url, true));
+				break;
+			case 'reviewDiff': {
+				const document = await vscode.workspace.openTextDocument({ content: message.content, language: 'diff' });
+				await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+				break;
+			}
 			case 'refreshReceipts':
 				await this.refreshReceipts(true);
 				break;
@@ -880,6 +895,22 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 	}
 
+	private async openProjectFile(relativePath: string): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		if (!workspacePath) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Open a trusted local folder before opening a cited file.'));
+			return;
+		}
+		const root = vscode.Uri.file(workspacePath);
+		const target = vscode.Uri.joinPath(root, ...relativePath.split('/'));
+		try {
+			const document = await vscode.workspace.openTextDocument(target);
+			await vscode.window.showTextDocument(document, { preview: true });
+		} catch {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Fikeya could not open {0} inside this workspace.', relativePath));
+		}
+	}
+
 	private conversationPersistenceEnabled(): boolean {
 		return vscode.workspace.getConfiguration('fikeya').get<boolean>('chat.persistWorkspaceHistory', false);
 	}
@@ -1373,7 +1404,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.message-meta { display: flex; align-items: center; gap: 8px; color: var(--vscode-descriptionForeground); font-size: 10px; }
 		.message-meta strong { color: var(--vscode-foreground); font-size: 11px; }
 		.message-meta time { margin-left: auto; }
-		.message-content { color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+		.message-content { color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+		.message-content > :first-child { margin-top: 0; }
+		.message-content > :last-child { margin-bottom: 0; }
+		.message-content p, .message-content ul { margin-block: 8px; }
+		.message-content ul { padding-left: 20px; }
+		.message-content h3, .message-content h4, .message-content h5, .message-content h6 { margin: 14px 0 6px; font-size: 13px; }
+		.message-content code { font-family: var(--vscode-editor-font-family); }
+		.message-link { display: inline; width: auto; min-height: 0; margin: 0; padding: 0; border: 0; color: var(--vscode-textLink-foreground); background: transparent; font: inherit; text-decoration: underline; }
+		.message-code { margin: 10px 0; border: 1px solid var(--vscode-widget-border); background: var(--vscode-textCodeBlock-background); }
+		.message-code figcaption { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 7px; border-bottom: 1px solid var(--vscode-widget-border); color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); font-size: 11px; }
+		.message-code-actions { display: inline-flex; gap: 4px; }
+		.message-code pre { max-height: 420px; margin: 0; overflow: auto; padding: 10px; white-space: pre; }
+		.message-actions { display: flex; justify-content: end; margin-top: 6px; }
 		.thinking-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-progressBar-background); animation: fikeya-pulse 1.2s ease-in-out infinite; }
 		@keyframes fikeya-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 		.agent-form { display: grid; gap: 8px; padding: 0 14px; }
@@ -1620,6 +1663,20 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		document.querySelectorAll('[data-provider-remove]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'removeProvider', providerName: button.dataset.providerRemove })));
 		document.querySelector('[data-agent-cancel]')?.addEventListener('click', () => vscode.postMessage({ type: 'cancelAgent' }));
 		document.querySelector('[data-conversation-clear]')?.addEventListener('click', () => vscode.postMessage({ type: 'clearConversation' }));
+		document.querySelectorAll('[data-copy-message]').forEach(button => button.addEventListener('click', () => {
+			const content = button.closest('.chat-message')?.querySelector('.message-content')?.textContent || '';
+			if (content) vscode.postMessage({ type: 'copyText', text: content });
+		}));
+		document.querySelectorAll('[data-copy-code]').forEach(button => button.addEventListener('click', () => {
+			const content = button.closest('.message-code')?.querySelector('code')?.textContent || '';
+			if (content) vscode.postMessage({ type: 'copyText', text: content });
+		}));
+		document.querySelectorAll('[data-review-diff]').forEach(button => button.addEventListener('click', () => {
+			const content = button.closest('.message-code')?.querySelector('code')?.textContent || '';
+			if (content) vscode.postMessage({ type: 'reviewDiff', content });
+		}));
+		document.querySelectorAll('[data-open-file]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openFile', path: button.dataset.openFile })));
+		document.querySelectorAll('[data-open-external]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openExternal', url: button.dataset.openExternal })));
 			document.querySelector('[data-receipts-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshReceipts' }));
 			document.querySelector('[data-statistics-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshStatistics' }));
 		const agentForm = document.querySelector('[data-agent-form]');
@@ -2128,7 +2185,8 @@ function renderConversationMessage(message: FikeyaConversationMessage): string {
 			: vscode.l10n.t('Run status');
 	const provider = message.providerName ? `<span>${escapeHtml(message.providerName)}</span>` : '';
 	const className = message.role === 'user' ? 'user-message' : message.role === 'assistant' ? 'assistant-message' : 'notice-message';
-	return `<article class="chat-message ${className}" data-tone="${message.tone ?? 'normal'}"><div class="message-meta"><strong>${escapeHtml(roleLabel)}</strong>${provider}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatConversationTime(message.createdAt))}</time></div><div class="message-content">${escapeHtml(message.content)}</div></article>`;
+	const content = renderSafeMarkdown(message.content, { copy: vscode.l10n.t('Copy'), reviewDiff: vscode.l10n.t('Review diff') });
+	return `<article class="chat-message ${className}" data-tone="${message.tone ?? 'normal'}"><div class="message-meta"><strong>${escapeHtml(roleLabel)}</strong>${provider}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatConversationTime(message.createdAt))}</time></div><div class="message-content">${content}</div><div class="message-actions"><button class="quiet" data-copy-message type="button">${escapeHtml(vscode.l10n.t('Copy message'))}</button></div></article>`;
 }
 
 function formatConversationTime(value: string): string {
