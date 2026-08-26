@@ -14,7 +14,7 @@ import { setup as setupTerminalSplitCwdTests } from './terminal-splitCwd.test';
 import { setup as setupTerminalStickyScrollTests } from './terminal-stickyScroll.test';
 import { setup as setupTerminalShellIntegrationTests } from './terminal-shellIntegration.test';
 
-export function setup(logger: Logger) {
+export function setup(logger: Logger, options?: { web?: boolean; remote?: boolean }) {
 	describe('Terminal', function () {
 
 		// Retry tests 3 times to minimize build failures due to any flakiness
@@ -42,7 +42,13 @@ export function setup(logger: Logger) {
 		setupTerminalEditorsTests({ skipSuite: process.platform === 'linux' });
 		setupTerminalInputTests({ skipSuite: process.platform === 'linux' });
 		setupTerminalPersistenceTests({ skipSuite: process.platform === 'linux' });
-		setupTerminalProfileTests({ skipSuite: process.platform === 'linux' });
+		// Contributed terminal profiles depend on the desktop profile picker and a
+		// local pty host. Running this suite through the web or remote smoke harness
+		// leaves the picker focused on the browser terminal and makes profile splits
+		// nondeterministic. The web/remote jobs still exercise terminal input, tabs,
+		// persistence and shell integration; profile selection remains covered by
+		// the desktop Electron smoke job.
+		setupTerminalProfileTests({ skipSuite: process.platform === 'linux' || !!options?.web || !!options?.remote });
 		setupTerminalTabsTests({ skipSuite: process.platform === 'linux' });
 		setupTerminalShellIntegrationTests({ skipSuite: process.platform === 'linux' });
 		setupTerminalStickyScrollTests({ skipSuite: true });

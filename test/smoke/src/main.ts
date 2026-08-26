@@ -430,7 +430,7 @@ describe(`VSCode Smoke Tests (${opts.web ? 'Web' : 'Electron'})`, () => {
 	setupSearchTests(logger);
 	if (!opts.web) { setupNotebookTests(logger); }
 	setupLanguagesTests(logger);
-	setupTerminalTests(logger);
+	setupTerminalTests(logger, { web: !!opts.web, remote: !!opts.remote });
 	setupTaskTests(logger);
 	setupStatusbarTests(logger);
 	if (quality !== Quality.Dev && quality !== Quality.OSS) { setupExtensionTests(logger); }
