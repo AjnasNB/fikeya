@@ -27,6 +27,7 @@ CHECKSUM_LINE_PATTERN = re.compile(r"^([0-9a-f]{64})  ([^/\\\r\n]+)$")
 MANIFEST_NAME = "release-verification.json"
 CHECKSUM_NAME = "SHA256SUMS.txt"
 CLI_INSTALL_NAME = "FIKEYA-CLI-INSTALL.txt"
+CLI_INSTALL_SCRIPT_NAME = "install-fikeya-cli.ps1"
 
 
 class ReleaseVerificationError(ValueError):
@@ -50,9 +51,9 @@ class ReleaseIdentity:
             raise ReleaseVerificationError(
                 "Public version must use <major>.<minor>.<patch>-beta.<number>."
             )
-        if not re.fullmatch(r"\d+\.\d+\.\d+", extension_version):
+        if extension_version != public_version:
             raise ReleaseVerificationError(
-                "VSIX version must contain exactly three numeric fields."
+                "VSIX version must exactly match the public prerelease version."
             )
         if not re.fullmatch(r"(?:win32|darwin|linux)-(?:x64|arm64)", platform):
             raise ReleaseVerificationError(f"Unsupported release platform: {platform}")
@@ -111,6 +112,7 @@ def verify_release_artifacts(
         vsix_name,
         cli_name,
         CLI_INSTALL_NAME,
+        CLI_INSTALL_SCRIPT_NAME,
         MANIFEST_NAME,
         CHECKSUM_NAME,
     }
@@ -304,7 +306,7 @@ def _verify_cli_bundle(
     wheel_names: set[str],
     public_version: str,
 ) -> None:
-    expected_entries = {*wheel_names, CLI_INSTALL_NAME}
+    expected_entries = {*wheel_names, CLI_INSTALL_NAME, CLI_INSTALL_SCRIPT_NAME}
     with zipfile.ZipFile(cli_path) as archive:
         _validate_zip_members(archive, cli_path.name)
         entries = set(archive.namelist())
@@ -318,15 +320,27 @@ def _verify_cli_bundle(
                     f"{cli_path.name} contains bytes that differ from top-level {entry}."
                 )
         install_text = archive.read(CLI_INSTALL_NAME).decode("utf-8-sig")
+        installer_text = archive.read(CLI_INSTALL_SCRIPT_NAME).decode("utf-8-sig")
     if f"Fikeya CLI {public_version}" not in install_text:
         raise ReleaseVerificationError(
             f"{cli_path.name} install guide contains the wrong public version."
         )
-    for wheel_name in wheel_names:
-        if wheel_name not in install_text:
+    if CLI_INSTALL_SCRIPT_NAME not in install_text:
+        raise ReleaseVerificationError(
+            f"{cli_path.name} install guide does not reference its installer script."
+        )
+    for distribution in PYTHON_DISTRIBUTIONS:
+        if f'Get-OneWheel "{distribution}-"' not in installer_text:
             raise ReleaseVerificationError(
-                f"{cli_path.name} install guide does not reference {wheel_name}."
+                f"{cli_path.name} installer does not resolve the {distribution} wheel."
             )
+    if (
+        "fikeya-runtime[azure]" not in installer_text
+        or "import azure.identity" not in installer_text
+    ):
+        raise ReleaseVerificationError(
+            f"{cli_path.name} installer does not prove Azure CLI support."
+        )
 
 
 def _verify_manifest(

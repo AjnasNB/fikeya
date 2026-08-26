@@ -14,6 +14,7 @@ from pathlib import Path
 from scripts.fikeya.verify_release_artifacts import (
     CHECKSUM_NAME,
     CLI_INSTALL_NAME,
+    CLI_INSTALL_SCRIPT_NAME,
     MANIFEST_NAME,
     PYTHON_DISTRIBUTIONS,
     ReleaseIdentity,
@@ -43,7 +44,7 @@ class ReleaseArtifactVerificationTests(unittest.TestCase):
 
             self.assertTrue(report["ok"])
             self.assertEqual(report["installerAuthenticodeStatus"], "NotSigned")
-            self.assertEqual(report["artifactCount"], 12)
+            self.assertEqual(report["artifactCount"], 13)
 
     def test_accepts_artifact_set_without_optional_installer(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -212,14 +213,30 @@ def _build_release(root: Path, *, include_installer: bool = False) -> ReleaseIde
 
     install_text = (
         f"Fikeya CLI {identity.public_version}\n\n"
+        + f"Run {CLI_INSTALL_SCRIPT_NAME} from the extracted bundle.\n"
         + "\n".join(f"python -m pip install {name}" for name in sorted(wheel_names))
         + "\n"
     )
     (root / CLI_INSTALL_NAME).write_text(install_text, encoding="utf-8")
+    installer_script = "\n".join(
+        [
+            "$ErrorActionPreference = 'Stop'",
+            '$agentCore = Get-OneWheel "fikeya_agent_core-"',
+            '$runtime = Get-OneWheel "fikeya_runtime-"',
+            '$interop = Get-OneWheel "fikeya_interop-"',
+            '$runtimeRequirement = "fikeya-runtime[azure]"',
+            '& python -c "import azure.identity"',
+            "",
+        ]
+    )
+    (root / CLI_INSTALL_SCRIPT_NAME).write_text(
+        installer_script, encoding="utf-8"
+    )
     with zipfile.ZipFile(
         root / f"fikeya-cli-{identity.public_version}.zip", "w", zipfile.ZIP_DEFLATED
     ) as archive:
         archive.write(root / CLI_INSTALL_NAME, CLI_INSTALL_NAME)
+        archive.write(root / CLI_INSTALL_SCRIPT_NAME, CLI_INSTALL_SCRIPT_NAME)
         for wheel_name in wheel_names:
             archive.write(root / wheel_name, wheel_name)
 
