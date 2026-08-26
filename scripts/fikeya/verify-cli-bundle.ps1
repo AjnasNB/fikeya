@@ -27,12 +27,15 @@ try {
 	$venvRoot = Join-Path $smokeRoot "venv"
 	Expand-Archive -LiteralPath $bundle -DestinationPath $bundleRoot
 
-	$wheels = foreach ($prefix in @("fikeya_agent_core-", "fikeya_runtime-", "fikeya_interop-")) {
+	foreach ($prefix in @("fikeya_agent_core-", "fikeya_runtime-", "fikeya_interop-")) {
 		$matches = @(Get-ChildItem -LiteralPath $bundleRoot -File -Filter "$prefix*.whl")
 		if ($matches.Count -ne 1) {
 			throw "Expected one $prefix wheel in the CLI bundle; found $($matches.Count)."
 		}
-		$matches[0].FullName
+	}
+	$installer = Join-Path $bundleRoot "install-fikeya-cli.ps1"
+	if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+		throw "The CLI bundle is missing install-fikeya-cli.ps1."
 	}
 
 	& $PythonCommand -m venv $venvRoot
@@ -41,9 +44,13 @@ try {
 	}
 	$python = Join-Path $venvRoot "Scripts\python.exe"
 	$fikeya = Join-Path $venvRoot "Scripts\fikeya.exe"
-	& $python -m pip install --disable-pip-version-check @wheels
+	& $installer -PythonCommand $python
 	if ($LASTEXITCODE -ne 0) {
-		throw "Could not install the shipped Fikeya wheels."
+		throw "Could not install the shipped Fikeya wheels with Azure support."
+	}
+	& $python -c "import azure.identity"
+	if ($LASTEXITCODE -ne 0) {
+		throw "The shipped Fikeya CLI does not include its Azure runtime dependency."
 	}
 
 	$reportedVersion = @(& $fikeya --version)

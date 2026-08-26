@@ -14,7 +14,12 @@ $releaseVersion = [string]$distribution.version
 $componentManifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "scripts\fikeya\components.json") -Raw | ConvertFrom-Json
 $agentCoreVersion = [string](($componentManifest.components | Where-Object id -eq "agent-core").version)
 $runtimeVersion = [string](($componentManifest.components | Where-Object id -eq "runtime").version)
-$interopVersion = [string]((Get-Content -LiteralPath (Join-Path $repositoryRoot "integrations\fikeya-interop\pyproject.toml") -Raw | Select-String -Pattern '(?m)^version = "([^"]+)"$').Matches[0].Groups[1].Value)
+$interopMetadata = Get-Content -LiteralPath (Join-Path $repositoryRoot "integrations\fikeya-interop\pyproject.toml") -Raw
+$interopVersionMatch = [regex]::Match($interopMetadata, '(?m)^version = "([^"]+)"\r?$')
+if (-not $interopVersionMatch.Success) {
+	throw "Unable to read the Fikeya interop package version."
+}
+$interopVersion = [string]$interopVersionMatch.Groups[1].Value
 $extensionManifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "extensions\fikeya-desktop\package.json") -Raw | ConvertFrom-Json
 $extensionVersion = [string]$extensionManifest.version
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -72,22 +77,53 @@ Fikeya CLI $releaseVersion
 
 1. Extract this archive.
 2. Create and activate a Python 3.10+ virtual environment.
-3. Install the Agent Core wheel, then the Runtime wheel:
+3. Run the included installer from the extracted directory:
 
-   python -m pip install fikeya_agent_core-$agentCoreVersion-py3-none-any.whl
-   python -m pip install "fikeya-runtime[azure] @ file:./fikeya_runtime-$runtimeVersion-py3-none-any.whl"
-   python -m pip install fikeya_interop-$interopVersion-py3-none-any.whl
+   powershell -ExecutionPolicy Bypass -File .\install-fikeya-cli.ps1
 
 4. Verify the installation:
 
+   fikeya --version
    fikeya --help
    fikeya init .
    fikeya doctor .
+
+The installer resolves the local wheels to absolute file URIs and installs the
+Runtime with its Azure extra. It fails if azure.identity cannot be imported.
 "@
 $cliInstallPath = Join-Path $outputPath "FIKEYA-CLI-INSTALL.txt"
 $cliInstall | Set-Content -LiteralPath $cliInstallPath -Encoding utf8
+$cliInstallerPath = Join-Path $outputPath "install-fikeya-cli.ps1"
+@'
+[CmdletBinding()]
+param([string]$PythonCommand = "python")
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$bundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+function Get-OneWheel([string]$Prefix) {
+	$matches = @(Get-ChildItem -LiteralPath $bundleRoot -File -Filter "$Prefix*.whl")
+	if ($matches.Count -ne 1) {
+		throw "Expected exactly one $Prefix wheel beside this installer; found $($matches.Count)."
+	}
+	$matches[0]
+}
+
+$agentCore = Get-OneWheel "fikeya_agent_core-"
+$runtime = Get-OneWheel "fikeya_runtime-"
+$interop = Get-OneWheel "fikeya_interop-"
+$runtimeRequirement = "fikeya-runtime[azure] @ $(([Uri]$runtime.FullName).AbsoluteUri)"
+
+& $PythonCommand -m pip install --disable-pip-version-check $agentCore.FullName $runtimeRequirement $interop.FullName
+if ($LASTEXITCODE -ne 0) { throw "Fikeya CLI installation failed." }
+& $PythonCommand -c "import azure.identity; import fikeya_runtime; print(fikeya_runtime.__version__)"
+if ($LASTEXITCODE -ne 0) { throw "Fikeya CLI Azure support verification failed." }
+'@ | Set-Content -LiteralPath $cliInstallerPath -Encoding utf8
 $cliBundle = Join-Path $outputPath "fikeya-cli-$releaseVersion.zip"
-$cliFiles = Get-ChildItem -LiteralPath $outputPath -File | Where-Object { $_.Extension -eq ".whl" -or $_.Name -eq "FIKEYA-CLI-INSTALL.txt" }
+$cliFiles = Get-ChildItem -LiteralPath $outputPath -File | Where-Object {
+	$_.Extension -eq ".whl" -or $_.Name -in @("FIKEYA-CLI-INSTALL.txt", "install-fikeya-cli.ps1")
+}
 Compress-Archive -LiteralPath $cliFiles.FullName -DestinationPath $cliBundle -CompressionLevel Optimal
 & (Join-Path $PSScriptRoot "verify-cli-bundle.ps1") `
 	-BundlePath $cliBundle `
