@@ -187,7 +187,7 @@
 		"compile": "npx gulp compile-extension:fikeya-desktop",
 		"watch": "npx gulp watch-extension:fikeya-desktop",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/conversation.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",

@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
 import { agentComposerConstraints, agentComposerDefaults, invokeAgentRunRequest } from './agentComposer';
+import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscriptions } from './azureDiscovery';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { renderSafeMarkdown } from './markdown';
@@ -432,11 +433,37 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if (!provider) {
 			return;
 		}
+		let discoveredBaseUrl: string | undefined;
+		let discoveredModel: string | undefined;
+		let discoveredLabel: string | undefined;
+		if (provider.definition.id === 'azure-openai') {
+			const discovery = await vscode.window.showQuickPick([
+				{ label: vscode.l10n.t('Discover from Azure CLI'), description: vscode.l10n.t('Recommended - choose a signed-in subscription, Azure OpenAI resource, and deployment.'), discover: true },
+				{ label: vscode.l10n.t('Enter endpoint manually'), description: vscode.l10n.t('Use this when Azure CLI is unavailable.'), discover: false }
+			], { placeHolder: vscode.l10n.t('How should Fikeya configure Azure?') });
+			if (!discovery) {
+				return;
+			}
+			if (discovery.discover) {
+				try {
+					const selected = await discoverAzureOpenAIConfiguration();
+					if (!selected) {
+						return;
+					}
+					discoveredBaseUrl = selected.endpoint;
+					discoveredModel = selected.deployment;
+					discoveredLabel = selected.label;
+				} catch (error) {
+					void vscode.window.showErrorMessage(error instanceof Error ? error.message : vscode.l10n.t('Azure discovery failed.'));
+					return;
+				}
+			}
+		}
 
 		const profileLabel = await vscode.window.showInputBox({
 			title: vscode.l10n.t('Configure {0}', provider.definition.label),
 			prompt: vscode.l10n.t('Profile Name'),
-			value: provider.definition.label,
+			value: discoveredLabel ?? provider.definition.label,
 			ignoreFocusOut: true,
 			validateInput: value => value.trim().length > 0 && value.trim().length <= 80 ? undefined : vscode.l10n.t('Enter a name with 1 to 80 characters.')
 		});
@@ -447,7 +474,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const baseUrl = await vscode.window.showInputBox({
 			title: vscode.l10n.t('Configure {0}', provider.definition.label),
 			prompt: vscode.l10n.t('Endpoint URL'),
-			value: provider.definition.defaultBaseUrl,
+			value: discoveredBaseUrl ?? provider.definition.defaultBaseUrl,
 			ignoreFocusOut: true,
 			validateInput: value => validateProviderUrl(value, true)
 		});
@@ -458,6 +485,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const model = await vscode.window.showInputBox({
 			title: vscode.l10n.t('Configure {0}', provider.definition.label),
 			prompt: vscode.l10n.t('Model or Deployment Name'),
+			value: discoveredModel,
 			ignoreFocusOut: true,
 			validateInput: value => value.trim().length > 0 && value.trim().length <= 160 ? undefined : vscode.l10n.t('Enter a model or deployment name with 1 to 160 characters.')
 		});
@@ -2834,6 +2862,58 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 			secretPrompt: vscode.l10n.t('Enter the Endpoint API Secret')
 		}
 	];
+}
+
+async function discoverAzureOpenAIConfiguration(): Promise<{ readonly endpoint: string; readonly deployment: string; readonly label: string } | undefined> {
+	const subscriptions = await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Discovering Azure subscriptions') },
+		() => listAzureSubscriptions()
+	);
+	if (subscriptions.length === 0) {
+		throw new Error(vscode.l10n.t('No enabled Azure subscriptions were found. Run az login, then try again.'));
+	}
+	const subscription = await vscode.window.showQuickPick(subscriptions.map(item => ({
+		label: item.name,
+		description: item.id,
+		item
+	})), { placeHolder: vscode.l10n.t('Choose an Azure subscription') });
+	if (!subscription) {
+		return undefined;
+	}
+	const resources = await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Discovering Azure OpenAI resources') },
+		() => listAzureOpenAIResources(subscription.item.id)
+	);
+	if (resources.length === 0) {
+		throw new Error(vscode.l10n.t('No Azure OpenAI resources were found in {0}.', subscription.item.name));
+	}
+	const resource = await vscode.window.showQuickPick(resources.map(item => ({
+		label: item.name,
+		description: item.resourceGroup,
+		detail: item.endpoint,
+		item
+	})), { placeHolder: vscode.l10n.t('Choose an Azure OpenAI resource') });
+	if (!resource) {
+		return undefined;
+	}
+	const deployments = await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Discovering model deployments') },
+		() => listAzureOpenAIDeployments(subscription.item.id, resource.item.resourceGroup, resource.item.name)
+	);
+	if (deployments.length === 0) {
+		throw new Error(vscode.l10n.t('No model deployments were found in {0}.', resource.item.name));
+	}
+	const deployment = await vscode.window.showQuickPick(deployments.map(item => ({
+		label: item.name,
+		description: item.model,
+		detail: item.version,
+		item
+	})), { placeHolder: vscode.l10n.t('Choose a model deployment') });
+	return deployment ? {
+		endpoint: resource.item.endpoint,
+		deployment: deployment.item.name,
+		label: `Azure ${deployment.item.name}`
+	} : undefined;
 }
 
 function getWorkspaceName(): string {
