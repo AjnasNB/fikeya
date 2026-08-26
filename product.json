@@ -21,6 +21,14 @@
 	"win32arm64AppId": "{{BED36977-E95E-4CDA-83EB-7F646242A075}",
 	"win32x64UserAppId": "{{F05483E1-C287-4572-8234-BEE812E55095}",
 	"win32arm64UserAppId": "{{F40EE1EC-461D-4F75-9F31-1595B7D46B10}",
+	"win32ContextMenu": {
+		"x64": {
+			"clsid": "{A4D10FE5-AF8D-45F2-A84A-12DC5470A274}"
+		},
+		"arm64": {
+			"clsid": "{82E673FF-EC19-431A-8DE1-01699E420BA4}"
+		}
+	},
 	"win32AppUserModelId": "Fikeya.Desktop",
 	"win32ShellNameShort": "&Fikeya",
 	"quality": "stable",

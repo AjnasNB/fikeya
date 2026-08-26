@@ -38,6 +38,15 @@ for (const id of ['agent-core', 'runtime']) {
 	if (actual !== pythonVersion) throw new Error(`components.json ${id} version ${actual ?? 'missing'} must be ${pythonVersion}.`);
 }
 
+const product = readJson('product.json');
+const clsidPattern = /^\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/;
+for (const arch of ['x64', 'arm64']) {
+	const clsid = product.win32ContextMenu?.[arch]?.clsid;
+	if (!clsidPattern.test(clsid ?? '')) {
+		throw new Error(`product.json must define a branded Windows context-menu CLSID for ${arch}.`);
+	}
+}
+
 const homePage = readText('site/index.html');
 const downloadPage = readText('site/download/index.html');
 for (const [relative, contents] of [['site/index.html', homePage], ['site/download/index.html', downloadPage]]) {
