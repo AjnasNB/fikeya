@@ -23,7 +23,7 @@ from scripts.fikeya.verify_release_artifacts import (
 
 
 PUBLIC_VERSION = "0.1.0-beta.2"
-EXTENSION_VERSION = "0.1.1"
+EXTENSION_VERSION = "0.1.0-beta.2"
 EXPECTED_COMMIT = "a" * 40
 
 

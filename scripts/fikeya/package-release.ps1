@@ -47,6 +47,7 @@ function Invoke-Checked {
 	}
 }
 
+Invoke-Checked $repositoryRoot "node" @("scripts\fikeya\verify-version-alignment.ts")
 Invoke-Checked $repositoryRoot "python" @("-m", "pip", "install", "--disable-pip-version-check", "build==1.5.0")
 $runtimeBuildRequirements = Join-Path $repositoryRoot "extensions\fikeya-desktop\runtime-build-requirements.txt"
 Invoke-Checked $repositoryRoot "python" @(
