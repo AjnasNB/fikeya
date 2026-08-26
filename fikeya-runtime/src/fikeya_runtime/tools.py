@@ -10,6 +10,7 @@ import re
 import secrets
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -124,6 +125,54 @@ class ToolResult:
     stdout: str
     stderr: str
     truncated: bool
+
+
+class _BoundedProcessOutput:
+    """Drain both process pipes while retaining at most one shared byte budget."""
+
+    def __init__(self, process: subprocess.Popen[bytes], maximum_bytes: int) -> None:
+        if process.stdout is None or process.stderr is None:
+            raise ApprovalError("Approved tool did not expose bounded output pipes.")
+        self.maximum_bytes = maximum_bytes
+        self.stdout = bytearray()
+        self.stderr = bytearray()
+        self.overflow = threading.Event()
+        self._lock = threading.Lock()
+        self._threads = (
+            threading.Thread(
+                target=self._drain,
+                args=(process.stdout, self.stdout),
+                name="fikeya-tool-stdout",
+                daemon=True,
+            ),
+            threading.Thread(
+                target=self._drain,
+                args=(process.stderr, self.stderr),
+                name="fikeya-tool-stderr",
+                daemon=True,
+            ),
+        )
+
+    def start(self) -> None:
+        for thread in self._threads:
+            thread.start()
+
+    def finish(self) -> None:
+        for thread in self._threads:
+            thread.join(timeout=_PROCESS_CLEANUP_SECONDS)
+
+    def _drain(self, stream: object, destination: bytearray) -> None:
+        reader = stream
+        while True:
+            chunk = reader.read(65_536)  # type: ignore[attr-defined]
+            if not chunk:
+                return
+            with self._lock:
+                remaining = self.maximum_bytes - len(self.stdout) - len(self.stderr)
+                if remaining > 0:
+                    destination.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    self.overflow.set()
 
 
 class ApprovalLedger:
@@ -262,20 +311,24 @@ class ToolBroker:
             cwd=working_directory,
             environment=environment,
         )
+        output = _BoundedProcessOutput(process, self.maximum_output_bytes)
+        output.start()
         deadline = start + request.timeout_seconds
         termination_reason: str | None = None
         try:
             while True:
-                try:
-                    stdout, stderr = process.communicate(timeout=_PROCESS_POLL_SECONDS)
+                if process.poll() is not None:
                     break
-                except subprocess.TimeoutExpired:
-                    if _is_cancellation_requested(cancellation_requested):
-                        termination_reason = "Approved tool was cancelled."
-                        break
-                    if time.monotonic() >= deadline:
-                        termination_reason = "Approved tool exceeded its timeout."
-                        break
+                if output.overflow.is_set():
+                    termination_reason = "Approved tool exceeded its output limit."
+                    break
+                if _is_cancellation_requested(cancellation_requested):
+                    termination_reason = "Approved tool was cancelled."
+                    break
+                if time.monotonic() >= deadline:
+                    termination_reason = "Approved tool exceeded its timeout."
+                    break
+                time.sleep(_PROCESS_POLL_SECONDS)
             if termination_reason is not None:
                 process_tree.terminate()
                 raise ApprovalError(termination_reason)
@@ -289,9 +342,10 @@ class ToolBroker:
                     process_tree.close()
                 finally:
                     _wait_after_termination(process)
+                    output.finish()
         duration_ms = max(0, round((time.monotonic() - start) * 1_000))
-        stdout_value, stdout_truncated = self._decode(stdout)
-        stderr_value, stderr_truncated = self._decode(stderr)
+        stdout_value, stdout_truncated = self._decode(bytes(output.stdout))
+        stderr_value, stderr_truncated = self._decode(bytes(output.stderr))
         return ToolResult(
             status="executed",
             request_sha256=request.request_sha256,
@@ -487,10 +541,10 @@ def _start_process_tree(
 
 def _wait_after_termination(process: subprocess.Popen[bytes]) -> None:
     try:
-        process.communicate(timeout=_PROCESS_CLEANUP_SECONDS)
+        process.wait(timeout=_PROCESS_CLEANUP_SECONDS)
     except subprocess.TimeoutExpired:
         process.kill()
-        process.communicate()
+        process.wait()
 
 
 def _is_cancellation_requested(callback: Callable[[], bool] | None) -> bool:

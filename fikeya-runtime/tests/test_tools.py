@@ -156,3 +156,22 @@ def test_timeout_or_cancellation_terminates_the_complete_process_tree(
 
     time.sleep(1.0)
     assert not marker.exists()
+
+
+def test_output_limit_is_enforced_while_the_process_is_running(tmp_path: Path) -> None:
+    executable = Path(sys.executable).name
+    broker = ToolBroker(
+        boundary=WorkspaceBoundary(tmp_path),
+        approvals=ApprovalLedger(StateStore(tmp_path / "bounded-state.sqlite3")),
+        allowed_executables={executable},
+        execution_enabled=True,
+        maximum_output_bytes=1_024,
+    )
+    request = ToolRequest(
+        (executable, "-c", "import sys,time; sys.stdout.write('x'*2000000); sys.stdout.flush(); time.sleep(30)"),
+        timeout_seconds=10,
+    )
+    token = broker.approve(request)
+
+    with pytest.raises(ApprovalError, match="output limit"):
+        broker.execute(request, dry_run=False, approval_token=token)
