@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
 from .errors import CancellationError
 from .events import EventType
@@ -101,6 +102,7 @@ class AgentRunner:
         session_mode: str = "agent",
         trusted_system: str | None = None,
         output_handler: Callable[[str], None] | None = None,
+        history: tuple[ConversationTurn, ...] = (),
     ) -> AgentRunResult:
         """Execute one request with exact call hashes and provider-reported usage."""
 
@@ -117,6 +119,7 @@ class AgentRunner:
                 "mode": session_mode,
                 "model": profile.model,
                 "provider": profile.name,
+                "priorConversationTurns": len(history),
             }
         )
         try:
@@ -133,7 +136,7 @@ class AgentRunner:
             raise
         system = _combine_system_instructions(trusted_system, system)
         request = InferenceRequest(
-            prompt=prompt,
+            prompt=build_conversation_prompt(history, prompt),
             system=system,
             max_output_tokens=max_output_tokens,
         )

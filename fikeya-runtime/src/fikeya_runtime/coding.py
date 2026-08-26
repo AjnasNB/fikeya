@@ -34,6 +34,7 @@ from fikeya_agent_core import (
 )
 
 from .agent import AgentRunner, MemoryPreparation
+from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
 from .errors import ApprovalError, FikeyaError
 from .events import EventType
@@ -767,6 +768,7 @@ class CodingAgentRunner:
         progress_handler: ProgressHandler | None = None,
         memory_mode: str = "auto",
         context_max_characters: int = 12_000,
+        history: tuple[ConversationTurn, ...] = (),
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
@@ -776,6 +778,7 @@ class CodingAgentRunner:
                 "mode": "coding-agent",
                 "model": profile.model,
                 "provider": profile.name,
+                "priorConversationTurns": len(history),
             }
         )
         memory_runner = AgentRunner(
@@ -829,7 +832,11 @@ class CodingAgentRunner:
                     broker_timeout_seconds=min(600.0, timeout + 15.0),
                 ),
             )
-            orchestrator.start(prompt, evidence=evidence, session_id=session.session_id)
+            orchestrator.start(
+                build_conversation_prompt(history, prompt),
+                evidence=evidence,
+                session_id=session.session_id,
+            )
             await self._advance(
                 orchestrator,
                 session.session_id,

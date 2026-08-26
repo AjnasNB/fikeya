@@ -9,7 +9,6 @@ import socket
 from pathlib import Path
 
 import pytest
-
 from fikeya_runtime.cli import main
 from fikeya_runtime.errors import SecretStoreUnavailable
 
@@ -256,7 +255,6 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
     monkeypatch: object,
 ) -> None:
     from fikeya_agent_core import ApprovalDecision
-
     from fikeya_runtime import coding
 
     home = tmp_path / "home"
@@ -324,6 +322,11 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
             pass
 
         async def run(self, **kwargs: object) -> FakeResult:
+            history = kwargs["history"]
+            assert [(turn.role, turn.content) for turn in history] == [
+                ("user", "Inspect the existing implementation."),
+                ("assistant", "The implementation uses bounded receipts."),
+            ]
             progress = kwargs["progress_handler"]
             approval = kwargs["approval_handler"]
             progress(
@@ -357,7 +360,20 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
         "sys.stdin",
         _ProtocolInput(
             [
-                {"type": "start", "prompt": "Inspect the project."},
+                {
+                    "type": "start",
+                    "prompt": "Inspect the project.",
+                    "history": [
+                        {
+                            "role": "user",
+                            "content": "Inspect the existing implementation.",
+                        },
+                        {
+                            "role": "assistant",
+                            "content": "The implementation uses bounded receipts.",
+                        },
+                    ],
+                },
                 {
                     "type": "approval",
                     "requestId": "approval_read",

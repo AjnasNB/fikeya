@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from .agent import AgentRunner, AgentRunResult
+from .conversation import ConversationTurn
 from .errors import ConfigurationError, FikeyaError
 from .inference import CancellationToken
 from .plans import PlanRecord, PlanService
@@ -134,6 +135,7 @@ class PlanProposalRunner:
         cancellation: CancellationToken,
         memory_mode: str = "auto",
         context_max_characters: int = 12_000,
+        history: tuple[ConversationTurn, ...] = (),
     ) -> PlanProposalResult:
         """Persist a strict draft while keeping the prompt and raw response ephemeral."""
 
@@ -160,6 +162,7 @@ class PlanProposalRunner:
             session_mode="plan-proposal",
             trusted_system=planning_system_instructions(),
             output_handler=persist_valid_draft,
+            history=history,
         )
         if len(accepted) != 1:
             raise PlanProposalError("The planning response was not persisted.")

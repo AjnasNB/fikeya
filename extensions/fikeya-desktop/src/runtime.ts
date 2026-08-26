@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'child_process';
 import { TextDecoder } from 'node:util';
+import type { FikeyaProviderHistoryMessage } from './conversation';
 
 const maximumOutputBytes = 1024 * 1024;
 const maximumAgentOutputBytes = 5 * 1024 * 1024;
@@ -15,6 +16,7 @@ const maximumPlanSpecificationBytes = 1024 * 1024;
 const runtimeTimeoutMilliseconds = 30_000;
 const agentTimeoutMilliseconds = 15 * 60_000;
 const maximumProtocolLineBytes = 1024 * 1024;
+const maximumProgressEvents = 4_096;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
@@ -285,13 +287,24 @@ export interface FikeyaCliResult<T> {
 	readonly failure: FikeyaRuntimeFailure;
 }
 
+export interface FikeyaRunProgress {
+	readonly type: 'progress';
+	readonly event: string;
+	readonly stage: string;
+	readonly sequence: number;
+}
+
+export type FikeyaRunProgressHandler = (progress: FikeyaRunProgress) => void;
+
 export interface FikeyaAgentRunHandle {
 	readonly result: Promise<FikeyaCliResult<FikeyaAgentTurn>>;
+	onProgress(handler: FikeyaRunProgressHandler): () => void;
 	cancel(): void;
 }
 
 export interface FikeyaPlanRunHandle {
 	readonly result: Promise<FikeyaCliResult<FikeyaPlanView>>;
+	onProgress(handler: FikeyaRunProgressHandler): () => void;
 	cancel(): void;
 }
 
@@ -406,6 +419,7 @@ export function startFikeyaAgentRun(
 	memoryMode: FikeyaMemoryMode,
 	workspacePath: string,
 	approvalHandler: FikeyaAgentApprovalHandler,
+	history: readonly FikeyaProviderHistoryMessage[] = [],
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaAgentRunHandle {
@@ -418,9 +432,11 @@ export function startFikeyaAgentRun(
 		|| !Number.isSafeInteger(contextMaxCharacters)
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
-		|| !['auto', 'off', 'required'].includes(memoryMode)) {
+		|| !['auto', 'off', 'required'].includes(memoryMode)
+		|| !isValidProviderHistory(history)) {
 		return {
 			result: Promise.resolve(invalidLocalRequest()),
+			onProgress: () => () => undefined,
 			cancel: () => undefined
 		};
 	}
@@ -429,13 +445,14 @@ export function startFikeyaAgentRun(
 		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
 		workspacePath,
 		prompt,
+		history,
 		approvalHandler,
 		agentTimeoutMilliseconds,
 		maximumAgentOutputBytes,
 		invocation,
 		environment
 	);
-	return { result: operation.result, cancel: operation.cancel };
+	return operation;
 }
 
 /** Reloads the durable, content-free provider call receipts for one completed session. */
@@ -486,6 +503,7 @@ export function startFikeyaPlanProposal(
 	contextMaxCharacters: number,
 	memoryMode: FikeyaMemoryMode,
 	workspacePath: string,
+	history: readonly FikeyaProviderHistoryMessage[] = [],
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaPlanProposalRunHandle {
@@ -498,14 +516,15 @@ export function startFikeyaPlanProposal(
 		|| !Number.isSafeInteger(contextMaxCharacters)
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
-		|| !['auto', 'off', 'required'].includes(memoryMode)) {
+		|| !['auto', 'off', 'required'].includes(memoryMode)
+		|| !isValidProviderHistory(history)) {
 		return { result: Promise.resolve(invalidLocalRequest()), cancel: () => undefined };
 	}
 	return startBoundedJsonCli(
 		buildPlanProposalArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
 		workspacePath,
 		parsePlanProposalView,
-		JSON.stringify({ protocol: 'fikeya.plan-request.v1', prompt }),
+		JSON.stringify({ protocol: 'fikeya.plan-request.v1', prompt, history }),
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
 		invocation,
@@ -550,20 +569,20 @@ export async function approveFikeyaPlan(
 export function startFikeyaPlan(
 	action: 'run' | 'resume',
 	planId: string,
-	workspacePath: string
+	workspacePath: string,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaPlanRunHandle {
 	if (!identifierPattern.test(planId)) {
-		return { result: Promise.resolve(invalidLocalRequest()), cancel: () => undefined };
+		return { result: Promise.resolve(invalidLocalRequest()), onProgress: () => () => undefined, cancel: () => undefined };
 	}
-	return startBoundedJsonCli(
+	return startPlanProtocolCli(
 		buildPlanActionArguments(action, planId),
 		workspacePath,
-		parsePlanView,
-		undefined,
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
-		resolveFikeyaCli(),
-		buildFikeyaRuntimeEnvironment(),
+		invocation,
+		environment,
 		[0, 2]
 	);
 }
@@ -1631,10 +1650,204 @@ function parseStatisticsBreakdown(value: unknown): FikeyaStatisticsBreakdown | u
 	};
 }
 
+interface FikeyaProgressChannel {
+	onProgress(handler: FikeyaRunProgressHandler): () => void;
+	emit(progress: FikeyaRunProgress): void;
+	close(): void;
+}
+
+function createProgressChannel(): FikeyaProgressChannel {
+	const handlers = new Set<FikeyaRunProgressHandler>();
+	let closed = false;
+	let latest: FikeyaRunProgress | undefined;
+	const notify = (handler: FikeyaRunProgressHandler, progress: FikeyaRunProgress): void => {
+		try {
+			handler(progress);
+		} catch {
+			// Observers cannot interrupt or alter the child-process result.
+		}
+	};
+	return {
+		onProgress: handler => {
+			if (closed) {
+				return () => undefined;
+			}
+			handlers.add(handler);
+			if (latest) {
+				notify(handler, latest);
+			}
+			return () => handlers.delete(handler);
+		},
+		emit: progress => {
+			latest = progress;
+			for (const handler of handlers) {
+				notify(handler, progress);
+			}
+		},
+		close: () => {
+			closed = true;
+			latest = undefined;
+			handlers.clear();
+		}
+	};
+}
+
+function startPlanProtocolCli(
+	args: readonly string[],
+	workspacePath: string,
+	timeoutMilliseconds: number,
+	outputLimitBytes: number,
+	invocation: FikeyaCliInvocation,
+	environment: NodeJS.ProcessEnv,
+	acceptedExitCodes: readonly number[]
+): FikeyaPlanRunHandle {
+	let cancelOperation = (): void => undefined;
+	const progressChannel = createProgressChannel();
+	const result = new Promise<FikeyaCliResult<FikeyaPlanView>>(resolve => {
+		const child = spawn(invocation.executable, args, {
+			cwd: workspacePath,
+			env: environment,
+			shell: false,
+			stdio: ['ignore', 'pipe', 'pipe'],
+			windowsHide: true
+		});
+		let buffered = Buffer.alloc(0);
+		let outputBytes = 0;
+		let finalValue: FikeyaPlanView | undefined;
+		let settled = false;
+		let timeout: NodeJS.Timeout | undefined;
+		let processing = Promise.resolve();
+		let progressCount = 0;
+		let lastProgressSequence = -1;
+
+		const finish = (operationResult: FikeyaCliResult<FikeyaPlanView>): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			if (timeout) {
+				clearTimeout(timeout);
+			}
+			progressChannel.close();
+			resolve(operationResult);
+		};
+		const stop = (failure: FikeyaRuntimeFailure): void => {
+			if (!settled) {
+				child.kill();
+				finish({ ok: false, exitCode: null, failure });
+			}
+		};
+		cancelOperation = (): void => stop('cancelled');
+
+		if (!child.stdout || !child.stderr) {
+			stop('runtime-error');
+			return;
+		}
+
+		const processLine = (line: Buffer): void => {
+			if (line.length === 0 || line.length > maximumProtocolLineBytes) {
+				throw new Error('Fikeya plan protocol line is empty or exceeds its limit.');
+			}
+			let value: unknown;
+			try {
+				value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line));
+			} catch {
+				throw new Error('Fikeya plan protocol emitted invalid JSON.');
+			}
+			const record = asRecord(value);
+			if (record?.type === 'progress') {
+				const progress = parseRunProgress(record);
+				if (!progress
+					|| progressCount >= maximumProgressEvents
+					|| progress.sequence <= lastProgressSequence) {
+					throw new Error('Fikeya plan progress did not match the bounded ordered schema.');
+				}
+				progressCount += 1;
+				lastProgressSequence = progress.sequence;
+				progressChannel.emit(progress);
+				return;
+			}
+			if (finalValue) {
+				throw new Error('Fikeya plan protocol emitted more than one result.');
+			}
+			finalValue = parsePlanView(value);
+			if (!finalValue) {
+				throw new Error('Fikeya plan result did not match the bounded schema.');
+			}
+		};
+
+		const capture = (chunk: Buffer, retain: boolean): void => {
+			if (settled) {
+				return;
+			}
+			outputBytes += chunk.byteLength;
+			if (outputBytes > outputLimitBytes) {
+				stop('output-limit');
+				return;
+			}
+			if (!retain) {
+				return;
+			}
+			buffered = Buffer.concat([buffered, chunk]);
+			while (true) {
+				const newline = buffered.indexOf(0x0a);
+				if (newline < 0) {
+					if (buffered.length > maximumProtocolLineBytes) {
+						stop('output-limit');
+					}
+					break;
+				}
+				let line = buffered.subarray(0, newline);
+				buffered = buffered.subarray(newline + 1);
+				if (line.at(-1) === 0x0d) {
+					line = line.subarray(0, line.length - 1);
+				}
+				processing = processing.then(() => processLine(line));
+				processing.catch(() => stop('invalid-json'));
+			}
+		};
+
+		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
+		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
+		child.on('error', error => {
+			finish({
+				ok: false,
+				exitCode: null,
+				failure: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not-found' : 'runtime-error'
+			});
+		});
+		child.on('close', exitCode => {
+			if (buffered.length !== 0) {
+				const finalLine = buffered;
+				buffered = Buffer.alloc(0);
+				processing = processing.then(() => processLine(finalLine));
+			}
+			void processing.then(() => {
+				if (settled) {
+					return;
+				}
+				if (exitCode === null || !acceptedExitCodes.includes(exitCode)) {
+					finish({ ok: false, exitCode, failure: 'runtime-error' });
+					return;
+				}
+				if (!finalValue) {
+					finish({ ok: false, exitCode, failure: 'invalid-json' });
+					return;
+				}
+				finish({ ok: true, exitCode, value: finalValue, failure: 'none' });
+			}).catch(() => finish({ ok: false, exitCode, failure: 'invalid-json' }));
+		});
+
+		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
+	});
+	return { result, onProgress: progressChannel.onProgress, cancel: () => cancelOperation() };
+}
+
 function startAgentProtocolCli(
 	args: readonly string[],
 	workspacePath: string,
 	prompt: string,
+	history: readonly FikeyaProviderHistoryMessage[],
 	approvalHandler: FikeyaAgentApprovalHandler,
 	timeoutMilliseconds: number,
 	outputLimitBytes: number,
@@ -1642,6 +1855,7 @@ function startAgentProtocolCli(
 	environment: NodeJS.ProcessEnv
 ): FikeyaAgentRunHandle {
 	let cancelOperation = (): void => undefined;
+	const progressChannel = createProgressChannel();
 	const result = new Promise<FikeyaCliResult<FikeyaAgentTurn>>(resolve => {
 		const child = spawn(invocation.executable, args, {
 			cwd: workspacePath,
@@ -1657,6 +1871,8 @@ function startAgentProtocolCli(
 		let settled = false;
 		let timeout: NodeJS.Timeout | undefined;
 		let processing = Promise.resolve();
+		let progressCount = 0;
+		let lastProgressSequence = -1;
 
 		const finish = (operationResult: FikeyaCliResult<FikeyaAgentTurn>): void => {
 			if (settled) {
@@ -1666,6 +1882,7 @@ function startAgentProtocolCli(
 			if (timeout) {
 				clearTimeout(timeout);
 			}
+			progressChannel.close();
 			resolve(operationResult);
 		};
 		const stop = (failure: FikeyaRuntimeFailure): void => {
@@ -1697,9 +1914,15 @@ function startAgentProtocolCli(
 			}
 			const record = asRecord(value);
 			if (record?.type === 'progress') {
-				if (!parseAgentProgress(record)) {
-					throw new Error('Fikeya coding progress did not match the bounded schema.');
+				const progress = parseRunProgress(record);
+				if (!progress
+					|| progressCount >= maximumProgressEvents
+					|| progress.sequence <= lastProgressSequence) {
+					throw new Error('Fikeya coding progress did not match the bounded ordered schema.');
 				}
+				progressCount += 1;
+				lastProgressSequence = progress.sequence;
+				progressChannel.emit(progress);
 				return;
 			}
 			if (record?.type === 'approval') {
@@ -1800,10 +2023,10 @@ function startAgentProtocolCli(
 			}).catch(() => finish({ ok: false, exitCode, failure: 'invalid-json' }));
 		});
 
-		void writeMessage({ type: 'start', prompt }).catch(() => stop('runtime-error'));
+		void writeMessage({ type: 'start', prompt, history }).catch(() => stop('runtime-error'));
 		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
 	});
-	return { result, cancel: () => cancelOperation() };
+	return { result, onProgress: progressChannel.onProgress, cancel: () => cancelOperation() };
 }
 
 export function parseProtocolFailure(record: Record<string, unknown>): FikeyaRuntimeFailure | undefined {
@@ -1825,13 +2048,40 @@ export function parseProtocolFailure(record: Record<string, unknown>): FikeyaRun
 	}
 }
 
-function parseAgentProgress(record: Record<string, unknown>): boolean {
-	const event = boundedString(record.event, 80);
-	const stage = boundedString(record.stage, 80);
-	return record.type === 'progress'
-		&& Boolean(event && identifierPattern.test(event))
-		&& Boolean(stage && identifierPattern.test(stage))
-		&& isBoundedInteger(record.sequence, 0, 1_000_000_000);
+function parseRunProgress(record: Record<string, unknown>): FikeyaRunProgress | undefined {
+	const event = strictBoundedString(record.event, 80);
+	const stage = strictBoundedString(record.stage, 80);
+	if (record.type !== 'progress'
+		|| !hasExactRecordKeys(record, ['event', 'sequence', 'stage', 'type'])
+		|| !event || !identifierPattern.test(event)
+		|| !stage || !identifierPattern.test(stage)
+		|| !isBoundedInteger(record.sequence, 0, 1_000_000_000)) {
+		return undefined;
+	}
+	return { type: 'progress', event, stage, sequence: record.sequence };
+}
+
+function isValidProviderHistory(value: readonly FikeyaProviderHistoryMessage[]): boolean {
+	if (!Array.isArray(value) || value.length > 12) {
+		return false;
+	}
+	let totalCharacters = 0;
+	for (const candidate of value as readonly unknown[]) {
+		const record = asRecord(candidate);
+		const role = record?.role;
+		const content = strictBoundedString(record?.content, 16_000);
+		if (!record
+			|| !hasExactRecordKeys(record, ['content', 'role'])
+			|| (role !== 'assistant' && role !== 'user')
+			|| !content?.trim()) {
+			return false;
+		}
+		totalCharacters += content.length;
+		if (totalCharacters > 64_000) {
+			return false;
+		}
+	}
+	return value.length === 0 || value[0].role === 'user';
 }
 
 function invalidLocalRequest<T>(): FikeyaCliResult<T> {

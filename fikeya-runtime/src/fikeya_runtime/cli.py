@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import __version__
 from .agent import AgentRunner
+from .conversation import parse_conversation_history
 from .credentials import CredentialResolver
 from .errors import (
     CancellationError,
@@ -242,7 +243,9 @@ def _parser() -> argparse.ArgumentParser:
     plan_create.add_argument("--spec-stdin", action="store_true")
     plan_create.add_argument("--json", action="store_true")
 
-    plan_show = plan_commands.add_parser("show", help="Show one plan and proof receipt.")
+    plan_show = plan_commands.add_parser(
+        "show", help="Show one plan and proof receipt."
+    )
     plan_show.add_argument("plan_id")
     plan_show.add_argument("--workspace", default=".")
     plan_show.add_argument("--json", action="store_true")
@@ -679,9 +682,16 @@ def _run_coding_agent(
     # A JSON-escaped UTF-8 prompt can occupy substantially more bytes than the decoded text.
     # Bound the wire representation independently, then enforce the decoded prompt limit below.
     start = _read_protocol_message((MAX_REQUEST_BYTES * 4) + 4_096)
-    if set(start) != {"prompt", "type"} or start.get("type") != "start":
+    if (
+        set(start)
+        not in (
+            {"prompt", "type"},
+            {"history", "prompt", "type"},
+        )
+        or start.get("type") != "start"
+    ):
         raise ProviderError(
-            "The first protocol message must contain only type=start and prompt."
+            "The first protocol message must contain type=start, prompt, and optional history."
         )
     prompt = start.get("prompt")
     if (
@@ -690,6 +700,7 @@ def _run_coding_agent(
         or len(prompt.encode("utf-8")) > MAX_REQUEST_BYTES
     ):
         raise ProviderError(f"Agent prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes.")
+    history = parse_conversation_history(start.get("history", []))
 
     try:
         from fikeya_agent_core import (
@@ -742,6 +753,7 @@ def _run_coding_agent(
                     progress_handler=_emit_protocol_message,
                     memory_mode=args.memory,
                     context_max_characters=args.context_max_characters,
+                    history=history,
                 )
             )
     except ProviderHttpError as error:
@@ -801,12 +813,17 @@ def _run_plan(args: argparse.Namespace) -> int:
                 "Plan requests must use --request-stdin so content does not enter process arguments."
             )
         request = _read_bounded_json_object(_PLAN_REQUEST_BYTES)
-        if set(request) != {"prompt", "protocol"}:
+        if set(request) not in (
+            {"prompt", "protocol"},
+            {"history", "prompt", "protocol"},
+        ):
             raise ProviderError(
-                "Plan requests must contain only protocol and prompt."
+                "Plan requests must contain protocol, prompt, and optional history."
             )
         if request.get("protocol") != PLAN_REQUEST_PROTOCOL:
-            raise ProviderError(f"Plan request protocol must be {PLAN_REQUEST_PROTOCOL}.")
+            raise ProviderError(
+                f"Plan request protocol must be {PLAN_REQUEST_PROTOCOL}."
+            )
         prompt = request.get("prompt")
         if (
             not isinstance(prompt, str)
@@ -816,6 +833,7 @@ def _run_plan(args: argparse.Namespace) -> int:
             raise ProviderError(
                 f"Plan prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes."
             )
+        history = parse_conversation_history(request.get("history", []))
         store = ProviderStore(runtime_home(args.home))
         agent = AgentRunner(workspace, store)
         if args.memory != "off":
@@ -835,6 +853,7 @@ def _run_plan(args: argparse.Namespace) -> int:
                     cancellation=cancellation,
                     memory_mode=args.memory,
                     context_max_characters=args.context_max_characters,
+                    history=history,
                 )
         except CancellationError:
             _emit(
@@ -878,7 +897,11 @@ def _run_plan(args: argparse.Namespace) -> int:
         specification = _read_bounded_json_object(_PLAN_SPECIFICATION_BYTES)
         plan = service.create(specification)
         _emit(
-            {"message": f"Created draft plan {plan.plan_id}.", "ok": True, **service.view(plan)},
+            {
+                "message": f"Created draft plan {plan.plan_id}.",
+                "ok": True,
+                **service.view(plan),
+            },
             as_json=args.json,
         )
         return 0
@@ -888,7 +911,11 @@ def _run_plan(args: argparse.Namespace) -> int:
     if args.plan_command == "review":
         plan = service.review(args.plan_id)
         _emit(
-            {"message": f"Reviewed plan {plan.plan_id}.", "ok": True, **service.view(plan)},
+            {
+                "message": f"Reviewed plan {plan.plan_id}.",
+                "ok": True,
+                **service.view(plan),
+            },
             as_json=args.json,
         )
         return 0
@@ -909,9 +936,7 @@ def _run_plan(args: argparse.Namespace) -> int:
         )
         return 0
     if args.plan_command in {"run", "resume"}:
-        allowed = (
-            frozenset(args.allow_executable) if args.allow_executable else None
-        )
+        allowed = frozenset(args.allow_executable) if args.allow_executable else None
         cancellation = CancellationToken()
         with _cancellation_signals(cancellation):
             plan = asyncio.run(
@@ -934,7 +959,11 @@ def _run_plan(args: argparse.Namespace) -> int:
     if args.plan_command == "cancel":
         plan = service.cancel(args.plan_id, args.reason)
         _emit(
-            {"message": f"Cancelled plan {plan.plan_id}.", "ok": True, **service.view(plan)},
+            {
+                "message": f"Cancelled plan {plan.plan_id}.",
+                "ok": True,
+                **service.view(plan),
+            },
             as_json=args.json,
         )
         return 0
@@ -955,7 +984,12 @@ def _read_bounded_json_object(maximum_bytes: int) -> dict[str, object]:
             object_pairs_hook=_unique_json_object,
             parse_constant=_reject_non_finite_json,
         )
-    except (RecursionError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+    except (
+        RecursionError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as error:
         raise ProviderError("Input must be one UTF-8 JSON object.") from error
     if not isinstance(value, dict):
         raise ProviderError("Input must be one JSON object.")

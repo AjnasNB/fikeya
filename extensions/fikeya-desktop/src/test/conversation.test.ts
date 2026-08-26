@@ -5,7 +5,7 @@
 
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { appendConversationMessage, FikeyaConversationMessage } from '../conversation';
+import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from '../conversation';
 import { buildChatPlanSummary, buildPlanTimeline, buildRecordedPlanTimeline, extractPlanSteps, fikeyaNarrowPanelMaximumWidth, isChatInteractionBlocked, selectInitialPlanStepId } from '../surface';
 
 function message(index: number, content = `message ${index}`): FikeyaConversationMessage {
@@ -43,6 +43,82 @@ describe('Fikeya live conversation state', () => {
 		assert.ok(messages.length < 8);
 		assert.strictEqual(messages.at(-1)?.id, 'message-7');
 		assert.ok(messages.reduce((total, item) => total + item.content.length, 0) <= 960_000);
+	});
+
+	test('round-trips a redacted bounded workspace snapshot after restart', () => {
+		const messages: readonly FikeyaConversationMessage[] = [
+			{ ...message(1, 'Inspect src/index.ts with sk-or-v1-1234567890abcdefgh.'), providerName: 'openrouter-main' },
+			{ ...message(2, 'The relevant function is createServer().'), tone: 'normal' }
+		];
+		const restarted = parseConversationState(serializeConversationState(messages));
+		assert.deepStrictEqual(restarted, [
+			{ ...messages[0], content: 'Inspect src/index.ts with [REDACTED CREDENTIAL].' },
+			messages[1]
+		]);
+	});
+
+	test('fails closed for malformed, oversized, or partially invalid snapshots', () => {
+		const valid = message(1);
+		assert.deepStrictEqual({
+			malformed: parseConversationState('{'),
+			wrongVersion: parseConversationState(JSON.stringify({ schemaVersion: 2, messages: [valid] })),
+			invalidRole: parseConversationState(JSON.stringify({ schemaVersion: 1, messages: [{ ...valid, role: 'tool' }] })),
+			invalidTimestamp: parseConversationState(JSON.stringify({ schemaVersion: 1, messages: [{ ...valid, createdAt: 'yesterday' }] })),
+			controlOnly: parseConversationState(JSON.stringify({ schemaVersion: 1, messages: [{ ...valid, content: '\u0000\u202E' }] })),
+			oversized: parseConversationState('x'.repeat(1_100_001))
+		}, {
+			malformed: [],
+			wrongVersion: [],
+			invalidRole: [],
+			invalidTimestamp: [],
+			controlOnly: [],
+			oversized: []
+		});
+	});
+
+	test('trims a persisted restart snapshot to the newest bounded messages', () => {
+		const messages = Array.from({ length: 60 }, (_, index) => message(index));
+		const restarted = parseConversationState(serializeConversationState(messages));
+		assert.deepStrictEqual({
+			length: restarted.length,
+			first: restarted[0]?.id,
+			last: restarted.at(-1)?.id
+		}, { length: 48, first: 'message-12', last: 'message-59' });
+	});
+
+	test('projects a bounded role-typed follow-up history without local notices', () => {
+		const messages: readonly FikeyaConversationMessage[] = [
+			{ ...message(1, 'Find the parser.') },
+			{ ...message(2, 'The parser is in src/parser.ts.') },
+			{ ...message(3, 'Provider temporarily unavailable.'), role: 'notice', tone: 'error' },
+			{ ...message(4, 'Explain its second branch.'), role: 'user' }
+		];
+		assert.deepStrictEqual(projectProviderHistory(messages), [
+			{ role: 'user', content: 'Find the parser.' },
+			{ role: 'assistant', content: 'The parser is in src/parser.ts.' },
+			{ role: 'user', content: 'Explain its second branch.' }
+		]);
+	});
+
+	test('bounds provider history by count and character budget while keeping a user-led follow-up', () => {
+		const messages = Array.from({ length: 30 }, (_, index) => ({
+			...message(index, `${index}:${'x'.repeat(20_000)}`),
+			role: index % 2 === 0 ? 'user' as const : 'assistant' as const
+		}));
+		const history = projectProviderHistory(messages);
+		assert.deepStrictEqual({
+			startsWithUser: history[0]?.role,
+			lastRole: history.at(-1)?.role,
+			withinCount: history.length <= 12,
+			withinCharacters: history.reduce((total, item) => total + item.content.length, 0) <= 64_000,
+			containsTruncationMarker: history.every(item => item.content.includes('provider-history content truncated'))
+		}, {
+			startsWithUser: 'user',
+			lastRole: 'assistant',
+			withinCount: true,
+			withinCharacters: true,
+			containsTruncationMarker: true
+		});
 	});
 });
 
