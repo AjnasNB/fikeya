@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 
 import pytest
 
-from fikeya_runtime.errors import CancellationError, ProviderError, ProviderHttpError
+from fikeya_runtime.errors import (
+    CancellationError,
+    ProviderConnectivityError,
+    ProviderError,
+    ProviderHttpError,
+)
 from fikeya_runtime.inference import (
     CancellationToken,
     InferenceRequest,
@@ -146,6 +152,39 @@ def test_execution_requires_opt_in_and_honors_preflight_cancellation() -> None:
             cancellation=cancellation,
         )
     assert transport.calls == []
+
+
+def test_pre_response_connection_failure_is_typed_without_endpoint_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnreachableOpener:
+        def open(self, *_args: object, **_kwargs: object) -> object:
+            raise urllib.error.URLError("private operating-system detail")
+
+    monkeypatch.setattr(
+        "fikeya_runtime.inference.urllib.request.build_opener",
+        lambda *_handlers: UnreachableOpener(),
+    )
+    profile = build_profile(
+        name="local",
+        kind=ProviderKind.OLLAMA,
+        model="qwen",
+    )
+
+    with pytest.raises(ProviderConnectivityError) as failure:
+        ProviderExecutor().execute(
+            profile,
+            None,
+            InferenceRequest("request"),
+            allow_network=True,
+        )
+
+    assert failure.value.kind == "connectivity"
+    assert failure.value.retryable is True
+    assert str(failure.value) == (
+        "Provider endpoint could not be reached before a response was received."
+    )
+    assert "private operating-system detail" not in str(failure.value)
 
 
 def test_http_quota_failure_is_typed_without_retaining_the_body() -> None:

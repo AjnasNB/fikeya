@@ -3334,6 +3334,10 @@ function runtimeFailureMessage(failure: FikeyaRuntimeResult['failure']): string 
 			return vscode.l10n.t('The provider rejected its credential. Update this provider in Fikeya settings.');
 		case 'provider-error':
 			return vscode.l10n.t('The provider rejected the request without returning a retained response body.');
+		case 'provider-unreachable':
+			return vscode.l10n.t('Fikeya could not reach this provider endpoint. Check that the local server is running or verify the provider URL, then try again.');
+		case 'agent-no-progress':
+			return vscode.l10n.t('Fikeya stopped before repeating an unchanged model request. Add new project evidence or revise the task, then try again.');
 		default:
 			return vscode.l10n.t('Fikeya CLI reported a problem.');
 	}
