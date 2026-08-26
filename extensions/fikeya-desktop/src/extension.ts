@@ -1584,6 +1584,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.graph-legend i[data-type="directory"] { background: var(--vscode-charts-yellow); }
 		.graph-summary, .graph-summary code { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 		.graph-summary { max-width: 100%; color: var(--vscode-descriptionForeground); font-size: 11px; }
+		.graph-results { display: grid; max-height: 220px; gap: 2px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+		.graph-results button { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; border-color: var(--vscode-widget-border); color: var(--vscode-foreground); background: transparent; text-align: left; }
+		.graph-results button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.graph-results button small { color: var(--vscode-descriptionForeground); }
+		.memory-graph[data-expanded="true"] { position: fixed; inset: 0; z-index: 1000; align-content: start; overflow: auto; padding: 12px; background: var(--vscode-editor-background); }
+		.memory-graph[data-expanded="true"] .graph-viewport, .memory-graph[data-expanded="true"] .graph-canvas { min-height: calc(100vh - 160px); }
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
 		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
 			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
@@ -1864,6 +1870,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const graphSvg = document.querySelector('[data-memory-graph]');
 		if (graphDataElement && graphSvg) {
 			const graph = JSON.parse(graphDataElement.textContent);
+			const graphRoot = graphSvg.closest('.memory-graph');
 			const scene = graphSvg.querySelector('[data-graph-scene]');
 			const edgeLayer = graphSvg.querySelector('[data-graph-edges]');
 			const nodeLayer = graphSvg.querySelector('[data-graph-nodes]');
@@ -1872,6 +1879,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			const typeFilter = document.querySelector('[data-graph-type]');
 			const relationFilter = document.querySelector('[data-graph-relation]');
 			const summary = document.querySelector('[data-graph-summary]');
+			const results = document.querySelector('[data-graph-results]');
+			const openSource = document.querySelector('[data-graph-open-source]');
+			const fullView = document.querySelector('[data-graph-full-view]');
 			const nodeById = new Map(graph.nodes.map(node => [node.id, node]));
 			const colors = {
 				worktree: 'var(--vscode-charts-red)',
@@ -1881,11 +1891,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				directory: 'var(--vscode-charts-yellow)',
 				reference: 'var(--vscode-descriptionForeground)'
 			};
-			const positions = new Map();
-			let pan = { x: 0, y: 0 };
-			let zoom = 1;
-			let selectedId = null;
+			const savedGraph = persistedState.graphState && typeof persistedState.graphState === 'object' ? persistedState.graphState : {};
+			const positions = new Map(Object.entries(savedGraph.positions || {}).filter(([, point]) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).slice(0, 100));
+			let pan = savedGraph.pan && Number.isFinite(savedGraph.pan.x) && Number.isFinite(savedGraph.pan.y) ? savedGraph.pan : { x: 0, y: 0 };
+			let zoom = Number.isFinite(savedGraph.zoom) ? Math.max(.55, Math.min(2.5, savedGraph.zoom)) : 1;
+			let selectedId = typeof savedGraph.selectedId === 'string' && nodeById.has(savedGraph.selectedId) ? savedGraph.selectedId : null;
 			let pointerState = null;
+			if (search && typeof savedGraph.search === 'string') search.value = savedGraph.search;
+			if (typeFilter && Array.from(typeFilter.options).some(option => option.value === savedGraph.type)) typeFilter.value = savedGraph.type;
+			if (relationFilter && Array.from(relationFilter.options).some(option => option.value === savedGraph.relation)) relationFilter.value = savedGraph.relation;
+			const saveGraphState = () => persistUiState({ graphState: {
+				search: search?.value || '', type: typeFilter?.value || 'all', relation: relationFilter?.value || 'all', pan, zoom, selectedId,
+				positions: Object.fromEntries(Array.from(positions.entries()).slice(0, 100))
+			} });
 			const svgElement = name => document.createElementNS('http://www.w3.org/2000/svg', name);
 			const applyScene = () => scene.setAttribute('transform', 'translate(' + pan.x + ' ' + pan.y + ') scale(' + zoom + ')');
 			const pointFromEvent = event => {
@@ -1902,7 +1920,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				document.querySelector('[data-graph-detail="connections"]').textContent = node.incoming + ' incoming | ' + node.outgoing + ' outgoing';
 				document.querySelector('[data-graph-detail="source"]').textContent = node.sourceEventId || 'Derived node';
 				document.querySelector('[data-graph-detail="evidence"]').textContent = node.evidenceHash || node.contentHash || 'No direct content hash';
+				if (openSource) {
+					openSource.hidden = !(node.type === 'file' && typeof node.path === 'string' && node.path.length > 0);
+					openSource.dataset.openSource = openSource.hidden ? '' : node.path;
+				}
 				document.querySelectorAll('.graph-node').forEach(element => { element.dataset.selected = String(element.dataset.nodeId === node.id); });
+				saveGraphState();
 			};
 			const naturalPosition = (node, index, group, ring) => {
 				const radius = group.length === 1 && graph.nodes.length === 1 ? 0 : 58 + ring * 46;
@@ -1925,6 +1948,20 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				if (query) { for (const id of direct) { for (const neighbor of neighbors.get(id) || []) { if (wantedType === 'all' || nodeById.get(neighbor)?.type === wantedType) expanded.add(neighbor); } } }
 				const visible = graph.nodes.filter(node => expanded.has(node.id)).sort((left, right) => right.importance - left.importance || left.id.localeCompare(right.id)).slice(0, 100);
 				const visibleIds = new Set(visible.map(node => node.id));
+				if (results) {
+					results.textContent = '';
+					for (const node of visible) {
+						const item = document.createElement('li');
+						const button = document.createElement('button');
+						button.type = 'button';
+						button.dataset.graphResult = node.id;
+						const label = document.createElement('span'); label.textContent = node.label;
+						const kind = document.createElement('small'); kind.textContent = node.type;
+						button.append(label, kind);
+						button.addEventListener('click', () => { showNode(node); nodeLayer.querySelector('[data-node-id="' + CSS.escape(node.id) + '"]')?.focus(); });
+						item.append(button); results.append(item);
+					}
+				}
 				const types = ['worktree', 'memory', 'file', 'concept', 'directory', 'reference'].filter(type => visible.some(node => node.type === type));
 				types.forEach((type, ring) => {
 					const group = visible.filter(node => node.type === type);
@@ -1966,13 +2003,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				const position = worldPoint(event); positions.set(pointerState.id, position); const group = nodeLayer.querySelector('[data-node-id="' + CSS.escape(pointerState.id) + '"]'); if (group) group.setAttribute('transform', 'translate(' + position.x + ' ' + position.y + ')');
 				for (const line of edgeLayer.querySelectorAll('line')) { if (line.dataset.source === pointerState.id) { line.setAttribute('x1', position.x); line.setAttribute('y1', position.y); } if (line.dataset.target === pointerState.id) { line.setAttribute('x2', position.x); line.setAttribute('y2', position.y); } }
 			});
-			const finishPointer = event => { if (!pointerState || pointerState.pointerId !== event.pointerId) return; hit.dataset.panning = 'false'; nodeLayer.querySelectorAll('.graph-node').forEach(node => { node.dataset.dragging = 'false'; }); try { graphSvg.releasePointerCapture(event.pointerId); } catch {} pointerState = null; };
+			const finishPointer = event => { if (!pointerState || pointerState.pointerId !== event.pointerId) return; hit.dataset.panning = 'false'; nodeLayer.querySelectorAll('.graph-node').forEach(node => { node.dataset.dragging = 'false'; }); try { graphSvg.releasePointerCapture(event.pointerId); } catch {} pointerState = null; saveGraphState(); };
 			graphSvg.addEventListener('pointerup', finishPointer); graphSvg.addEventListener('pointercancel', finishPointer);
-			graphSvg.addEventListener('wheel', event => { event.preventDefault(); const point = pointFromEvent(event); const next = Math.max(.55, Math.min(2.5, zoom * (event.deltaY < 0 ? 1.12 : .89))); const world = { x: (point.x - pan.x) / zoom, y: (point.y - pan.y) / zoom }; zoom = next; pan = { x: point.x - world.x * zoom, y: point.y - world.y * zoom }; applyScene(); }, { passive: false });
-			document.querySelector('[data-graph-zoom-in]')?.addEventListener('click', () => { zoom = Math.min(2.5, zoom * 1.2); applyScene(); });
-			document.querySelector('[data-graph-zoom-out]')?.addEventListener('click', () => { zoom = Math.max(.55, zoom / 1.2); applyScene(); });
-			document.querySelector('[data-graph-reset]')?.addEventListener('click', () => { positions.clear(); pan = { x: 0, y: 0 }; zoom = 1; selectedId = null; applyScene(); renderGraph(); });
-			search?.addEventListener('input', renderGraph); typeFilter?.addEventListener('change', renderGraph); relationFilter?.addEventListener('change', renderGraph); applyScene(); renderGraph();
+			graphSvg.addEventListener('wheel', event => { event.preventDefault(); const point = pointFromEvent(event); const next = Math.max(.55, Math.min(2.5, zoom * (event.deltaY < 0 ? 1.12 : .89))); const world = { x: (point.x - pan.x) / zoom, y: (point.y - pan.y) / zoom }; zoom = next; pan = { x: point.x - world.x * zoom, y: point.y - world.y * zoom }; applyScene(); saveGraphState(); }, { passive: false });
+			document.querySelector('[data-graph-zoom-in]')?.addEventListener('click', () => { zoom = Math.min(2.5, zoom * 1.2); applyScene(); saveGraphState(); });
+			document.querySelector('[data-graph-zoom-out]')?.addEventListener('click', () => { zoom = Math.max(.55, zoom / 1.2); applyScene(); saveGraphState(); });
+			document.querySelector('[data-graph-reset]')?.addEventListener('click', () => { positions.clear(); pan = { x: 0, y: 0 }; zoom = 1; selectedId = null; applyScene(); renderGraph(); saveGraphState(); });
+			openSource?.addEventListener('click', () => { if (openSource.dataset.openSource) vscode.postMessage({ type: 'openFile', path: openSource.dataset.openSource }); });
+			fullView?.addEventListener('click', () => { const expanded = graphRoot?.dataset.expanded !== 'true'; if (graphRoot) graphRoot.dataset.expanded = String(expanded); fullView.setAttribute('aria-pressed', String(expanded)); fullView.textContent = expanded ? 'Exit full view' : 'Full view'; persistUiState({ graphExpanded: expanded }); });
+			if (graphRoot && persistedState.graphExpanded === true) { graphRoot.dataset.expanded = 'true'; fullView?.setAttribute('aria-pressed', 'true'); if (fullView) fullView.textContent = 'Exit full view'; }
+			document.addEventListener('keydown', event => { if (event.key === 'Escape' && graphRoot?.dataset.expanded === 'true') { graphRoot.dataset.expanded = 'false'; fullView?.setAttribute('aria-pressed', 'false'); if (fullView) fullView.textContent = 'Full view'; persistUiState({ graphExpanded: false }); fullView?.focus(); } });
+			const refreshGraph = () => { renderGraph(); saveGraphState(); };
+			search?.addEventListener('input', refreshGraph); typeFilter?.addEventListener('change', refreshGraph); relationFilter?.addEventListener('change', refreshGraph); applyScene(); renderGraph();
 		}
 	</script>
 </body>
@@ -2002,10 +2044,10 @@ function renderMemoryGraph(state: DashboardState, strings: WebviewStrings): stri
 			<label class="field"><span>${escapeHtml(strings.searchNodes)}</span><input data-graph-search type="search" maxlength="160" placeholder="${escapeHtml(strings.searchNodesPlaceholder)}"></label>
 			<label class="field"><span>${escapeHtml(strings.nodeType)}</span><select data-graph-type><option value="all">${escapeHtml(strings.allTypes)}</option><option value="worktree">${escapeHtml(strings.worktrees)}</option><option value="memory">${escapeHtml(strings.memories)}</option><option value="file">${escapeHtml(strings.files)}</option><option value="concept">${escapeHtml(strings.concepts)}</option><option value="directory">${escapeHtml(strings.directories)}</option><option value="reference">${escapeHtml(strings.references)}</option></select></label>
 			<label class="field"><span>${escapeHtml(strings.relationType)}</span><select data-graph-relation><option value="all">${escapeHtml(strings.allRelationships)}</option>${relationshipOptions}</select></label>
-			<div class="actions"><button class="secondary" data-graph-zoom-in type="button" aria-label="${escapeHtml(strings.zoomIn)}">+</button><button class="secondary" data-graph-zoom-out type="button" aria-label="${escapeHtml(strings.zoomOut)}">-</button><button class="secondary" data-graph-reset type="button">${escapeHtml(strings.reset)}</button></div>
+			<div class="actions"><button class="secondary" data-graph-zoom-in type="button" aria-label="${escapeHtml(strings.zoomIn)}">+</button><button class="secondary" data-graph-zoom-out type="button" aria-label="${escapeHtml(strings.zoomOut)}">-</button><button class="secondary" data-graph-reset type="button">${escapeHtml(strings.reset)}</button><button class="secondary" data-graph-full-view type="button" aria-pressed="false">${escapeHtml(vscode.l10n.t('Full view'))}</button></div>
 		</div>
 		<div class="graph-workspace"><div class="graph-viewport"><svg class="graph-canvas" data-memory-graph viewBox="0 0 800 480" role="img" aria-label="${escapeHtml(strings.memoryGraphAria)}"><rect class="graph-hit" data-graph-hit x="0" y="0" width="800" height="480"></rect><g data-graph-scene><g data-graph-edges></g><g data-graph-nodes></g></g></svg></div>
-		<aside class="graph-details" aria-live="polite"><h3 data-graph-title>${escapeHtml(strings.chooseNode)}</h3><p data-graph-description>${escapeHtml(strings.chooseNodeDescription)}</p><dl class="receipt"><dt>${escapeHtml(strings.nodeType)}</dt><dd data-graph-detail="type">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.status)}</dt><dd data-graph-detail="status">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.connections)}</dt><dd data-graph-detail="connections">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.sourceEvent)}</dt><dd><code data-graph-detail="source">${escapeHtml(strings.unavailable)}</code></dd><dt>${escapeHtml(strings.evidence)}</dt><dd><code data-graph-detail="evidence">${escapeHtml(strings.unavailable)}</code></dd></dl></aside></div>
+		<aside class="graph-details" aria-live="polite"><h3 data-graph-title>${escapeHtml(strings.chooseNode)}</h3><p data-graph-description>${escapeHtml(strings.chooseNodeDescription)}</p><div class="actions"><button class="secondary" data-graph-open-source type="button" hidden>${escapeHtml(vscode.l10n.t('Open source file'))}</button></div><dl class="receipt"><dt>${escapeHtml(strings.nodeType)}</dt><dd data-graph-detail="type">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.status)}</dt><dd data-graph-detail="status">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.connections)}</dt><dd data-graph-detail="connections">${escapeHtml(strings.unavailable)}</dd><dt>${escapeHtml(strings.sourceEvent)}</dt><dd><code data-graph-detail="source">${escapeHtml(strings.unavailable)}</code></dd><dt>${escapeHtml(strings.evidence)}</dt><dd><code data-graph-detail="evidence">${escapeHtml(strings.unavailable)}</code></dd></dl><h3>${escapeHtml(vscode.l10n.t('Visible results'))}</h3><ol class="graph-results" data-graph-results aria-label="${escapeHtml(vscode.l10n.t('Filtered graph nodes'))}"></ol></aside></div>
 		<output class="graph-summary" data-graph-summary aria-live="polite"></output>
 		<div class="graph-legend"><span><i data-type="worktree"></i>${escapeHtml(strings.worktrees)}</span><span><i data-type="memory"></i>${escapeHtml(strings.memories)}</span><span><i data-type="file"></i>${escapeHtml(strings.files)}</span><span><i data-type="concept"></i>${escapeHtml(strings.concepts)}</span><span><i data-type="directory"></i>${escapeHtml(strings.directories)}</span><span><i data-type="reference"></i>${escapeHtml(strings.references)}</span></div>
 		<p class="graph-summary">${escapeHtml(strings.graphManifest)} <code>${escapeHtml(snapshot.graphManifestHash)}</code><br>${escapeHtml(strings.ledgerHead)} <code>${escapeHtml(snapshot.ledgerHeadHash ?? strings.unavailable)}</code></p>
