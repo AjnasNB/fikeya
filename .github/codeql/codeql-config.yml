@@ -1,0 +1,14 @@
+name: Fikeya product security scan
+
+paths:
+  - cli
+  - extensions/fikeya-desktop
+  - fikeya-runtime
+  - scripts/fikeya
+  - site
+
+paths-ignore:
+  - '**/node_modules/**'
+  - '**/dist/**'
+  - '**/out/**'
+  - '**/test-results/**'
