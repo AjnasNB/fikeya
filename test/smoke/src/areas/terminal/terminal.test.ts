@@ -41,7 +41,7 @@ export function setup(logger: Logger, options?: TerminalSmokeOptions) {
 			terminal = app.workbench.terminal;
 		});
 
-		test('contributed profile UI stays scoped to desktop smoke runs', () => {
+		it('contributed profile UI stays scoped to desktop smoke runs', () => {
 			assert.strictEqual(shouldSkipTerminalProfileTests('darwin', { web: true }), true);
 			assert.strictEqual(shouldSkipTerminalProfileTests('darwin', { remote: true }), true);
 			assert.strictEqual(shouldSkipTerminalProfileTests('darwin'), false);
