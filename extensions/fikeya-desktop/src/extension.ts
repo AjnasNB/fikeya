@@ -154,23 +154,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.lab', () => provider.openWorkspacePanel('context')));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.view.usage', () => provider.openWorkspacePanel('usage')));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.view.setup', () => provider.openWorkspacePanel('setup')));
-	if (isFikeyaDesktop) {
-		void runDesktopOnboarding(context, provider);
+	if (isFikeyaDesktop && vscode.workspace.getConfiguration('fikeya.chat').get<boolean>('openAtStartup', true)) {
+		provider.openWorkspacePanel('chat');
 	}
-}
-
-async function runDesktopOnboarding(context: vscode.ExtensionContext, provider: FikeyaWebviewViewProvider): Promise<void> {
-	const completedKey = 'fikeya.desktop.onboarding.completed.v3';
-	const shownKey = 'fikeya.desktop.onboarding.shown.v3';
-	if (context.globalState.get<boolean>(completedKey) || context.globalState.get<boolean>(shownKey)) {
-		return;
-	}
-	await context.globalState.update(shownKey, true);
-	// Start in the non-modal Agent workspace. Its empty state explains the available
-	// surfaces and links to Setup when no provider exists, while Code remains one
-	// click away. A modal Quick Pick here can race the command that activated the
-	// extension and accidentally turn a workspace action into provider setup.
-	provider.openWorkspacePanel('chat');
 }
 
 class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {

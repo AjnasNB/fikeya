@@ -24,6 +24,7 @@
 		}
 	},
 	"activationEvents": [
+		"onStartupFinished",
 		"onView:fikeya.dashboard",
 		"onCommand:fikeya.open",
 		"onCommand:fikeya.configureProvider",
@@ -142,6 +143,12 @@
 		"configuration": {
 			"title": "Fikeya",
 			"properties": {
+				"fikeya.chat.openAtStartup": {
+					"type": "boolean",
+					"default": true,
+					"scope": "window",
+					"description": "%configuration.chat.openAtStartup.description%"
+				},
 				"fikeya.chat.persistWorkspaceHistory": {
 					"type": "boolean",
 					"default": false,
@@ -191,8 +198,8 @@
 		}
 	},
 	"scripts": {
-		"compile": "npx gulp compile-extension:fikeya-desktop",
-		"watch": "npx gulp watch-extension:fikeya-desktop",
+		"compile": "tsc --project ./tsconfig.json",
+		"watch": "tsc --project ./tsconfig.json --watch",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
 		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
