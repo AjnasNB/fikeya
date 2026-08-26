@@ -110,7 +110,12 @@ expect(root_package.get("private") is True, "The upstream source package must re
 expect_equal(root_package.get("main"), "./out/main.js", "desktop entry point")
 expect(root_license.startswith("MIT License"), "The Code OSS foundation license must retain its MIT notice.")
 expect_equal(distribution.get("name"), "Fikeya", "distribution identity")
-expect_equal(distribution.get("version"), "0.1.0-beta.1", "distribution release version")
+distribution_version = distribution.get("version")
+expect(
+    isinstance(distribution_version, str)
+    and bool(re.fullmatch(r"\d+\.\d+\.\d+-beta\.\d+", distribution_version)),
+    f"distribution release version must use the public beta convention; received {distribution_version!r}.",
+)
 expect_equal(distribution.get("status"), "beta", "distribution release status")
 expect_equal(distribution.get("licenseMap"), "LICENSES/README.md", "distribution license map")
 expect_equal(

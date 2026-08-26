@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "fikeya.desktop-plan-proof.v1",
+  "capturedAt": "2026-08-25T23:38:59.442Z",
+  "planId": "pln_434fc264890d5a1c66c510f1",
+  "recordSha256": "sha256:157207348f3322eef0a65192a4c23e1984dd298017fe384898415e5e9f58866d",
+  "specSha256": "sha256:434fc264890d5a1c66c510f19897a556f555e257b3fce28d8b66e3284d02f2b1",
+  "status": "succeeded",
+  "steps": [
+    {
+      "order": 1,
+      "stepId": "inventory-project",
+      "toolName": "workspace.list_files",
+      "status": "succeeded",
+      "approvalReference": "apr_0cdc31725b5e4f0f94e055a634436824",
+      "approvalConsumedAt": "2026-08-25T23:38:45.725Z",
+      "approvalExpiresAt": "2026-08-25T23:43:41.578Z",
+      "toolCallSha256": "sha256:464e98a54fb797e2a7bc18a366813207bad37a1bc20a952e7b22861526c06d57",
+      "resultSha256": "sha256:657863abf4472f804b4e3d8b2353cb87c4212dc714c092b2341c6364cfb397d5",
+      "executionSha256": "sha256:f48128b67f574e73addbe75fa9059cf828054ef1cec76e6e4e8601a4c67d9936",
+      "verificationSha256": "sha256:b2d198bd96366db5d584ae9310e3d41c2f6d44cafd3d32f8f3f8a852eafc0f5d",
+      "verificationStatus": "passed"
+    },
+    {
+      "order": 2,
+      "stepId": "inspect-readme",
+      "toolName": "workspace.read_file",
+      "status": "succeeded",
+      "approvalReference": "apr_9a7da887a6b148f2b33feaebf36eb08a",
+      "approvalConsumedAt": "2026-08-25T23:38:52.442Z",
+      "approvalExpiresAt": "2026-08-25T23:43:50.382Z",
+      "toolCallSha256": "sha256:8d48490ab8171069a6e62312fdfdcf132bd3b829983a497322c14cabc799a64a",
+      "resultSha256": "sha256:8600adddb94bc5ce833ea39e3c4318c27d7d34a3369db13020b2c158273aeb0b",
+      "executionSha256": "sha256:40bcab6283fc98f907a3d1e19742e79f61e080832ea035baf9d09fdda158261e",
+      "verificationSha256": "sha256:c3fcafdfec8988755dfcb045be784f3e8ac935b5d6990012ff9854b33eb3486a",
+      "verificationStatus": "passed"
+    },
+    {
+      "order": 3,
+      "stepId": "find-review-boundary",
+      "toolName": "workspace.search_text",
+      "status": "succeeded",
+      "approvalReference": "apr_abe1c111282c47869888e6e9d5b97cad",
+      "approvalConsumedAt": "2026-08-25T23:38:56.949Z",
+      "approvalExpiresAt": "2026-08-25T23:43:55.043Z",
+      "toolCallSha256": "sha256:986d330428f2164ad60000a7013d993f1ec5d186ac1fc48148a777dcf3b80c43",
+      "resultSha256": "sha256:d821e23444663b3c36a3acfeaf51a438e195aac3b32677d89cd6dd2171eb15c1",
+      "executionSha256": "sha256:bf8fc73cac4711d07e8ce80205c6af87252bfb616ceb214d1d531062c307ca36",
+      "verificationSha256": "sha256:89ea7ba92c6f312b3381cd8026c8dc7b0d65904df1e119da29bf053a4aa804fe",
+      "verificationStatus": "passed"
+    }
+  ]
+}

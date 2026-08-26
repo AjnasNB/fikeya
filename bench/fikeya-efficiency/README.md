@@ -69,6 +69,15 @@ node compare.mjs --baseline path\to\baseline.jsonl --fikeya path\to\fikeya.jsonl
 
 A valid comparison prints a JSON report to standard output. Any incomplete or unmatched comparison exits non-zero and prints a rejection reason to standard error.
 
+To display a valid aggregate in Fikeya's local Usage view, write the comparator output to the initialized workspace without committing it:
+
+```powershell
+node compare.mjs --baseline path\to\baseline.jsonl --fikeya path\to\fikeya.jsonl > path\to\workspace\.fikeya\matched-efficiency.json
+fikeya stats --workspace path\to\workspace --json
+```
+
+The runtime revalidates the bounded aggregate, computes its SHA-256 receipt, and rejects malformed or unmatched reports. Raw task receipts remain outside the workspace dashboard.
+
 ## Before a real benchmark
 
 Pre-register the task list, trial count, model/version, prices, limits, tool contract, network policy, grader, and primary metric. Preserve the raw receipts and grader outputs. Do not replace these synthetic fixtures with real results; store real runs outside the source tree or in a separately reviewed evidence package.

@@ -7,22 +7,23 @@ on:
       - 'v0.*'
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  package-windows:
-    name: Build, verify, and package Windows beta
-    # Code OSS' native dependency preinstall requires Visual Studio 2022. Pin the
-    # image instead of following windows-latest to a runner image whose toolchain
-    # can change independently of this release definition.
+  build-windows:
+    name: Build and verify unsigned Windows beta
     runs-on: windows-2022
     timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      public_version: ${{ steps.version.outputs.public_version }}
+      extension_version: ${{ steps.version.outputs.extension_version }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
@@ -33,23 +34,199 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
+      - name: Resolve and verify release version
+        id: version
+        shell: pwsh
+        env:
+          FIKEYA_GIT_REF: ${{ github.ref }}
+          FIKEYA_GIT_REF_NAME: ${{ github.ref_name }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = [string]((Get-Content fikeya-distribution.json -Raw | ConvertFrom-Json).version)
+          $extensionVersion = [string]((Get-Content extensions/fikeya-desktop/package.json -Raw | ConvertFrom-Json).version)
+          "public_version=$version" >> $env:GITHUB_OUTPUT
+          "extension_version=$extensionVersion" >> $env:GITHUB_OUTPUT
+          $tag = if ($env:FIKEYA_GIT_REF.StartsWith('refs/tags/')) { $env:FIKEYA_GIT_REF_NAME } else { "v$version" }
+          node scripts/fikeya/verify-release-version.ts $tag
+      - name: Require tagged release commits to belong to main
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fetch origin/main.' }
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release tag must point to a commit reachable from origin/main.' }
       - name: Install Code OSS dependencies
         run: npm ci
-      - name: Build release artifacts
+      - name: Verify Fikeya components
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install -e ".\fikeya-agent-core[test]"
+          python -m pip install -e ".\fikeya-runtime[test,azure]"
+          python -m pip install -e ".\integrations\fikeya-interop[test]"
+          python scripts/fikeya/verify_desktop_foundation.py
+          python -m unittest discover -s scripts/fikeya/tests -v
+          Push-Location fikeya-agent-core
+          python -m ruff check .
+          python -m pytest
+          Pop-Location
+          Push-Location fikeya-runtime
+          python -m pytest
+          Pop-Location
+          Push-Location integrations/fikeya-interop
+          python -m ruff check .
+          python -m pytest
+          Pop-Location
+          Push-Location extensions/fikeya-desktop
+          npm ci
+          npm test
+          Pop-Location
+          Push-Location packages/fikeya-protocol
+          npm ci
+          npm test
+          Pop-Location
+          Push-Location integrations/qarinah-sidecar
+          npm ci
+          npm test
+          Pop-Location
+          Push-Location integrations/tool-presets
+          npm ci
+          npm test
+          Pop-Location
+          Push-Location site
+          npm ci
+          npm test
+          npm run build
+          Pop-Location
+          node --test scripts/fikeya/tests/capture_desktop_proof.test.ts
+          node scripts/fikeya/capture-desktop-proof.ts --check
+          python -m unittest bench/fikeya-plan-proof/test_run.py
+      - name: Build unsigned release artifacts
+        shell: pwsh
+        run: ./scripts/fikeya/package-release.ps1 -SkipManifest
+      - name: Verify unsigned artifact identities
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.public_version }}'
+          $extensionVersion = [string]((Get-Content extensions/fikeya-desktop/package.json -Raw | ConvertFrom-Json).version)
+          $required = @(
+            "FikeyaSetup-$version-win32-x64.exe",
+            "fikeya-cli-$version.zip",
+            "fikeya-desktop-$extensionVersion-win32-x64.vsix"
+          )
+          foreach ($name in $required) {
+            $path = Join-Path release-artifacts $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing release artifact: $name" }
+          }
+          $installers = @(Get-ChildItem release-artifacts/FikeyaSetup-*.exe)
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+            if ($signature.Status -ne 'NotSigned') { throw "Unsigned build unexpectedly has signature status $($signature.Status)." }
+          }
+          ./scripts/fikeya/write-release-manifest.ps1 -OutputDirectory release-artifacts -Version $version
+      - name: Verify complete unsigned release payload
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python scripts/fikeya/verify_release_artifacts.py `
+            --artifact-directory release-artifacts `
+            --public-version '${{ steps.version.outputs.public_version }}' `
+            --extension-version '${{ steps.version.outputs.extension_version }}' `
+            --expected-commit $env:GITHUB_SHA `
+            --require-installer
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fikeya-unsigned-${{ github.sha }}
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-and-publish:
+    name: Sign, attest, and publish protected beta
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-windows
+    runs-on: windows-2022
+    timeout-minutes: 30
+    environment: fikeya-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/fikeya/verify_release_artifacts.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: fikeya-unsigned-${{ github.sha }}
+          path: release-artifacts
+      - name: Validate protected signing configuration
+        id: signing
         shell: pwsh
         env:
           FIKEYA_SIGNING_PFX_BASE64: ${{ secrets.FIKEYA_SIGNING_PFX_BASE64 }}
           FIKEYA_SIGNING_PFX_PASSWORD: ${{ secrets.FIKEYA_SIGNING_PFX_PASSWORD }}
-        run: ./scripts/fikeya/package-release.ps1 -SkipManifest
+          FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED }}
+          FIKEYA_AZURE_CLIENT_ID: ${{ secrets.FIKEYA_AZURE_CLIENT_ID }}
+          FIKEYA_AZURE_TENANT_ID: ${{ secrets.FIKEYA_AZURE_TENANT_ID }}
+          FIKEYA_AZURE_SUBSCRIPTION_ID: ${{ secrets.FIKEYA_AZURE_SUBSCRIPTION_ID }}
+          FIKEYA_AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          FIKEYA_AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          FIKEYA_AZURE_ARTIFACT_SIGNING_PROFILE: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_PROFILE }}
+          FIKEYA_EXPECTED_SIGNER_SUBJECT: ${{ vars.FIKEYA_EXPECTED_SIGNER_SUBJECT }}
+        run: |
+          $hasPfx = -not [string]::IsNullOrWhiteSpace($env:FIKEYA_SIGNING_PFX_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:FIKEYA_SIGNING_PFX_PASSWORD)
+          $hasAzure = $env:FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED -eq 'true'
+          if ($hasPfx -ne $hasPassword) { throw 'PFX data and password must be configured together.' }
+          if ($hasPfx -and $hasAzure) { throw 'Configure either PFX signing or Azure Artifact Signing, not both.' }
+          if ($hasAzure) {
+            foreach ($name in @('FIKEYA_AZURE_CLIENT_ID', 'FIKEYA_AZURE_TENANT_ID', 'FIKEYA_AZURE_SUBSCRIPTION_ID', 'FIKEYA_AZURE_ARTIFACT_SIGNING_ENDPOINT', 'FIKEYA_AZURE_ARTIFACT_SIGNING_ACCOUNT', 'FIKEYA_AZURE_ARTIFACT_SIGNING_PROFILE')) {
+              if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Missing Azure signing setting: $name" }
+            }
+          }
+          $mode = if ($hasPfx) { 'pfx' } elseif ($hasAzure) { 'azure' } else { 'none' }
+          if ($mode -eq 'none') {
+            throw 'Tagged releases require protected PFX signing or Azure Artifact Signing. Unsigned installers may be built for local verification but cannot be published.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:FIKEYA_EXPECTED_SIGNER_SUBJECT)) {
+            throw 'FIKEYA_EXPECTED_SIGNER_SUBJECT is required for tagged releases.'
+          }
+          "mode=$mode" >> $env:GITHUB_OUTPUT
+      - name: Sign installer with protected PFX
+        if: steps.signing.outputs.mode == 'pfx'
+        shell: pwsh
+        env:
+          FIKEYA_SIGNING_PFX_BASE64: ${{ secrets.FIKEYA_SIGNING_PFX_BASE64 }}
+          FIKEYA_SIGNING_PFX_PASSWORD: ${{ secrets.FIKEYA_SIGNING_PFX_PASSWORD }}
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP "fikeya-signing-$env:GITHUB_RUN_ID.pfx"
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:FIKEYA_SIGNING_PFX_BASE64))
+            $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signTool) { throw 'signtool.exe was not found.' }
+            foreach ($installer in @(Get-ChildItem release-artifacts/FikeyaSetup-*.exe)) {
+              & $signTool.FullName sign /f $pfxPath /p $env:FIKEYA_SIGNING_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $installer.FullName
+              if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($installer.Name)." }
+            }
+          } finally {
+            if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
+          }
       - name: Sign in to Azure for Artifact Signing
-        if: vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED == 'true'
+        if: steps.signing.outputs.mode == 'azure'
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3
         with:
           client-id: ${{ secrets.FIKEYA_AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.FIKEYA_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.FIKEYA_AZURE_SUBSCRIPTION_ID }}
       - name: Sign installer with Azure Artifact Signing
-        if: vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED == 'true'
+        if: steps.signing.outputs.mode == 'azure'
         uses: azure/artifact-signing-action@c41ab607157e82e3ed79e291b56f9e7425818b04 # v2
         with:
           endpoint: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENDPOINT }}
@@ -60,31 +237,60 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
-      - name: Verify an Authenticode signature when signing credentials are configured
+      - name: Verify signer identity and write final manifest
+        shell: pwsh
+        env:
+          FIKEYA_SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+          FIKEYA_EXPECTED_SIGNER_SUBJECT: ${{ vars.FIKEYA_EXPECTED_SIGNER_SUBJECT }}
+          FIKEYA_EXPECTED_SIGNER_THUMBPRINT: ${{ vars.FIKEYA_EXPECTED_SIGNER_THUMBPRINT }}
+          FIKEYA_PUBLIC_VERSION: ${{ needs.build-windows.outputs.public_version }}
+        run: |
+          $installers = @(Get-ChildItem release-artifacts/FikeyaSetup-*.exe)
+          if ($installers.Count -eq 0) { throw 'No Windows installer was downloaded.' }
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+            if ($signature.Status -ne 'Valid') { throw "$($installer.Name) signature is $($signature.Status)." }
+            if ($signature.SignerCertificate.Subject -cne $env:FIKEYA_EXPECTED_SIGNER_SUBJECT) { throw 'Installer signer subject does not match the protected release configuration.' }
+            if (-not [string]::IsNullOrWhiteSpace($env:FIKEYA_EXPECTED_SIGNER_THUMBPRINT) -and $signature.SignerCertificate.Thumbprint -cne $env:FIKEYA_EXPECTED_SIGNER_THUMBPRINT) { throw 'Installer signer thumbprint does not match the protected release configuration.' }
+            if (-not $signature.TimeStamperCertificate) { throw 'Installer signature does not contain a trusted timestamp.' }
+          }
+          Remove-Item -LiteralPath release-artifacts/release-verification.json, release-artifacts/SHA256SUMS.txt -Force -ErrorAction SilentlyContinue
+          $artifacts = @(Get-ChildItem release-artifacts -File | Sort-Object Name)
+          $records = foreach ($artifact in $artifacts) {
+            $signature = if ($artifact.Extension -eq '.exe') { Get-AuthenticodeSignature -LiteralPath $artifact.FullName } else { $null }
+            [ordered]@{
+              name = $artifact.Name
+              bytes = $artifact.Length
+              sha256 = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              authenticodeStatus = if ($signature) { [string]$signature.Status } else { 'not-applicable' }
+              signer = if ($signature -and $signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { $null }
+              timestampSigner = if ($signature -and $signature.TimeStamperCertificate) { $signature.TimeStamperCertificate.Subject } else { $null }
+              signatureScope = if ($artifact.Extension -eq '.exe') { 'outer-windows-installer' } else { 'not-applicable' }
+            }
+          }
+          $manifest = [ordered]@{ schemaVersion = 1; product = 'Fikeya'; version = $env:FIKEYA_PUBLIC_VERSION; commit = $env:GITHUB_SHA; generatedAt = (Get-Date).ToUniversalTime().ToString('o'); artifacts = @($records) }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath release-artifacts/release-verification.json -Encoding utf8
+          $hashLines = Get-ChildItem release-artifacts -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object { '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
+          $hashLines | Set-Content -LiteralPath release-artifacts/SHA256SUMS.txt -Encoding ascii
+      - name: Verify complete final release payload
         shell: pwsh
         run: |
-          $installer = Get-ChildItem release-artifacts/FikeyaSetup-*.exe | Select-Object -First 1
-          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
-          if (($env:FIKEYA_SIGNING_PFX_BASE64 -or $env:FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED -eq 'true') -and $signature.Status -ne 'Valid') {
-            throw "Signing credentials were configured but the installer signature is $($signature.Status)."
-          }
-          Write-Host "Installer signature status: $($signature.Status)"
-        env:
-          FIKEYA_SIGNING_PFX_BASE64: ${{ secrets.FIKEYA_SIGNING_PFX_BASE64 }}
-          FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED: ${{ vars.FIKEYA_AZURE_ARTIFACT_SIGNING_ENABLED }}
-      - name: Write checksums and release verification manifest
-        shell: pwsh
-        run: ./scripts/fikeya/write-release-manifest.ps1 -OutputDirectory release-artifacts
+          $PSNativeCommandUseErrorActionPreference = $true
+          python scripts/fikeya/verify_release_artifacts.py `
+            --artifact-directory release-artifacts `
+            --public-version '${{ needs.build-windows.outputs.public_version }}' `
+            --extension-version '${{ needs.build-windows.outputs.extension_version }}' `
+            --expected-commit $env:GITHUB_SHA `
+            --require-installer
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: release-artifacts/*
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: fikeya-0.1.0-beta.1-release
+          name: fikeya-${{ needs.build-windows.outputs.public_version }}-release
           path: release-artifacts/*
           if-no-files-found: error
       - name: Publish GitHub prerelease
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           prerelease: true

@@ -13,7 +13,12 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
-from .errors import CancellationError, ConfigurationError, ProviderError, ProviderHttpError
+from .errors import (
+    CancellationError,
+    ConfigurationError,
+    ProviderError,
+    ProviderHttpError,
+)
 from .providers import ProviderKind, ProviderProfile, provider_headers
 from .util import sha256_bytes, stable_json
 

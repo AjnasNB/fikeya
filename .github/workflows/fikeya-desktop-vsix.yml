@@ -50,10 +50,18 @@ jobs:
       - name: Build and inspect VSIX
         run: npm run package:vsix
 
+      - name: Resolve the versioned VSIX artifact
+        id: artifact
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $artifact = (Resolve-Path -LiteralPath "artifacts/fikeya-desktop-$version-win32-x64.vsix").Path
+          "path=$artifact" >> $env:GITHUB_OUTPUT
+
       - name: Upload unsigned VSIX
         uses: actions/upload-artifact@v4
         with:
           name: fikeya-desktop-win32-x64-unsigned-vsix
-          path: extensions/fikeya-desktop/artifacts/fikeya-desktop-0.1.0-win32-x64.vsix
+          path: ${{ steps.artifact.outputs.path }}
           if-no-files-found: error
           retention-days: 7

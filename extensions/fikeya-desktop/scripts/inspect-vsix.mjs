@@ -53,6 +53,9 @@ const packageManifest = parseJsonEntry(entries, 'extension/package.json');
 if (packageManifest.scripts !== undefined || packageManifest.devDependencies !== undefined || packageManifest.main !== './out/extension') {
 	throw new Error('Packaged manifest must exclude build dependencies and retain the compiled extension entrypoint.');
 }
+if (packageManifest.engines?.vscode !== '^1.110.0') {
+	throw new Error('Packaged VSIX must retain the supported VS Code API baseline.');
+}
 const extensionLicense = entries.get('extension/LICENSE.txt').toString('utf8');
 const qarinahLicense = entries.get('extension/third_party/qarinah/LICENSE').toString('utf8');
 if (!extensionLicense.includes('GNU AFFERO GENERAL PUBLIC LICENSE') || !extensionLicense.includes('Version 3, 19 November 2007')) {

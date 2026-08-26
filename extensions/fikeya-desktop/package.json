@@ -2,7 +2,7 @@
 	"name": "fikeya-desktop",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "0.1.0",
+	"version": "0.1.0-beta.2",
 	"publisher": "fikeya",
 	"license": "AGPL-3.0-or-later",
 	"repository": {
@@ -29,7 +29,9 @@
 		"onCommand:fikeya.configureProvider",
 		"onCommand:fikeya.initializeWorkspace",
 		"onCommand:fikeya.runDoctor",
-		"onCommand:fikeya.mode.research"
+		"onCommand:fikeya.mode.research",
+		"onCommand:fikeya.view.usage",
+		"onCommand:fikeya.view.setup"
 	],
 	"main": "./out/extension",
 	"contributes": {
@@ -57,13 +59,19 @@
 				"command": "fikeya.open",
 				"title": "%command.open.title%",
 				"category": "%command.category%",
-				"icon": "$(sparkle)"
+				"icon": "$(comment-discussion)"
 			},
 			{
 				"command": "fikeya.configureProvider",
 				"title": "%command.configureProvider.title%",
 				"category": "%command.category%",
 				"icon": "$(key)"
+			},
+			{
+				"command": "fikeya.chat.deleteSavedHistory",
+				"title": "%command.chat.deleteSavedHistory.title%",
+				"category": "%command.category%",
+				"icon": "$(trash)"
 			},
 			{
 				"command": "fikeya.initializeWorkspace",
@@ -108,17 +116,43 @@
 				"enablement": "fikeya.isDesktop"
 			},
 			{
+				"command": "fikeya.view.usage",
+				"title": "%command.view.usage.title%",
+				"category": "%command.category%"
+			},
+			{
+				"command": "fikeya.view.setup",
+				"title": "%command.view.setup.title%",
+				"category": "%command.category%"
+			},
+			{
 				"command": "fikeya.mode.research",
 				"title": "%command.mode.research.title%",
 				"category": "%command.category%",
 				"enablement": "fikeya.isDesktop"
 			}
 		],
+		"configuration": {
+			"title": "Fikeya",
+			"properties": {
+				"fikeya.chat.persistWorkspaceHistory": {
+					"type": "boolean",
+					"default": false,
+					"scope": "resource",
+					"description": "%configuration.chat.persistWorkspaceHistory.description%"
+				}
+			}
+		},
 		"keybindings": [
 			{
 				"command": "fikeya.open",
 				"key": "ctrl+alt+l",
 				"mac": "cmd+alt+l"
+			},
+			{
+				"command": "fikeya.open",
+				"key": "ctrl+alt+i",
+				"mac": "cmd+alt+i"
 			},
 			{
 				"command": "fikeya.mode.lab",
@@ -134,6 +168,12 @@
 			}
 		],
 		"menus": {
+			"editor/title": [
+				{
+					"command": "fikeya.open",
+					"group": "navigation@20"
+				}
+			],
 			"view/title": [
 				{
 					"command": "fikeya.runDoctor",
@@ -147,7 +187,7 @@
 		"compile": "npx gulp compile-extension:fikeya-desktop",
 		"watch": "npx gulp watch-extension:fikeya-desktop",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",

@@ -113,6 +113,65 @@ Use `--memory required` to stop before contacting the model when cited project
 context cannot be prepared. Use `--memory off` for a deliberately memory-free
 turn.
 
+## Propose, review, and run a durable plan
+
+`fikeya plan propose` is a planning-only provider call. It sends a versioned
+`fikeya.plan-request.v1` object through stdin, optionally attaches bounded
+Qarinah context, and requires the provider to return exactly one
+`fikeya.plan-proposal.v1` JSON envelope. The provider has no tool channel during
+this call. It cannot inspect, edit, or run the workspace through Fikeya, and a
+successful response persists only a `draft` plan. Invalid narrative or schema
+output fails closed without creating a plan.
+
+```console
+printf '%s' '{"protocol":"fikeya.plan-request.v1","prompt":"Inspect the tests and propose the minimum verified fix."}' | \
+  fikeya plan propose . --provider work --request-stdin --allow-network \
+  --memory required --context-max-characters 12000 --json
+```
+
+For deterministic or offline automation, `plan create` accepts the plan
+specification itself through stdin and performs no provider call:
+
+```console
+printf '%s' '{"schemaVersion":1,"title":"Inspect the workspace","steps":[{"stepId":"inspect","title":"List files","dependsOn":[],"toolCall":{"callId":"inspect:list","name":"workspace.list_files","arguments":{"path":"."}},"verify":{"expectedStatus":"ok"}}]}' | \
+  fikeya plan create . --spec-stdin --json
+```
+
+The remaining commands operate on the persisted plan ID:
+
+```console
+fikeya plan show pln_example --workspace . --json
+fikeya plan review pln_example --workspace . --json
+fikeya plan approve pln_example --workspace . --step inspect --json
+fikeya plan run pln_example --workspace . --json
+fikeya plan resume pln_example --workspace . --json
+fikeya plan cancel pln_example --workspace . --reason "person cancelled" --json
+```
+
+`plan approve` also accepts `--all`, but approval remains one exact,
+single-use reference per selected step and canonical tool-call digest. Each
+reference reports `issuedAt` and `expiresAt` and expires after five minutes by
+default. An expired reference is rejected before execution and the step returns
+to `awaiting_approval` for a new exact reference. A plan review never grants
+tool permission. `plan run` executes eligible approved steps in dependency order
+and stops in `awaiting_approval` at the next eligible unapproved step.
+`plan resume` completes a persisted verifying step or continues after more steps
+receive approval. A persisted executing step is treated as an uncertain failure
+rather than being replayed. `plan show`
+returns the current record plus its content-free proof receipt. Terminal failed
+or cancelled plans cannot be resumed, and cancellation never turns an
+interrupted step into success.
+
+The supported plan tools are `workspace.list_files`, `workspace.read_file`,
+`workspace.search_text`, `workspace.replace_text`, `workspace.write_file`, and
+`process.run`. All calls remain root-bound and structured. Process calls use an
+executable plus argument vector rather than a model-supplied shell string, and
+the optional `--allow-executable` flag narrows the process allowlist for that
+run. Verification compares declared status, exit code, output hash, and file
+hash expectations when supplied. Provider-reported usage and the Qarinah
+context receipt for the proposal call are returned separately from the plan
+execution proof.
+
 ## Run a reviewed coding loop
 
 `fikeya agent execute` connects the provider-neutral runtime to Fikeya Agent

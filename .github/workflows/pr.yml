@@ -1,6 +1,7 @@
 name: Code OSS
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
@@ -98,16 +99,26 @@ jobs:
 
       - name: Check Codex protocol client is in sync
         run: |
-          git fetch --no-tags --depth=1 origin "$CODEX_SYNC_BASE" || true
+          if [ -z "$CODEX_SYNC_BASE" ]; then
+            git fetch --no-tags --depth=1 origin "$CODEX_DEFAULT_BRANCH:refs/remotes/origin/$CODEX_DEFAULT_BRANCH"
+            CODEX_SYNC_BASE="origin/$CODEX_DEFAULT_BRANCH"
+          else
+            git fetch --no-tags --depth=1 origin "$CODEX_SYNC_BASE"
+          fi
           node build/codex/check-protocol-sync.ts --if-changed --base "$CODEX_SYNC_BASE"
         env:
           CODEX_SYNC_BASE: ${{ github.event.pull_request.base.sha }}
+          CODEX_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
       - name: Check cyclic dependencies
         run: node build/lib/checkCyclicDependencies.ts out-build
 
   linux-cli-tests:
     name: Linux
+    # This inherited workflow targets Microsoft's private 1ES runner pool.
+    # Keep it available for upstream synchronization without leaving forks in
+    # an impossible queue. Fikeya's hosted CLI/runtime gates run separately.
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-linux-cli-test.yml
     with:
       job_name: CLI
@@ -161,6 +172,10 @@ jobs:
 
   windows-electron-tests:
     name: Windows
+    # The reusable Windows suites target Microsoft's private 1ES runners.
+    # Fikeya verifies Windows through its hosted bootstrap, runtime, VSIX, and
+    # packaging gates instead of scheduling jobs no public runner can claim.
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Electron
@@ -169,6 +184,7 @@ jobs:
 
   windows-browser-tests:
     name: Windows
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Browser
@@ -176,6 +192,7 @@ jobs:
 
   windows-remote-tests:
     name: Windows
+    if: github.repository_owner == 'microsoft'
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Remote

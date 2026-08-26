@@ -186,9 +186,11 @@ export class MemoryPort {
 	async #prepare(params, signal) {
 		const query = optionalString(params.query, '');
 		const maxTokens = optionalPositiveInteger(params.maxTokens, 8_000);
+		const maxChars = boundedRequestInteger(params.maxChars, 12_000, 512, 1_000_000, 'maxChars');
 		const limit = optionalPositiveInteger(params.limit, 24);
-		return compileContext(query, {
+		const context = await compileContext(query, {
 			cwd: this.#root,
+			maxChars,
 			maxTokens,
 			limit,
 			minimumCoverage: optionalEnum(params.minimumCoverage, ['any', 'partial', 'direct'], 'any'),
@@ -198,6 +200,7 @@ export class MemoryPort {
 			updateCheckpoint: true,
 			signal
 		});
+		return validateContextBudget(context, maxChars);
 	}
 
 	async #compact(params, signal) {
@@ -355,6 +358,25 @@ export function safeError(error) {
 	};
 }
 
+export function validateContextBudget(context, requestedMaxChars) {
+	if (!isRecord(context) || !isRecord(context.budget)) {
+		throw new TypeError('Qarinah returned a context pack without a budget record.');
+	}
+
+	const maxChars = context.budget.maxChars;
+	const usedChars = context.budget.usedChars;
+	if (!Number.isSafeInteger(maxChars) || maxChars < 512 || maxChars > 1_000_000) {
+		throw new TypeError('Qarinah returned an invalid maximum character budget.');
+	}
+	if (maxChars !== requestedMaxChars) {
+		throw new TypeError(`Qarinah returned maxChars ${maxChars}, but ${requestedMaxChars} was requested.`);
+	}
+	if (!Number.isSafeInteger(usedChars) || usedChars < 0 || usedChars > maxChars) {
+		throw new TypeError('Qarinah returned context that exceeds its declared character budget.');
+	}
+	return context;
+}
+
 function requiredString(value, name) {
 	if (typeof value !== 'string' || value.trim().length === 0) {
 		throw new TypeError(`${name} must be a non-empty string.`);
@@ -382,6 +404,14 @@ function boundedPositiveInteger(value, fallback, maximum) {
 	const result = optionalPositiveInteger(value, fallback);
 	if (result > maximum) {
 		throw new TypeError(`Integer value exceeds the maximum of ${maximum}.`);
+	}
+	return result;
+}
+
+function boundedRequestInteger(value, fallback, minimum, maximum, name) {
+	const result = value === undefined ? fallback : value;
+	if (!Number.isSafeInteger(result) || result < minimum || result > maximum) {
+		throw new TypeError(`${name} must be an integer from ${minimum} to ${maximum}.`);
 	}
 	return result;
 }

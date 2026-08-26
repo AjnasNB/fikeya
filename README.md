@@ -17,12 +17,13 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 - **Open protocols:** ACP for complete agents and MCP for tools and resources.
 - **Reviewed browser and crawler presets:** validated, digest-bound connector configuration that stays disabled until the developer explicitly enables it; the connector process and MCP session are separate integrations.
 - **Integrated native-agent core:** typed plan, act, observe, and review stages with cancellation, bounded retries, exact-call approvals, workspace tools, changed-file hashes, test outcomes, and execution receipts in both Desktop and CLI.
+- **Plan before execution:** Chat can ask one configured provider for a strict `fikeya.plan-proposal.v1` draft. That planning turn has no tool channel and cannot execute workspace operations. The persisted draft must be reviewed, each canonical tool call must receive its own exact single-use approval, and bounded execution must finish with verification evidence before Fikeya labels the plan successful.
 
 ## Product Shape
 
 ```text
 Fikeya Desktop                         Fikeya CLI
-Editor | Agent | Terminal | Review | Lab     init | doctor | provider | agent | tool
+Editor | Chat | Plan | Context | Usage       init | doctor | provider | agent | plan | tool
                     │
                     ▼
              Fikeya Local Gateway
@@ -30,13 +31,15 @@ ACP | MCP | typed events | approvals | cancellation | resume
                     │
                     ▼
               Fikeya Runtime
-provider calls | context budgets | connector presets | usage receipts
+provider calls | draft plans | execution broker | verification receipts
                     │
           ┌─────────┼──────────┐
           ▼                    ▼
        Qarinah          ACP and MCP adapters
    context engine       plus reviewed presets
 ```
+
+The plan-to-proof path is intentionally split: a provider may propose a typed draft, but it cannot approve or execute that draft. A developer reviews the persisted plan and issues exact approvals for the selected step calls; Fikeya then runs only those approved calls inside the initialized workspace and records execution and verification hashes. See the [product contract](docs/fikeya/PLAN_TO_PROOF.md) and [runtime commands](fikeya-runtime/README.md#propose-review-and-run-a-durable-plan).
 
 ## Efficiency Evidence
 
@@ -57,13 +60,17 @@ See [the security model](docs/fikeya/SECURITY.md) and [architecture](docs/fikeya
 
 ## Release status
 
-Fikeya 0.1.0-beta.1 is the public beta. The current milestone covers the branded Code OSS desktop, focused VS Code extension, secure Python runtime and CLI, provider profiles, the reviewed plan-act-observe-review coding loop, exact one-use approvals, local usage statistics, Qarinah initialization and graph inspection, ACP and MCP interoperability packages, and opt-in browser and crawler presets. Stable release gates remain: signed Windows, macOS, and Linux artifacts, clean-install verification on all three platforms, and a verified Desktop update feed.
+Fikeya 0.1.0-beta.2 is the current public-beta source candidate. This milestone adds provider-generated draft plans through a planning-only turn with no tool channel, a separate durable Plan surface, explicit developer review, exact one-use approvals for canonical calls, bounded execution, and terminal verification receipts. It also retains the branded Code OSS desktop, focused VS Code extension, secure Python runtime and CLI, provider profiles, local usage statistics, Qarinah initialization and graph inspection, ACP and MCP interoperability packages, and opt-in browser and crawler presets. Stable release gates remain: signed Windows, macOS, and Linux artifacts, clean-install verification on all three platforms, and a verified Desktop update feed.
 
-The VS Code extension follows the host's extension update channel. Fikeya Desktop does not silently download or force an unsigned executable. A future mandatory-update policy must verify a signed release manifest before it can block an unsupported build.
+The VS Code extension follows the host's extension update channel. Fikeya Desktop does not silently download or force an unsigned executable. A future mandatory-update policy must verify a signed release manifest before it can block an unsupported build. See the public [code-signing policy](docs/fikeya/CODE_SIGNING_POLICY.md) and [privacy policy](https://fikeya.com/privacy/) for release roles, provider transfers, retention, and deletion.
 
-Download the Windows Desktop installer, focused VSIX, and CLI wheel bundle from the [0.1.0-beta.1 release](https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1). Every release includes SHA-256 checksums, a machine-readable verification manifest, and GitHub artifact provenance. The current Windows beta is not Authenticode-signed, so Windows will show an unknown-publisher warning until a trusted signing certificate is configured. See the [release process](docs/fikeya/RELEASE.md) for the exact signing and promotion gates.
+Until beta-2 artifacts pass the release gates and are published, the latest downloadable Windows Desktop installer, focused VSIX, and CLI wheel bundle remain in the [0.1.0-beta.1 release](https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1). That published release includes SHA-256 checksums, a machine-readable verification manifest, and GitHub artifact provenance. Its Windows installer is not Authenticode-signed, so Windows can show an unknown-publisher warning. The beta-2 candidate must also be treated as unsigned unless its final `release-verification.json` reports a valid trusted signature. See the [release process](docs/fikeya/RELEASE.md) for the exact signing and promotion gates.
 
 If Fikeya is useful to you, [sponsor its continued development](https://github.com/sponsors/AjnasNB).
+
+## Contributors
+
+Fikeya is maintained by **Ajnas N B (`AjnasNB`)**, with pull-request review from the `cognifyrdotco` repository collaborator. The desktop foundation remains credited to the Code OSS community through Git history and the retained third-party notices. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the explicit attribution boundary.
 
 ## Development
 

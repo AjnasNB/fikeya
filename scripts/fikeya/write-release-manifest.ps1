@@ -1,13 +1,16 @@
 [CmdletBinding()]
 param(
 	[string]$OutputDirectory = "",
-	[string]$Version = "0.1.0-beta.1"
+	[string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+if ([string]::IsNullOrWhiteSpace($Version)) {
+	$Version = [string]((Get-Content -LiteralPath (Join-Path $repositoryRoot "fikeya-distribution.json") -Raw | ConvertFrom-Json).version)
+}
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 	$OutputDirectory = Join-Path $repositoryRoot "release-artifacts"
 }

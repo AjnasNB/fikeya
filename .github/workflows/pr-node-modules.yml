@@ -1,9 +1,10 @@
 name: Code OSS (node_modules)
 
-on:
-  push:
-    branches:
-      - main
+# This is an inherited Code OSS cache-population workflow. Most jobs target
+# Microsoft's private 1ES pools, so an automatic push trigger can never finish
+# in the public Fikeya repository. Keep it available for an explicit maintainer
+# run while Fikeya's public GitHub-hosted workflows cover required validation.
+on: workflow_dispatch
 
 permissions: {}
 

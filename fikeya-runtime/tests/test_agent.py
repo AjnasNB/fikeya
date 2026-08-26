@@ -9,8 +9,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from fikeya_runtime.agent import AgentRunner
+from fikeya_runtime.conversation import ConversationTurn
 from fikeya_runtime.credentials import CredentialResolver
 from fikeya_runtime.errors import CancellationError
 from fikeya_runtime.inference import (
@@ -164,6 +164,39 @@ def test_agent_run_records_hashes_and_usage_but_not_content(tmp_path: Path) -> N
     )
     assert b"private project question" not in persisted
     assert b"private live answer" not in persisted
+
+
+def test_agent_follow_up_sends_bounded_history_without_persisting_content(
+    tmp_path: Path,
+) -> None:
+    runner, transport = _runner(tmp_path)
+    history = (
+        ConversationTurn(role="user", content="Inspect the retry path."),
+        ConversationTurn(role="assistant", content="The retry path is bounded."),
+    )
+
+    result = runner.run(
+        provider_name="local",
+        prompt="Now add the smallest regression test.",
+        history=history,
+        allow_network=True,
+        timeout=10,
+        max_output_tokens=100,
+        cancellation=CancellationToken(),
+    )
+
+    request = json.loads(transport.payloads[0])
+    provider_prompt = request["messages"][-1]["content"]
+    assert '"protocol":"fikeya.conversation-history.v1"' in provider_prompt
+    assert "Inspect the retry path." in provider_prompt
+    assert "Now add the smallest regression test." in provider_prompt
+    persisted = b"".join(
+        path.read_bytes()
+        for path in runner.workspace.metadata_directory.glob("state.sqlite3*")
+    )
+    assert b"Inspect the retry path." not in persisted
+    assert b"Now add the smallest regression test." not in persisted
+    assert result.output == "private live answer"
 
 
 def test_agent_cancellation_leaves_a_terminal_audit_event(tmp_path: Path) -> None:

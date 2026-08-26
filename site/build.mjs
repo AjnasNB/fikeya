@@ -22,13 +22,36 @@ const publicFiles = [
 	'fikeya-live-editor-graph.png',
 	'fikeya-live-editor.png',
 	'fikeya-live-graph.png',
+	'fikeya-live-chat.png',
+	'fikeya-live-context-graph.png',
 	'fikeya-live-site.png',
+	'fikeya-plan-awaiting-approval-real.png',
+	'fikeya-plan-draft-real.png',
+	'fikeya-plan-exact-approval-real.png',
+	'fikeya-plan-executed-verified-real.png',
+	'fikeya-plan-lifecycle-proof.json',
+	'fikeya-plan-reviewed-real.png',
+	'fikeya-plan-succeeded-real.png',
 	'index.html',
 	'qarinah-standalone-graph.png',
 	'robots.txt',
 	'sitemap.xml',
 	'site.webmanifest',
 	'styles.css'
+];
+
+const pageDirectories = [
+	'docs',
+	'download',
+	'enterprise',
+	'privacy',
+	'product',
+	'proof',
+	'signing'
+];
+
+const dataDirectories = [
+	'updates'
 ];
 
 const fontFiles = [
@@ -44,11 +67,21 @@ const fontFiles = [
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await mkdir(path.join(output, 'fonts'), { recursive: true });
+await Promise.all(pageDirectories.map(directory => mkdir(path.join(output, directory), { recursive: true })));
+await Promise.all(dataDirectories.map(directory => mkdir(path.join(output, directory), { recursive: true })));
 await Promise.all([
 	...publicFiles.map(file => copyFile(path.join(root, file), path.join(output, file))),
+	...pageDirectories.map(directory => copyFile(
+		path.join(root, directory, 'index.html'),
+		path.join(output, directory, 'index.html')
+	)),
+	...dataDirectories.map(directory => copyFile(
+		path.join(root, directory, 'latest.json'),
+		path.join(output, directory, 'latest.json')
+	)),
 	...fontFiles.map(([source, destination]) => copyFile(
 		path.join(root, 'node_modules', source),
 		path.join(output, 'fonts', destination)
 	))
 ]);
-process.stdout.write(`Built ${publicFiles.length} public files and ${fontFiles.length} fonts in ${output}.\n`);
+process.stdout.write(`Built ${publicFiles.length + pageDirectories.length + dataDirectories.length} public files and ${fontFiles.length} fonts in ${output}.\n`);

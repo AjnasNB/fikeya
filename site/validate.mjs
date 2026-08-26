@@ -8,11 +8,28 @@ const requiredFiles = [
 	'_headers',
 	'app.js',
 	'favicon.svg',
+	'fikeya-live-chat.png',
+	'fikeya-live-context-graph.png',
+	'fikeya-plan-awaiting-approval-real.png',
+	'fikeya-plan-draft-real.png',
+	'fikeya-plan-exact-approval-real.png',
+	'fikeya-plan-executed-verified-real.png',
+	'fikeya-plan-lifecycle-proof.json',
+	'fikeya-plan-reviewed-real.png',
+	'fikeya-plan-succeeded-real.png',
+	'docs',
+	'download',
+	'enterprise',
 	'index.html',
+	'product',
+	'proof',
+	'privacy',
 	'robots.txt',
 	'sitemap.xml',
 	'site.webmanifest',
+	'signing',
 	'styles.css',
+	'updates',
 	'worker.ts',
 	'wrangler.jsonc'
 ];
@@ -30,6 +47,19 @@ for (const file of requiredFiles) {
 }
 
 const html = await readFile(new URL('index.html', root), 'utf8');
+const pagePaths = [
+	'docs/index.html',
+	'download/index.html',
+	'enterprise/index.html',
+	'product/index.html',
+	'proof/index.html',
+	'privacy/index.html',
+	'signing/index.html'
+];
+const pageDocuments = new Map(await Promise.all(pagePaths.map(async pagePath => [
+	pagePath,
+	await readFile(new URL(pagePath, root), 'utf8')
+])));
 const css = await readFile(new URL('styles.css', root), 'utf8');
 const js = await readFile(new URL('app.js', root), 'utf8');
 const assetsIgnore = await readFile(new URL('.assetsignore', root), 'utf8');
@@ -37,16 +67,30 @@ const headers = await readFile(new URL('_headers', root), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('site.webmanifest', root), 'utf8'));
 const robots = await readFile(new URL('robots.txt', root), 'utf8');
 const sitemap = await readFile(new URL('sitemap.xml', root), 'utf8');
+const updateManifest = JSON.parse(await readFile(new URL('updates/latest.json', root), 'utf8'));
 const wranglerText = await readFile(new URL('wrangler.jsonc', root), 'utf8');
 const workerWranglerText = await readFile(new URL('wrangler.worker.jsonc', root), 'utf8');
 const worker = (await import(new URL('worker.ts', root))).default;
 
 const sourceFiles = files.filter(file => ['.html', '.css', '.js', '.mjs', '.json', '.jsonc', '.txt'].includes(extname(file)));
-for (const file of sourceFiles) {
-	const source = await readFile(new URL(file, root), 'utf8');
-	assert(!source.includes('\u2014'), `${file} contains an em dash`);
-	assert(!source.match(/sk-[a-z0-9_-]{12,}/i), `${file} appears to contain an API key`);
-	assert(!source.match(/nvapi-[a-z0-9_\\-]{12,}/i), `${file} appears to contain an NVIDIA API key`);
+const sourceEntries = [...sourceFiles, ...pagePaths];
+for (const sourceEntry of sourceEntries) {
+	const source = await readFile(new URL(sourceEntry, root), 'utf8');
+	assert(!source.includes('\u2014'), `${sourceEntry} contains an em dash`);
+	assert(!source.match(/sk-[a-z0-9_-]{12,}/i), `${sourceEntry} appears to contain an API key`);
+	assert(!source.match(/nvapi-[a-z0-9_\\-]{12,}/i), `${sourceEntry} appears to contain an NVIDIA API key`);
+}
+
+for (const [pagePath, page] of pageDocuments) {
+	assert(page.includes('Content-Security-Policy'), `${pagePath} is missing its Content Security Policy`);
+	assert(page.includes('href="#main"'), `${pagePath} is missing its skip link`);
+	assert(page.includes('id="main"'), `${pagePath} is missing its main target`);
+	assert(!page.match(/<script(?![^>]*\bsrc=)[^>]*>/i), `${pagePath} contains an inline script`);
+	assert(!page.match(/<style\b/i), `${pagePath} contains an inline style element`);
+	assert(!page.match(/\sstyle\s*=/i), `${pagePath} contains an inline style attribute`);
+	assert(!page.match(/\bsrc=["']https?:\/\//i), `${pagePath} contains a remote asset`);
+	assert(!page.match(/<img\b(?![^>]*\balt=)/i), `${pagePath} contains an image without alt text`);
+	assert(!page.match(/tabindex=["'][1-9]/i), `${pagePath} contains a positive tabindex`);
 }
 
 assert(html.includes('Content-Security-Policy'), 'Missing Content Security Policy');
@@ -56,19 +100,50 @@ assert(!html.match(/\sstyle\s*=/i), 'Inline style attribute found');
 assert(!html.match(/\bsrc=["']https?:\/\//i), 'Remote asset found');
 assert(html.includes('href="#main"'), 'Missing skip link');
 assert(html.includes('id="main"'), 'Missing main target');
-assert(html.includes('<h1>Build with your model.<span>Spend fewer tokens.</span></h1>'), 'Token-focused hero text is missing');
+assert(html.includes('<h1>Build with your model.<span>Spend fewer tokens.</span></h1>'), 'Spend-fewer-tokens hero text is missing');
+assert(html.includes('<meta property="og:image" content="https://fikeya.com/fikeya-live-chat.png">'), 'Real Chat capture is not the homepage social image');
+assert(html.includes('No Fikeya editor subscription.'), 'Editor subscription boundary is missing');
+assert(html.toLowerCase().includes('provider usage remains between you and the provider you choose'), 'Provider-cost boundary is missing from the free editor banner');
 assert(!html.match(/\bany model\b/i), 'Unsupported any-model claim found');
 assert(html.includes('selects task-relevant project evidence instead of replaying the whole repository'), 'Task-relevant context positioning is missing');
 assert(html.includes('inspect measured token and verification receipts'), 'Measured receipt wording is missing');
+assert(html.includes('The product target is lower billed input tokens on matched coding tasks, not an unqualified savings claim.'), 'Matched-task token target boundary is missing');
 assert(html.includes('Windows will continue to show an unknown-publisher warning until the installer is Authenticode-signed with a trusted certificate.'), 'Authenticode release gate is missing');
 assert(!html.includes('reproducible VSIX packaging'), 'Unproven cross-platform reproducibility claim is present');
-assert(html.includes('Fikeya 0.1.0-beta.1 · Desktop, VS Code extension, and CLI'), 'Public beta status is missing');
+assert(html.includes('Fikeya 0.1.0-beta.2 source candidate · Desktop, VS Code extension, and CLI'), 'Current source candidate status is missing');
 assert(!html.includes('stable release available'), 'The site must not claim a stable release before the release gates pass');
 assert(html.includes('src="/qarinah-standalone-graph.png"'), 'Standalone Qarinah graph capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-editor.jpg"'), 'Real editor capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-agent.jpg"'), 'Real agent capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-terminal.jpg"'), 'Real terminal capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-review.jpg"'), 'Real review capture is missing');
+assert(html.includes('src="/fikeya-live-chat.png"'), 'Real right-side chat capture is missing');
+assert(html.includes('src="/fikeya-live-context-graph.png"'), 'Real Context graph capture is missing');
+assert(html.includes('Real Chat, a real graph, and measured local usage.'), 'Evidence-honest live proof heading is missing');
+assert(html.includes('explicit unavailable-context state'), 'Homepage Chat proof must disclose unavailable project context');
+assert(html.includes('A separate initialized workspace capture shows Qarinah reporting six cited items'), 'Homepage must separate Chat and Qarinah graph proof scopes');
+assert(html.includes('76 bounded nodes and 201 visible links'), 'Measured live graph scope is missing');
+assert(html.includes('fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health'), 'Live CLI to Wrangler proof is missing');
+assert(html.includes('2026-08-25-cli-wrangler.md'), 'CLI to Wrangler verification receipt is missing');
+const proofPage = pageDocuments.get('proof/index.html') ?? '';
+assert(proofPage.includes('The capture explicitly shows that no project context was attached'), 'Proof page must not attribute Qarinah retrieval to the Chat capture');
+assert(proofPage.includes('A separate initialized workspace reported six cited items'), 'Proof page must scope cited items to the graph capture');
+assert(proofPage.includes('Plan-to-proof fixture'), 'Plan-to-proof evaluation is missing from the proof page');
+assert(proofPage.includes('3,606 of 8,000 characters used'), 'Measured Qarinah budget result is missing from the proof page');
+assert(proofPage.includes('tokens remain explicitly not measured'), 'No-model token boundary is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-draft-real.png"'), 'Real draft capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-reviewed-real.png"'), 'Real reviewed-plan capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-awaiting-approval-real.png"'), 'Real approval-boundary capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-exact-approval-real.png"'), 'Real exact-approval receipt capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-executed-verified-real.png"'), 'Real execution-and-verification capture is missing from the proof page');
+assert(proofPage.includes('src="/fikeya-plan-succeeded-real.png"'), 'Real succeeded-plan capture is missing from the proof page');
+assert(proofPage.includes('href="/fikeya-plan-lifecycle-proof.json"'), 'Content-free Desktop plan receipt download is missing');
+assert(proofPage.includes('three read-only workspace tools'), 'Safe Desktop proof tool boundary is missing');
+const productPage = pageDocuments.get('product/index.html') ?? '';
+for (const stage of ['01</span><strong>Draft', '02</span><strong>Review', '03</span><strong>Approval', '04</span><strong>Execute', '05</span><strong>Verify']) {
+	assert(productPage.includes(stage), `Product page is missing workflow stage: ${stage}`);
+}
+assert(productPage.includes('three read-only workspace tools reached Succeeded'), 'Product page is missing the verified safe-capture boundary');
 assert(html.includes('fikeya provider list --json'), 'Provider discovery command is missing');
 assert(!html.includes('Keep the work between coding-agent sessions'), 'Stale session-handoff positioning found');
 assert(!html.includes('Keep the work. Change the session.'), 'Stale session-handoff closing copy found');
@@ -82,11 +157,14 @@ assert(html.includes('Vertex AI'), 'Vertex provider path is missing');
 assert(html.includes('Hugging Face'), 'Hugging Face provider path is missing');
 assert(html.includes('Groq'), 'Groq provider path is missing');
 assert(html.includes('Lab Mode'), 'Lab mode is missing');
-assert(html.includes('href="#top">Home</a>'), 'Home navigation is missing');
+assert(html.includes('href="/">Home</a>'), 'Home navigation is missing');
+assert(html.includes('href="/download/">Download the public beta</a>'), 'Primary download action is missing');
 assert(!html.includes('install surfaces'), 'Generic install-surface count is still present');
 assert(!html.includes('provider paths</span>'), 'Generic provider-path count is still present');
 assert(html.includes('The companion editor extension stays intentionally smaller'), 'Extension and Desktop boundary is missing');
 assert(html.includes('https://github.com/sponsors/AjnasNB'), 'GitHub Sponsors link is missing');
+assert(html.includes('id="contributors"'), 'Contributor attribution section is missing');
+assert(html.includes('Fikeya-owned product code is AGPL-3.0-or-later'), 'Mixed-license attribution is missing');
 assert(html.includes('FikeyaSetup-0.1.0-beta.1-win32-x64.exe'), 'Windows beta download is missing');
 assert(html.includes('fikeya-desktop-0.1.0-win32-x64.vsix'), 'VSIX beta download is missing');
 assert(html.includes('fikeya-cli-0.1.0-beta.1.zip'), 'CLI beta download is missing');
@@ -111,6 +189,9 @@ assert(headers.includes('Permissions-Policy:'), 'Permissions Policy header is mi
 assert(manifest.name === 'Fikeya', 'Web manifest name is incorrect');
 assert(robots.includes('Sitemap: https://fikeya.com/sitemap.xml'), 'Robots sitemap declaration is missing');
 assert(sitemap.includes('<loc>https://fikeya.com/</loc>'), 'Canonical sitemap location is missing');
+for (const route of ['product', 'proof', 'docs', 'enterprise', 'download', 'privacy', 'signing']) {
+	assert(sitemap.includes(`<loc>https://fikeya.com/${route}/</loc>`), `Sitemap is missing /${route}/`);
+}
 assert(assetsIgnore.includes('.wrangler'), 'Wrangler local state is not excluded from static assets');
 assert(assetsIgnore.includes('node_modules'), 'Dependencies are not excluded from static assets');
 assert(wranglerText.includes('"compatibility_date": "2026-08-24"'), 'Cloudflare compatibility date is incorrect');
@@ -135,24 +216,78 @@ const assetResponse = await worker.fetch(new Request('https://fikeya.com/'), {
 });
 assert(assetResponse.status === 200 && await assetResponse.text() === 'asset', 'Apex requests must reach the static asset binding');
 
-const hrefs = Array.from(html.matchAll(/href=["']([^"']+)["']/g), match => match[1]);
-const ids = new Set(Array.from(html.matchAll(/\bid=["']([^"']+)["']/g), match => match[1]));
+assert(updateManifest.enabled === false, 'The source update manifest must stay disabled until a signed release is available');
+assert(updateManifest.timestamped === false, 'The disabled update manifest must not claim a timestamped signature');
+const disabledUpdateResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111'), {
+	ASSETS: { fetch: async () => Response.json(updateManifest) }
+});
+assert(disabledUpdateResponse.status === 204, 'Disabled update manifests must return no update');
+const signedUpdate = {
+	...updateManifest,
+	enabled: true,
+	version: '2222222222222222222222222222222222222222',
+	productVersion: 'v0.1.0-beta.2',
+	authenticodeSubject: 'CN=Ajnas N B',
+	timestamped: true,
+	assets: {
+		'win32-x64-user': {
+			url: 'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.2/FikeyaSetup-0.1.0-beta.2-win32-x64.exe',
+			sha256: 'a'.repeat(64)
+		}
+	}
+};
+const signedUpdateResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111'), {
+	ASSETS: { fetch: async () => Response.json(signedUpdate) }
+});
+assert(signedUpdateResponse.status === 200, 'A valid signed update manifest must return an update');
+const signedUpdatePayload = await signedUpdateResponse.json();
+assert(signedUpdatePayload.version === signedUpdate.version, 'Update response commit is incorrect');
+assert(signedUpdatePayload.productVersion === '0.1.0-beta.2', 'Update response product version is incorrect');
+const unsignedUpdateResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111'), {
+	ASSETS: { fetch: async () => Response.json({ ...signedUpdate, authenticodeSubject: '' }) }
+});
+assert(unsignedUpdateResponse.status === 204, 'An unsigned update manifest must fail closed');
+const updatePostResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111', { method: 'POST' }), {
+	ASSETS: { fetch: async () => Response.json(signedUpdate) }
+});
+assert(updatePostResponse.status === 405, 'The update endpoint must reject non-GET requests');
+
 const allowedExternalLinks = new Set([
 	'https://fikeya.com/',
+	'https://fikeya.com/product/',
+	'https://fikeya.com/proof/',
+	'https://fikeya.com/docs/',
+	'https://fikeya.com/enterprise/',
+	'https://fikeya.com/download/',
+	'https://fikeya.com/privacy/',
+	'https://fikeya.com/signing/',
+	'https://github.com/AjnasNB',
 	'https://github.com/AjnasNB/fikeya',
+	'https://github.com/AjnasNB/fikeya/security/policy',
+	'https://github.com/cognifyrdotco',
+	'https://github.com/AjnasNB/fikeya/tree/main/docs/fikeya/verification',
 	'https://github.com/sponsors/AjnasNB',
 	'https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1',
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/FikeyaSetup-0.1.0-beta.1-win32-x64.exe',
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-desktop-0.1.0-win32-x64.vsix',
 	'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.1/fikeya-cli-0.1.0-beta.1.zip',
+	'https://github.com/AjnasNB/fikeya/blob/main/docs/fikeya/verification/2026-08-25-cli-wrangler.md',
+	'https://github.com/AjnasNB/fikeya/tree/main/bench/fikeya-plan-proof',
+	'https://github.com/AjnasNB/fikeya/blob/main/bench/fikeya-plan-proof/results/latest.json',
+	'https://fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health',
 	'https://qarinah.io/docs/benchmarks/'
 ]);
-for (const href of hrefs) {
-	if (href.startsWith('#') && href.length > 1) {
-		assert(ids.has(href.slice(1)), `Broken fragment link: ${href}`);
-	}
-	if (/^https?:\/\//i.test(href)) {
-		assert(allowedExternalLinks.has(href), `Unexpected external link: ${href}`);
+
+for (const [pagePath, page] of new Map([['index.html', html], ...pageDocuments])) {
+	const hrefs = Array.from(page.matchAll(/href=["']([^"']+)["']/g), match => match[1]);
+	const ids = new Set(Array.from(page.matchAll(/\bid=["']([^"']+)["']/g), match => match[1]));
+	for (const href of hrefs) {
+		if (href.startsWith('#') && href.length > 1) {
+			assert(ids.has(href.slice(1)), `${pagePath} has a broken fragment link: ${href}`);
+		}
+		if (/^https?:\/\//i.test(href)) {
+			assert(allowedExternalLinks.has(href), `${pagePath} has an unexpected external link: ${href}`);
+		}
 	}
 }
 
@@ -163,5 +298,5 @@ if (failures.length > 0) {
 	}
 	process.exitCode = 1;
 } else {
-	console.log(`Site validation passed (${sourceFiles.length} source files checked).`);
+	console.log(`Site validation passed (${sourceEntries.length} source files checked).`);
 }

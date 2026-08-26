@@ -8,7 +8,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import hashlib
 import json
+import math
 import signal
 import sqlite3
 import sys
@@ -16,7 +18,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import __version__
 from .agent import AgentRunner
+from .conversation import parse_conversation_history
 from .credentials import CredentialResolver
 from .errors import (
     CancellationError,
@@ -26,6 +30,12 @@ from .errors import (
     SecretStoreUnavailable,
 )
 from .inference import MAX_REQUEST_BYTES, CancellationToken
+from .planning import (
+    PLAN_PROPOSAL_PROTOCOL,
+    PLAN_REQUEST_PROTOCOL,
+    PlanProposalRunner,
+)
+from .plans import PlanService, PlanStatus
 from .providers import (
     PROVIDER_REGISTRY,
     OSKeyringSecretStore,
@@ -51,6 +61,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fikeya",
         description="Local-first Fikeya runtime and provider configuration.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--home",
@@ -196,6 +211,85 @@ def _parser() -> argparse.ArgumentParser:
     agent_receipts.add_argument("--workspace", default=".")
     agent_receipts.add_argument("--json", action="store_true")
 
+    plan = subcommands.add_parser(
+        "plan", help="Create and run durable approval-gated local plans."
+    )
+    plan_commands = plan.add_subparsers(dest="plan_command", required=True)
+
+    plan_propose = plan_commands.add_parser(
+        "propose",
+        help="Ask one model for a strict draft plan without executing tools.",
+    )
+    plan_propose.add_argument("path", nargs="?", default=".")
+    plan_propose.add_argument("--provider", required=True)
+    plan_propose.add_argument(
+        "--request-stdin",
+        action="store_true",
+        help="Read one versioned JSON request from stdin so task content stays out of arguments.",
+    )
+    plan_propose.add_argument("--allow-network", action="store_true")
+    plan_propose.add_argument("--timeout", type=float, default=60.0)
+    plan_propose.add_argument("--max-output-tokens", type=int, default=2_048)
+    plan_propose.add_argument(
+        "--memory",
+        choices=("auto", "off", "required"),
+        default="auto",
+    )
+    plan_propose.add_argument("--context-max-characters", type=int, default=12_000)
+    plan_propose.add_argument("--json", action="store_true")
+
+    plan_create = plan_commands.add_parser(
+        "create", help="Create a draft plan from one bounded JSON specification."
+    )
+    plan_create.add_argument("path", nargs="?", default=".")
+    plan_create.add_argument("--spec-stdin", action="store_true")
+    plan_create.add_argument("--json", action="store_true")
+
+    plan_show = plan_commands.add_parser(
+        "show", help="Show one plan and proof receipt."
+    )
+    plan_show.add_argument("plan_id")
+    plan_show.add_argument("--workspace", default=".")
+    plan_show.add_argument("--json", action="store_true")
+
+    plan_review = plan_commands.add_parser(
+        "review", help="Mark one immutable draft specification as reviewed."
+    )
+    plan_review.add_argument("plan_id")
+    plan_review.add_argument("--workspace", default=".")
+    plan_review.add_argument("--json", action="store_true")
+
+    plan_approve = plan_commands.add_parser(
+        "approve", help="Issue exact single-use approval references for plan steps."
+    )
+    plan_approve.add_argument("plan_id")
+    plan_approve.add_argument("--workspace", default=".")
+    approval_selection = plan_approve.add_mutually_exclusive_group(required=True)
+    approval_selection.add_argument("--step", action="append", default=[])
+    approval_selection.add_argument("--all", action="store_true")
+    plan_approve.add_argument("--json", action="store_true")
+
+    for command_name, command_help in (
+        ("run", "Run approved ordered steps until completion or the next approval."),
+        ("resume", "Resume verification or continue with newly approved steps."),
+    ):
+        plan_run = plan_commands.add_parser(command_name, help=command_help)
+        plan_run.add_argument("plan_id")
+        plan_run.add_argument("--workspace", default=".")
+        plan_run.add_argument(
+            "--allow-executable",
+            action="append",
+            default=[],
+            help="Replace the default process allowlist with this executable name.",
+        )
+        plan_run.add_argument("--json", action="store_true")
+
+    plan_cancel = plan_commands.add_parser("cancel", help="Cancel a non-terminal plan.")
+    plan_cancel.add_argument("plan_id")
+    plan_cancel.add_argument("--workspace", default=".")
+    plan_cancel.add_argument("--reason", default="person cancelled")
+    plan_cancel.add_argument("--json", action="store_true")
+
     tool = subcommands.add_parser(
         "tool", help="Inspect or explicitly enable reviewed external tools."
     )
@@ -244,6 +338,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_provider(args)
         if args.command == "agent":
             return _run_agent(args)
+        if args.command == "plan":
+            return _run_plan(args)
         if args.command == "tool":
             return _run_tool(args)
         raise AssertionError("argparse accepted an unknown command")
@@ -364,17 +460,106 @@ def _run_doctor(args: argparse.Namespace) -> int:
 def _run_stats(args: argparse.Namespace) -> int:
     workspace = Workspace.load(args.workspace)
     statistics = StateStore(workspace.state_path).workspace_statistics()
+    measured_calls = statistics["measuredProviderCalls"]
+    measurement = "provider-reported-only" if measured_calls else "unavailable"
+    if not measured_calls:
+        statistics = {
+            **statistics,
+            "cachedInputTokens": None,
+            "inputTokens": None,
+            "outputTokens": None,
+        }
     _emit(
         {
             "ok": True,
             "source": "local-runtime-sqlite",
-            "measurement": "provider-reported-only",
+            "measurement": measurement,
             "generatedAt": utc_now(),
+            "matchedComparison": _load_matched_comparison(workspace),
             **statistics,
         },
         as_json=args.json,
     )
     return 0
+
+
+def _load_matched_comparison(workspace: Workspace) -> dict[str, object] | None:
+    """Load a bounded, fail-closed aggregate emitted by the offline comparator."""
+
+    report_path = workspace.metadata_directory / "matched-efficiency.json"
+    if not report_path.is_file():
+        return None
+    payload = report_path.read_bytes()
+    if not payload or len(payload) > 1_048_576:
+        return None
+    try:
+        report = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(report, dict) or set(report) != {
+        "baseline",
+        "delta",
+        "fikeya",
+        "matchedFields",
+        "pairCount",
+        "reportVersion",
+        "status",
+    }:
+        return None
+    pair_count = report.get("pairCount")
+    matched_fields = report.get("matchedFields")
+    if (
+        report.get("reportVersion") != "1.0.0"
+        or report.get("status") != "matched"
+        or not isinstance(pair_count, int)
+        or isinstance(pair_count, bool)
+        or pair_count < 1
+        or pair_count > 100_000
+        or not isinstance(matched_fields, list)
+        or not matched_fields
+        or len(matched_fields) > 128
+        or any(not isinstance(field, str) or not field or len(field) > 256 for field in matched_fields)
+    ):
+        return None
+    baseline = _matched_arm(report.get("baseline"))
+    fikeya = _matched_arm(report.get("fikeya"))
+    if baseline is None or fikeya is None:
+        return None
+    baseline_tokens = baseline["billedTokens"]
+    fikeya_tokens = fikeya["billedTokens"]
+    reduction = ((baseline_tokens - fikeya_tokens) / baseline_tokens) * 100
+    return {
+        "baselineBilledTokens": baseline_tokens,
+        "baselineVerifiedSolveRate": baseline["verifiedSolveRate"],
+        "billedTokenReductionPercent": round(reduction, 4),
+        "fikeyaBilledTokens": fikeya_tokens,
+        "fikeyaVerifiedSolveRate": fikeya["verifiedSolveRate"],
+        "pairCount": pair_count,
+        "reportSha256": f"sha256:{hashlib.sha256(payload).hexdigest()}",
+        "status": "matched",
+    }
+
+
+def _matched_arm(value: object) -> dict[str, int | float] | None:
+    if not isinstance(value, dict):
+        return None
+    billed = value.get("billedTokens")
+    solve_rate = value.get("verifiedSolveRate")
+    if not isinstance(billed, dict) or not _finite_number(solve_rate, minimum=0, maximum=1):
+        return None
+    total = billed.get("totalBilled")
+    if not _finite_number(total, minimum=1, maximum=10**15):
+        return None
+    return {"billedTokens": int(total), "verifiedSolveRate": float(solve_rate)}
+
+
+def _finite_number(value: object, *, minimum: float, maximum: float) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and minimum <= value <= maximum
+    )
 
 
 def _run_provider(args: argparse.Namespace) -> int:
@@ -588,9 +773,16 @@ def _run_coding_agent(
     # A JSON-escaped UTF-8 prompt can occupy substantially more bytes than the decoded text.
     # Bound the wire representation independently, then enforce the decoded prompt limit below.
     start = _read_protocol_message((MAX_REQUEST_BYTES * 4) + 4_096)
-    if set(start) != {"prompt", "type"} or start.get("type") != "start":
+    if (
+        set(start)
+        not in (
+            {"prompt", "type"},
+            {"history", "prompt", "type"},
+        )
+        or start.get("type") != "start"
+    ):
         raise ProviderError(
-            "The first protocol message must contain only type=start and prompt."
+            "The first protocol message must contain type=start, prompt, and optional history."
         )
     prompt = start.get("prompt")
     if (
@@ -599,13 +791,17 @@ def _run_coding_agent(
         or len(prompt.encode("utf-8")) > MAX_REQUEST_BYTES
     ):
         raise ProviderError(f"Agent prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes.")
+    history = parse_conversation_history(start.get("history", []))
 
     try:
         from fikeya_agent_core import (
             AgentCoreError,
             ApprovalDecision,
+        )
+        from fikeya_agent_core import (
             CancellationToken as CoreCancellationToken,
         )
+
         from .coding import CodingAgentRunner
     except ImportError as error:
         raise ProviderError(
@@ -648,6 +844,7 @@ def _run_coding_agent(
                     progress_handler=_emit_protocol_message,
                     memory_mode=args.memory,
                     context_max_characters=args.context_max_characters,
+                    history=history,
                 )
             )
     except ProviderHttpError as error:
@@ -693,6 +890,214 @@ def _emit_protocol_message(value: dict[str, object]) -> None:
         json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
         flush=True,
     )
+
+
+def _run_plan(args: argparse.Namespace) -> int:
+    workspace_path = (
+        args.path if args.plan_command in {"create", "propose"} else args.workspace
+    )
+    workspace = Workspace.load(workspace_path)
+    service = PlanService(workspace)
+    if args.plan_command == "propose":
+        if not args.request_stdin:
+            raise ProviderError(
+                "Plan requests must use --request-stdin so content does not enter process arguments."
+            )
+        request = _read_bounded_json_object(_PLAN_REQUEST_BYTES)
+        if set(request) not in (
+            {"prompt", "protocol"},
+            {"history", "prompt", "protocol"},
+        ):
+            raise ProviderError(
+                "Plan requests must contain protocol, prompt, and optional history."
+            )
+        if request.get("protocol") != PLAN_REQUEST_PROTOCOL:
+            raise ProviderError(
+                f"Plan request protocol must be {PLAN_REQUEST_PROTOCOL}."
+            )
+        prompt = request.get("prompt")
+        if (
+            not isinstance(prompt, str)
+            or not prompt.strip()
+            or len(prompt.encode("utf-8")) > MAX_REQUEST_BYTES
+        ):
+            raise ProviderError(
+                f"Plan prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes."
+            )
+        history = parse_conversation_history(request.get("history", []))
+        store = ProviderStore(runtime_home(args.home))
+        agent = AgentRunner(workspace, store)
+        if args.memory != "off":
+            agent.memory = select_qarinah_adapter(
+                workspace_root=workspace.root,
+                state=agent.state,
+            )
+        cancellation = CancellationToken()
+        try:
+            with _cancellation_signals(cancellation):
+                proposed = PlanProposalRunner(agent).propose(
+                    provider_name=args.provider,
+                    prompt=prompt,
+                    allow_network=args.allow_network,
+                    timeout=args.timeout,
+                    max_output_tokens=args.max_output_tokens,
+                    cancellation=cancellation,
+                    memory_mode=args.memory,
+                    context_max_characters=args.context_max_characters,
+                    history=history,
+                )
+        except CancellationError:
+            _emit(
+                {"cancelled": True, "error": "Operation cancelled.", "ok": False},
+                as_json=args.json,
+            )
+            return 130
+        usage = proposed.agent.provider_call.usage
+        _emit(
+            {
+                "message": f"Created draft plan {proposed.plan.plan_id}.",
+                "ok": True,
+                "proposal": {
+                    "callId": proposed.agent.call_id,
+                    "memory": {
+                        "coverage": proposed.agent.memory.coverage,
+                        "evidenceCount": proposed.agent.memory.evidence_count,
+                        "receiptId": proposed.agent.memory.receipt_id,
+                        "responseSha256": proposed.agent.memory.response_sha256,
+                        "status": proposed.agent.memory.status,
+                    },
+                    "protocol": PLAN_PROPOSAL_PROTOCOL,
+                    "sessionId": proposed.agent.session_id,
+                    "usage": {
+                        "cachedInputTokens": usage.cached_input_tokens,
+                        "inputTokens": usage.input_tokens,
+                        "measurement": usage.measurement,
+                        "outputTokens": usage.output_tokens,
+                    },
+                },
+                **service.view(proposed.plan),
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.plan_command == "create":
+        if not args.spec_stdin:
+            raise ProviderError(
+                "Plan specifications must use --spec-stdin so content stays out of process arguments."
+            )
+        specification = _read_bounded_json_object(_PLAN_SPECIFICATION_BYTES)
+        plan = service.create(specification)
+        _emit(
+            {
+                "message": f"Created draft plan {plan.plan_id}.",
+                "ok": True,
+                **service.view(plan),
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.plan_command == "show":
+        _emit({"ok": True, **service.show(args.plan_id)}, as_json=args.json)
+        return 0
+    if args.plan_command == "review":
+        plan = service.review(args.plan_id)
+        _emit(
+            {
+                "message": f"Reviewed plan {plan.plan_id}.",
+                "ok": True,
+                **service.view(plan),
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.plan_command == "approve":
+        plan, references = service.approve(
+            args.plan_id,
+            step_ids=tuple(args.step),
+            approve_all=args.all,
+        )
+        _emit(
+            {
+                "approvalReferences": [item.as_json() for item in references],
+                "message": f"Approved {len(references)} exact plan step(s).",
+                "ok": True,
+                **service.view(plan),
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.plan_command in {"run", "resume"}:
+        allowed = frozenset(args.allow_executable) if args.allow_executable else None
+        cancellation = CancellationToken()
+        with _cancellation_signals(cancellation):
+            plan = asyncio.run(
+                service.run(
+                    args.plan_id,
+                    allowed_executables=allowed,
+                    resume=args.plan_command == "resume",
+                    cancellation=cancellation,
+                )
+            )
+        _emit(
+            {
+                "message": f"Plan {plan.plan_id} is {plan.status.value}.",
+                "ok": plan.status not in {PlanStatus.FAILED, PlanStatus.CANCELLED},
+                **service.view(plan),
+            },
+            as_json=args.json,
+        )
+        return 2 if plan.status is PlanStatus.FAILED else 0
+    if args.plan_command == "cancel":
+        plan = service.cancel(args.plan_id, args.reason)
+        _emit(
+            {
+                "message": f"Cancelled plan {plan.plan_id}.",
+                "ok": True,
+                **service.view(plan),
+            },
+            as_json=args.json,
+        )
+        return 0
+    raise AssertionError("argparse accepted an unknown plan command")
+
+
+_PLAN_SPECIFICATION_BYTES = 1_048_576
+_PLAN_REQUEST_BYTES = (MAX_REQUEST_BYTES * 4) + 4_096
+
+
+def _read_bounded_json_object(maximum_bytes: int) -> dict[str, object]:
+    payload = sys.stdin.buffer.read(maximum_bytes + 1)
+    if len(payload) > maximum_bytes:
+        raise ProviderError(f"JSON input exceeds {maximum_bytes} bytes.")
+    try:
+        value = json.loads(
+            payload,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_non_finite_json,
+        )
+    except (
+        RecursionError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as error:
+        raise ProviderError("Input must be one UTF-8 JSON object.") from error
+    if not isinstance(value, dict):
+        raise ProviderError("Input must be one JSON object.")
+    return value
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key.")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json(value: str) -> object:
+    raise ValueError("Non-finite JSON number.")
 
 
 def _run_tool(args: argparse.Namespace) -> int:

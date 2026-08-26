@@ -1,0 +1,213 @@
+{
+  "baseline": {
+    "javascript": {
+      "durationMs": 204,
+      "exitCode": 1,
+      "outputSha256": "sha256:9338cd72c76d13ce06f0440a70f7370c8bcf74059dec688c0319adb538148ce0"
+    },
+    "python": {
+      "durationMs": 140,
+      "exitCode": 1,
+      "outputSha256": "sha256:866cf575fa86e582aa8c0b6a3ea200f36814cf225caa5537fb32e9dd1dd6e06a"
+    }
+  },
+  "checks": [
+    {
+      "name": "seed fixture fails before the plan",
+      "passed": true
+    },
+    {
+      "name": "Qarinah returns direct cited context",
+      "passed": true
+    },
+    {
+      "name": "Qarinah honors the requested character ceiling",
+      "passed": true
+    },
+    {
+      "name": "Fikeya pauses before unapproved execution",
+      "passed": true
+    },
+    {
+      "name": "all exact approvals are consumed once",
+      "passed": true
+    },
+    {
+      "name": "plan reaches succeeded with verified steps",
+      "passed": true
+    },
+    {
+      "name": "Python and JavaScript verifiers pass after the plan",
+      "passed": true
+    },
+    {
+      "name": "context and plan receipts omit retrieved and source bodies",
+      "passed": true
+    },
+    {
+      "name": "no provider or paid model is invoked",
+      "passed": true
+    }
+  ],
+  "context": {
+    "adapter": "qarinah-sidecar",
+    "coverage": "direct",
+    "evidenceCount": 2,
+    "manifestHash": "sha256:f678ca66fef5c28887ed2316767f70531d8816e44d41f83975729e73a0ac95d1",
+    "receiptId": "ctx_ccd090f6e9fa4d488f2f5410576bdf46",
+    "reportedMaxChars": 8000,
+    "requestSha256": "sha256:02d1ad439fd0cafb3aa29cde4655f5f10de91419449d229feaf4e24b61fb6c57",
+    "requestedMaxChars": 8000,
+    "responseBytes": 3056,
+    "responseSha256": "sha256:1237efb97c41329e91f23e5575d0ff6cf3741f74c7e8c5f0ec241c6ef2d42124",
+    "seedEventCount": 2,
+    "usedChars": 3606
+  },
+  "environment": {
+    "architecture": "AMD64",
+    "node": "v24.15.0",
+    "operatingSystem": "Windows",
+    "python": "3.10.0"
+  },
+  "fixture": {
+    "id": "cross-stack-order-line-v1",
+    "languages": [
+      "Python",
+      "JavaScript"
+    ],
+    "networkRequested": false,
+    "taskQuerySha256": "sha256:c86b420b0d6db512543fa22dd225ba07b122af848ecb7ae8b99fa1725607c914"
+  },
+  "implementation": {
+    "files": {
+      "fikeya-runtime/src/fikeya_runtime/coding.py": "sha256:e19dcbd111ac47bb6907e0780b7f788d6f886bcb46e6d788ca06ccbfa3021730",
+      "fikeya-runtime/src/fikeya_runtime/plans.py": "sha256:8fa95d520c4d35fc05e71386330f0adf95971f561b714aa9b15824888d16d4da",
+      "fikeya-runtime/src/fikeya_runtime/qarinah.py": "sha256:fe3b92b69006d1d83ef73b400663726a5fed3e7e94fbed8771a27d0db452da9e",
+      "fikeya-runtime/src/fikeya_runtime/state.py": "sha256:5d1d048d8de5247e03c6924aaba5102041f22232c093031d0f6b44b810b601d4",
+      "integrations/qarinah-sidecar/src/memory-port.mjs": "sha256:5b80182ef540e5cfb08ae62abc5a25197ed091bc9e6f4d010e21b32d0a0baf7f",
+      "integrations/qarinah-sidecar/src/sidecar.mjs": "sha256:db208d83dfbda92221989f1ffbd5f76eb23d681e0a55f0bb62d7a36814f67f9d"
+    },
+    "gitCommit": "ec239c66ecca23c3bf8122e98e06c946dbe78cad",
+    "manifestSha256": "sha256:2dd8eb375afbc9e4e266b4d67e3d19ad7ec923ad594a9049d69d8b1c462b3ff9"
+  },
+  "limitations": [
+    "This deterministic integration fixture does not evaluate model intelligence.",
+    "It makes no comparative accuracy, cost, speed, or token-savings claim.",
+    "It runs one small local task and is not a substitute for full external benchmark datasets.",
+    "No token value is reported because no model provider is called.",
+    "Commands request no network access, but this fixture does not install an operating-system egress firewall."
+  ],
+  "modelExecution": {
+    "performed": false,
+    "providerCalls": 0,
+    "tokenMeasurement": "not-measured-no-model-was-run"
+  },
+  "officialBenchmarkMapping": [
+    {
+      "alignedDimension": "repository patch is graded by tests",
+      "benchmark": "SWE-bench Verified",
+      "notClaimed": "not a SWE-bench instance or score",
+      "url": "https://www.swebench.com/SWE-bench/reference/harness/"
+    },
+    {
+      "alignedDimension": "instruction, local terminal task, deterministic verifier",
+      "benchmark": "Terminal-Bench",
+      "notClaimed": "not a Terminal-Bench task or leaderboard score",
+      "url": "https://github.com/harbor-framework/terminal-bench"
+    },
+    {
+      "alignedDimension": "multi-language code editing followed by tests",
+      "benchmark": "Aider polyglot",
+      "notClaimed": "not an Aider polyglot run or model score",
+      "url": "https://aider.chat/docs/leaderboards/"
+    }
+  ],
+  "overallPassed": true,
+  "plan": {
+    "approvalCount": 4,
+    "planId": "pln_289a9c467162e88ba642014f",
+    "recordSha256": "sha256:25fc6762cda98414bfdfffa8f7727c5cf2e8628356fcb1b118867e21f79d9627",
+    "specSha256": "sha256:289a9c467162e88ba642014f8bf4091984d9618b7241b5df6268d91c45cc4f79",
+    "statesObserved": [
+      "draft",
+      "reviewed",
+      "awaiting_approval",
+      "awaiting_approval",
+      "succeeded"
+    ],
+    "stepCount": 4,
+    "steps": [
+      {
+        "approvalConsumedAt": "2026-08-25T19:52:08.054Z",
+        "approvalReference": "apr_46fc6ef562e04fe5aff2157b5284e7e8",
+        "executionSha256": "sha256:c86fa81d0a4f7927656b9c2118bab571127dbacd7849c35983db95ed9ce03ea6",
+        "order": 1,
+        "resultSha256": "sha256:b1639fadb5a50cefaabe4deaf2d10f22a0561d252a774140d54594c22fe427a7",
+        "status": "succeeded",
+        "stepId": "patch-python",
+        "toolCallSha256": "sha256:7dd1e0330c13125e83cbd7b6304bda49adf7a4ae7596a641ba074df8a84ab70c",
+        "toolName": "workspace.write_file",
+        "verificationSha256": "sha256:216676a90a2ead3112d6f69110233264bc702afb892c3fb9074fac3f04833b82",
+        "verificationStatus": "passed"
+      },
+      {
+        "approvalConsumedAt": "2026-08-25T19:52:08.082Z",
+        "approvalReference": "apr_7df6c47502ea476bb39596c1296fb60c",
+        "executionSha256": "sha256:97269d8abc592197d027e8505452ba3de7b1c58949d64857668e277d16c16df8",
+        "order": 2,
+        "resultSha256": "sha256:d64c79901d2cf87ef42b82fb2c9264ca5605d4008ed10ca41c02e9dffc4cceeb",
+        "status": "succeeded",
+        "stepId": "patch-javascript",
+        "toolCallSha256": "sha256:7e2e1e30622d8d2c6c8cbf1d8784d8ceb2fabeb2f7e8b7689ab57a9b6a02bba8",
+        "toolName": "workspace.write_file",
+        "verificationSha256": "sha256:ad3b95c8017367e013c169499ed23bac2013071e53aa0b5aa85fec81cd2b97ba",
+        "verificationStatus": "passed"
+      },
+      {
+        "approvalConsumedAt": "2026-08-25T19:52:08.110Z",
+        "approvalReference": "apr_8a471643c4fb42ce888bb02e4b4742a2",
+        "executionSha256": "sha256:b82a749ff171fa1d90d14f5fe1ef8484c9cfeae0eea8948028bd6be67c0b4741",
+        "order": 3,
+        "resultSha256": "sha256:a2fafc94eb1d26cf1b27ee664b791ec1eddabb505be02ee10d42b1c9957f6c55",
+        "status": "succeeded",
+        "stepId": "verify-python",
+        "toolCallSha256": "sha256:2ca819babbf253a63890c9128a7195233bca1795f458abdb638402ee7e23c633",
+        "toolName": "process.run",
+        "verificationSha256": "sha256:0f3853b84074899d0474933a79168f4c6ba817f0c93898811f6b8c00d4b0085d",
+        "verificationStatus": "passed"
+      },
+      {
+        "approvalConsumedAt": "2026-08-25T19:52:08.317Z",
+        "approvalReference": "apr_966639b08b4e43ee926a69159ec018d7",
+        "executionSha256": "sha256:e9e32f18211f1b63d6a0e154644d7216cacebd13997fd1f240a802bc42f2b74e",
+        "order": 4,
+        "resultSha256": "sha256:1c633cbe6905f718053f4eddb144d0f3e524afc7692e21098e9590307ddccef4",
+        "status": "succeeded",
+        "stepId": "verify-javascript",
+        "toolCallSha256": "sha256:1d28c95260eccf2bdb0b25e293af664c21885f03e267ed5741fec3554f7c74f8",
+        "toolName": "process.run",
+        "verificationSha256": "sha256:187108bf5af274260715a606f5b6d3c0ff54c3e053aa14a280248bce9b0f91d3",
+        "verificationStatus": "passed"
+      }
+    ]
+  },
+  "schemaVersion": "fikeya.plan-proof-evaluation.v1",
+  "verification": {
+    "files": {
+      "js_client/order.ts": "sha256:53b31204bfdc80c376b5c64e1cd084a93e83183512f0dbff2e292b10c39743b7",
+      "python_service/order.py": "sha256:2491aff4283536c511537eb18b0326f7484866b9d9efda1af4781c72f3fdfada"
+    },
+    "final": {
+      "javascript": {
+        "durationMs": 203,
+        "exitCode": 0,
+        "outputSha256": "sha256:67ee58aede20f22bdf2d943062e64968c779bff554a9d49560beffe4704c11be"
+      },
+      "python": {
+        "durationMs": 157,
+        "exitCode": 0,
+        "outputSha256": "sha256:59b4eb1a15fd7afa85b717295720b12cbe3d2767abca4aa37489bd7dd59a8791"
+      }
+    }
+  }
+}

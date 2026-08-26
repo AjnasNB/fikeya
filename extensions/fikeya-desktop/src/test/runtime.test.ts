@@ -4,13 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 import {
 	buildAgentRunArguments,
 	buildFikeyaRuntimeEnvironment,
+	buildPlanActionArguments,
+	buildPlanApproveArguments,
+	buildPlanCreateArguments,
+	buildPlanProposalArguments,
 	buildProviderConfigureArguments,
 	buildStatisticsArguments,
 	parseAgentApproval,
@@ -19,10 +23,106 @@ import {
 	parseProviderList,
 	parseProviderProbe,
 	parseProtocolFailure,
+	parsePlanProposalView,
+	parsePlanView,
 	parseRuntimeReport,
 	parseStatistics,
-	resolveFikeyaCli
+	resolveFikeyaCli,
+	startFikeyaAgentRun,
+	startFikeyaPlan,
+	startFikeyaPlanProposal
 } from '../runtime';
+
+const protocolInvocation = { executable: process.execPath, source: 'path' } as const;
+
+function agentResultRecord(): Readonly<Record<string, unknown>> {
+	return {
+		callId: 'call_fixture',
+		memory: { coverage: null, evidenceCount: null, receiptId: null, responseSha256: null, status: 'off' },
+		ok: true,
+		outcome: { changedFiles: [], plan: 'Complete the fixture.', steps: 1, summary: 'Fixture complete.', tests: [], toolCalls: [] },
+		output: 'Fixture complete.',
+		providerCallIds: ['call_fixture'],
+		sessionId: 'ses_fixture',
+		status: 'completed',
+		type: 'result',
+		usage: { cachedInputTokens: null, inputTokens: null, measurement: 'unavailable', outputTokens: null }
+	};
+}
+
+function planResultRecord(): Readonly<Record<string, unknown>> {
+	const hash = `sha256:${'a'.repeat(64)}`;
+	return {
+		ok: true,
+		plan: {
+			createdAt: '2026-08-26T10:00:00.000Z',
+			failureReason: null,
+			planId: 'pln_fixture',
+			revision: 2,
+			schemaVersion: 1,
+			specSha256: hash,
+			status: 'awaiting_approval',
+			steps: [{
+				approval: null,
+				dependsOn: [],
+				execution: null,
+				order: 1,
+				status: 'awaiting_approval',
+				stepId: 'inspect',
+				title: 'Inspect the fixture',
+				toolCall: { arguments: { path: '.' }, callId: 'plan_inspect', name: 'workspace.list_files' },
+				toolCallSha256: hash,
+				verification: null,
+				verificationSpec: { expectedExitCode: null, expectedOutputSha256: null, expectedStatus: 'ok', files: [] }
+			}],
+			title: 'Fixture plan',
+			updatedAt: '2026-08-26T10:01:00.000Z',
+			workspaceId: 'ws_fixture'
+		},
+		recordSha256: hash
+	};
+}
+
+function planProposalResultRecord(): Readonly<Record<string, unknown>> {
+	return {
+		...planResultRecord(),
+		proposal: {
+			callId: 'call_plan_fixture',
+			memory: { coverage: null, evidenceCount: null, receiptId: null, responseSha256: null, status: 'off' },
+			protocol: 'fikeya.plan-proposal.v1',
+			sessionId: 'ses_plan_fixture',
+			usage: { cachedInputTokens: null, inputTokens: null, measurement: 'unavailable', outputTokens: null }
+		}
+	};
+}
+
+async function writeProtocolFixture(
+	workspacePath: string,
+	command: 'agent' | 'plan',
+	records: readonly Readonly<Record<string, unknown>>[]
+): Promise<void> {
+	const output = records.map(record => `${JSON.stringify(record)}\n`).join('');
+	await writeFile(path.join(workspacePath, `${command}.stdout`), output, 'utf8');
+	const source = command === 'agent'
+		? "const fs = require('node:fs'); const output = fs.readFileSync(`${process.argv[1]}.stdout`, 'utf8'); process.stdin.once('data', () => { process.stdin.pause(); process.stdout.end(output, () => process.exit(0)); });\n"
+		: "const fs = require('node:fs'); const output = fs.readFileSync(`${process.argv[1]}.stdout`, 'utf8'); process.stdout.end(output);\n";
+	await writeFile(path.join(workspacePath, command), source, 'utf8');
+}
+
+async function writeCapturingProtocolFixture(
+	workspacePath: string,
+	command: 'agent' | 'plan',
+	output: string
+): Promise<string> {
+	const fixturePath = path.join(workspacePath, command);
+	const capturePath = `${fixturePath}.capture`;
+	await writeFile(`${fixturePath}.stdout`, output, 'utf8');
+	const source = command === 'agent'
+		? "const fs = require('node:fs'); const base = process.argv[1]; const output = fs.readFileSync(`${base}.stdout`, 'utf8'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; const newline = input.indexOf('\\n'); if (newline < 0) return; fs.writeFileSync(`${base}.capture`, input.slice(0, newline), 'utf8'); process.stdin.pause(); process.stdout.end(output, () => process.exit(0)); });\n"
+		: "const fs = require('node:fs'); const base = process.argv[1]; const output = fs.readFileSync(`${base}.stdout`, 'utf8'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => { fs.writeFileSync(`${base}.capture`, input, 'utf8'); process.stdout.end(output); });\n";
+	await writeFile(fixturePath, source, 'utf8');
+	return capturePath;
+}
 
 describe('Fikeya runtime protocol', () => {
 	test('classifies quota handoff messages without accepting unbounded data', () => {
@@ -175,6 +275,229 @@ describe('Fikeya runtime protocol', () => {
 		assert.ok(args.includes('--json-lines'));
 	});
 
+	test('sends bounded provider history only through agent and planning stdin payloads', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-history-'));
+		try {
+			const history = [
+				{ role: 'user', content: 'Inspect the current implementation.' },
+				{ role: 'assistant', content: 'I inspected the focused files.' }
+			] as const;
+			const agentOutput = `${JSON.stringify(agentResultRecord())}\n`;
+			const agentCapturePath = await writeCapturingProtocolFixture(workspacePath, 'agent', agentOutput);
+			const agentOperation = startFikeyaAgentRun(
+				'fixture-provider', 'Continue the work.', 256, 512, 'off', workspacePath,
+				async () => 'deny_once', history, protocolInvocation, process.env
+			);
+			const agentResult = await agentOperation.result;
+
+			const proposalOutput = `${JSON.stringify(planProposalResultRecord())}\n`;
+			const proposalCapturePath = await writeCapturingProtocolFixture(workspacePath, 'plan', proposalOutput);
+			const proposalOperation = startFikeyaPlanProposal(
+				'fixture-provider', 'Create the next plan.', 256, 512, 'off', workspacePath,
+				history, protocolInvocation, process.env
+			);
+			const proposalResult = await proposalOperation.result;
+
+			const rejectedAgent = startFikeyaAgentRun(
+				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
+				async () => 'deny_once', Array.from({ length: 13 }, () => ({ role: 'user' as const, content: 'bounded' })),
+				protocolInvocation, process.env
+			);
+			const rejectedProposal = startFikeyaPlanProposal(
+				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
+				[{ role: 'assistant', content: 'History cannot begin with an assistant.' }], protocolInvocation, process.env
+			);
+
+			assert.deepStrictEqual({
+				agentPayload: JSON.parse(await readFile(agentCapturePath, 'utf8')),
+				agentResult: { ok: agentResult.ok, failure: agentResult.failure },
+				proposalPayload: JSON.parse(await readFile(proposalCapturePath, 'utf8')),
+				proposalResult: { ok: proposalResult.ok, failure: proposalResult.failure },
+				rejectedAgent: await rejectedAgent.result,
+				rejectedProposal: await rejectedProposal.result
+			}, {
+				agentPayload: { type: 'start', prompt: 'Continue the work.', history },
+				agentResult: { ok: true, failure: 'none' },
+				proposalPayload: { protocol: 'fikeya.plan-request.v1', prompt: 'Create the next plan.', history },
+				proposalResult: { ok: true, failure: 'none' },
+				rejectedAgent: { ok: false, exitCode: null, failure: 'runtime-error' },
+				rejectedProposal: { ok: false, exitCode: null, failure: 'runtime-error' }
+			});
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
+	test('delivers ordered bounded progress from agent and plan handles without replacing final results', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-progress-'));
+		try {
+			const progress = [
+				{ event: 'stage_started', sequence: 1, stage: 'planning', type: 'progress' },
+				{ event: 'stage_completed', sequence: 2, stage: 'planning', type: 'progress' }
+			] as const;
+			await writeProtocolFixture(workspacePath, 'agent', [...progress, agentResultRecord()]);
+			const agentOperation = startFikeyaAgentRun(
+				'fixture-provider',
+				'Complete the fixture.',
+				256,
+				512,
+				'off',
+				workspacePath,
+				async () => 'deny_once',
+				[],
+				protocolInvocation,
+				process.env
+			);
+			const agentProgress: unknown[] = [];
+			const disposeAgentProgress = agentOperation.onProgress(event => agentProgress.push(event));
+			const agentResult = await agentOperation.result;
+			disposeAgentProgress();
+
+			await writeProtocolFixture(workspacePath, 'plan', [...progress, planResultRecord()]);
+			const planOperation = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const planProgress: unknown[] = [];
+			const disposePlanProgress = planOperation.onProgress(event => planProgress.push(event));
+			const planResult = await planOperation.result;
+			disposePlanProgress();
+
+			assert.deepStrictEqual({
+				agentProgress,
+				agentResult: { ok: agentResult.ok, failure: agentResult.failure, output: agentResult.value?.output },
+				planProgress,
+				planResult: { ok: planResult.ok, failure: planResult.failure, status: planResult.value?.plan.status }
+			}, {
+				agentProgress: progress,
+				agentResult: { ok: true, failure: 'none', output: 'Fixture complete.' },
+				planProgress: progress,
+				planResult: { ok: true, failure: 'none', status: 'awaiting_approval' }
+			});
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
+	test('replays the latest bounded progress event to an immediate late subscriber', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-progress-replay-'));
+		try {
+			const progress = { event: 'stage_started', sequence: 1, stage: 'executing', type: 'progress' } as const;
+			const approval = {
+				arguments: { path: '.' },
+				argumentsSha256: 'a'.repeat(64),
+				callId: 'tool_fixture',
+				expectedRevision: 1,
+				requestId: 'approval_fixture',
+				sessionId: 'ses_fixture',
+				summary: 'Inspect the fixture',
+				toolName: 'workspace.list_files',
+				type: 'approval'
+			};
+			const initialOutput = `${JSON.stringify(progress)}\n${JSON.stringify(approval)}\n`;
+			const finalOutput = `${JSON.stringify(agentResultRecord())}\n`;
+			await writeFile(
+				path.join(workspacePath, 'agent'),
+				`let input = ''; let started = false; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; while (input.includes('\\n')) { const newline = input.indexOf('\\n'); const message = JSON.parse(input.slice(0, newline)); input = input.slice(newline + 1); if (message.type === 'start' && !started) { started = true; process.stdout.write(${JSON.stringify(initialOutput)}); } else if (message.type === 'approval') { process.stdin.pause(); process.stdout.end(${JSON.stringify(finalOutput)}, () => process.exit(0)); } } });\n`,
+				'utf8'
+			);
+
+			let signalApprovalReached = (): void => undefined;
+			const approvalReached = new Promise<void>(resolve => signalApprovalReached = resolve);
+			let releaseApproval = (): void => undefined;
+			const approvalRelease = new Promise<void>(resolve => releaseApproval = resolve);
+			const operation = startFikeyaAgentRun(
+				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
+				async () => {
+					signalApprovalReached();
+					await approvalRelease;
+					return 'deny_once';
+				},
+				[], protocolInvocation, process.env
+			);
+			await approvalReached;
+			const observed: unknown[] = [];
+			operation.onProgress(event => observed.push(event));
+			releaseApproval();
+			const result = await operation.result;
+
+			assert.deepStrictEqual({ observed, result: { ok: result.ok, failure: result.failure } }, {
+				observed: [progress],
+				result: { ok: true, failure: 'none' }
+			});
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
+	test('rejects malformed, oversized, and non-monotonic progress records', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-invalid-progress-'));
+		try {
+			await writeProtocolFixture(workspacePath, 'agent', [
+				{ event: 'stage_started', extra: true, sequence: 1, stage: 'planning', type: 'progress' },
+				agentResultRecord()
+			]);
+			const malformedAgent = startFikeyaAgentRun(
+				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
+				async () => 'deny_once', [], protocolInvocation, process.env
+			);
+			const malformedAgentProgress: unknown[] = [];
+			malformedAgent.onProgress(event => malformedAgentProgress.push(event));
+
+			await writeProtocolFixture(workspacePath, 'plan', [
+				{ event: 'x'.repeat(81), sequence: 1, stage: 'planning', type: 'progress' },
+				planResultRecord()
+			]);
+			const oversizedPlan = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const oversizedPlanProgress: unknown[] = [];
+			oversizedPlan.onProgress(event => oversizedPlanProgress.push(event));
+
+			const malformedAgentResult = await malformedAgent.result;
+			const oversizedPlanResult = await oversizedPlan.result;
+
+			await writeProtocolFixture(workspacePath, 'plan', [
+				{ event: 'stage_started', sequence: 2, stage: 'executing', type: 'progress' },
+				{ event: 'stage_completed', sequence: 2, stage: 'executing', type: 'progress' },
+				planResultRecord()
+			]);
+			const unorderedPlan = startFikeyaPlan('resume', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const unorderedPlanProgress: unknown[] = [];
+			unorderedPlan.onProgress(event => unorderedPlanProgress.push(event));
+			const unorderedPlanResult = await unorderedPlan.result;
+
+			assert.deepStrictEqual({
+				malformedAgent: { failure: malformedAgentResult.failure, progress: malformedAgentProgress },
+				oversizedPlan: { failure: oversizedPlanResult.failure, progress: oversizedPlanProgress },
+				unorderedPlan: { failure: unorderedPlanResult.failure, progress: unorderedPlanProgress }
+			}, {
+				malformedAgent: { failure: 'invalid-json', progress: [] },
+				oversizedPlan: { failure: 'invalid-json', progress: [] },
+				unorderedPlan: {
+					failure: 'invalid-json',
+					progress: [{ event: 'stage_started', sequence: 2, stage: 'executing', type: 'progress' }]
+				}
+			});
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
+	test('plan progress observers can cancel without changing cancellation semantics', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-progress-cancel-'));
+		try {
+			const progress = { event: 'stage_started', sequence: 1, stage: 'executing', type: 'progress' };
+			await writeFile(
+				path.join(workspacePath, 'plan'),
+				`process.stdout.write(${JSON.stringify(`${JSON.stringify(progress)}\n`)}); setInterval(() => undefined, 1000);\n`,
+				'utf8'
+			);
+			const operation = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			operation.onProgress(() => operation.cancel());
+			const cancelled = await operation.result;
+			assert.deepStrictEqual({ ok: cancelled.ok, failure: cancelled.failure }, { ok: false, failure: 'cancelled' });
+			assert.notStrictEqual(cancelled.exitCode, 0);
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
 	test('connects the runtime to the extension-owned Qarinah sidecar without mutating the parent environment', async () => {
 		const extensionPath = path.join(tmpdir(), `fikeya-desktop-sidecar-${process.pid}-${Date.now()}`);
 		const sidecarDirectory = path.join(extensionPath, 'sidecar');
@@ -184,10 +507,161 @@ describe('Fikeya runtime protocol', () => {
 
 		assert.deepStrictEqual(buildFikeyaRuntimeEnvironment(extensionPath, 'C:\\fake\\Code.exe', parentEnvironment), {
 			PATH: 'fixed-path',
+			ELECTRON_RUN_AS_NODE: '1',
 			FIKEYA_NODE_EXECUTABLE: 'C:\\fake\\Code.exe',
 			FIKEYA_QARINAH_SIDECAR: path.join(sidecarDirectory, 'qarinah-memory-view.mjs')
 		});
 		assert.deepStrictEqual(parentEnvironment, { PATH: 'fixed-path' });
+	});
+
+	test('keeps exact plan specifications out of process arguments', () => {
+		const privateContent = 'private file content';
+		assert.deepStrictEqual(buildPlanCreateArguments(), ['plan', 'create', '.', '--spec-stdin', '--json']);
+		assert.ok(!buildPlanCreateArguments().includes(privateContent));
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--json']);
+		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', ['inspect', 'verify']), ['plan', 'approve', 'pln_example', '--workspace', '.', '--step', 'inspect', '--step', 'verify', '--json']);
+		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', 'all'), ['plan', 'approve', 'pln_example', '--workspace', '.', '--all', '--json']);
+		const proposalArgs = buildPlanProposalArguments('azure-primary', 2048, 12_000, 'required');
+		assert.deepStrictEqual(proposalArgs.slice(0, 7), ['plan', 'propose', '.', '--provider', 'azure-primary', '--request-stdin', '--allow-network']);
+		assert.deepStrictEqual(proposalArgs.slice(-5), ['--context-max-characters', '12000', '--memory', 'required', '--json']);
+		assert.ok(!proposalArgs.includes(privateContent));
+	});
+
+	test('parses a durable plan with exact approval, execution, and verification evidence', () => {
+		const hash = (character: string) => `sha256:${character.repeat(64)}`;
+		const plan = {
+			createdAt: '2026-08-26T10:00:00.000Z',
+			failureReason: null,
+			planId: 'pln_example',
+			revision: 5,
+			schemaVersion: 1,
+			specSha256: hash('a'),
+			status: 'succeeded',
+			steps: [{
+				approval: { consumedAt: '2026-08-26T10:01:00.000Z', expiresAt: '2026-08-26T10:05:30.000Z', issuedAt: '2026-08-26T10:00:30.000Z', referenceId: 'apr_example', toolCallSha256: hash('b') },
+				dependsOn: [],
+				execution: { durationMs: 4, executionSha256: hash('d'), exitCode: null, finishedAt: '2026-08-26T10:01:00.004Z', resultSha256: hash('c'), startedAt: '2026-08-26T10:01:00.000Z', status: 'ok', toolCallSha256: hash('b') },
+				order: 1,
+				status: 'succeeded',
+				stepId: 'inspect',
+				title: 'Inspect the project',
+				toolCall: { arguments: { path: '.' }, callId: 'plan:list', name: 'workspace.list_files' },
+				toolCallSha256: hash('b'),
+				verification: { checks: [{ actual: 'ok', expected: 'ok', kind: 'status', passed: true, subject: 'workspace.list_files' }], outcomeSha256: hash('e'), status: 'passed', verifiedAt: '2026-08-26T10:01:00.005Z' },
+				verificationSpec: { expectedExitCode: null, expectedOutputSha256: null, expectedStatus: 'ok', files: [] }
+			}],
+			title: 'Inspect this project safely',
+			updatedAt: '2026-08-26T10:01:00.005Z',
+			workspaceId: 'ws_example'
+		};
+		const parsed = parsePlanView({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		assert.strictEqual(parsed?.recordSha256, hash('f'));
+		assert.strictEqual(parsed?.plan.status, 'succeeded');
+		assert.strictEqual(parsed?.plan.steps[0].approval?.referenceId, 'apr_example');
+		assert.strictEqual(parsed?.plan.steps[0].approval?.expiresAt, '2026-08-26T10:05:30.000Z');
+		assert.strictEqual(parsed?.plan.steps[0].execution?.executionSha256, hash('d'));
+		assert.strictEqual(parsed?.plan.steps[0].verification?.checks[0].passed, true);
+		assert.deepStrictEqual(parsed?.plan.steps[0].toolCall.arguments, { path: '.' });
+		assert.deepStrictEqual(parsed?.plan.steps[0].verificationSpec, { expectedExitCode: null, expectedOutputSha256: null, expectedStatus: 'ok', files: [] });
+		const mismatchedApproval = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		mismatchedApproval.plan.steps[0].approval.toolCallSha256 = hash('9');
+		assert.strictEqual(parsePlanView(mismatchedApproval), undefined);
+		const malformedExpiry = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		malformedExpiry.plan.steps[0].approval.expiresAt = 'not-a-timestamp';
+		assert.strictEqual(parsePlanView(malformedExpiry), undefined, 'approval expiry must be a timestamp');
+		const precedingExpiry = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		precedingExpiry.plan.steps[0].approval.expiresAt = '2026-08-26T10:00:29.999Z';
+		assert.strictEqual(parsePlanView(precedingExpiry), undefined, 'approval expiry cannot precede issuance');
+		const legacyApproval = structuredClone({ ok: true, plan, receipt: {}, recordSha256: hash('f') });
+		delete (legacyApproval.plan.steps[0].approval as Partial<typeof plan.steps[0]['approval']>).expiresAt;
+		assert.strictEqual(
+			parsePlanView(legacyApproval)?.plan.steps[0].approval?.expiresAt,
+			'2026-08-26T10:00:30.000Z',
+			'legacy approvals normalize expiry to issuance and therefore fail closed at execution time'
+		);
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: {
+				...plan,
+				steps: [
+					plan.steps[0],
+					{ ...plan.steps[0], approval: null, dependsOn: ['inspect'], execution: null, order: 2, status: 'pending', stepId: 'second', verification: null }
+				]
+			},
+			recordSha256: hash('f')
+		}), undefined, 'duplicate tool-call identifiers must be rejected');
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: {
+				...plan,
+				steps: [
+					plan.steps[0],
+					{ ...plan.steps[0], approval: null, dependsOn: ['inspect', 'inspect'], execution: null, order: 2, status: 'pending', stepId: 'second', toolCall: { ...plan.steps[0].toolCall, callId: 'plan:second' }, verification: null }
+				]
+			},
+			recordSha256: hash('f')
+		}), undefined, 'duplicate dependency identifiers must be rejected');
+		assert.strictEqual(parsePlanView({ ok: true, plan: { ...plan, title: '🧠'.repeat(1_025) }, recordSha256: hash('f') }), undefined, 'title limits use UTF-8 bytes');
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: { ...plan, steps: [{ ...plan.steps[0], verificationSpec: { ...plan.steps[0].verificationSpec, unexpected: true } }] },
+			recordSha256: hash('f')
+		}), undefined, 'verification specifications reject unknown fields');
+		assert.strictEqual(parsePlanView({
+			ok: true,
+			plan: { ...plan, steps: [{ ...plan.steps[0], toolCall: { ...plan.steps[0].toolCall, arguments: { limit: Number.NaN } } }] },
+			recordSha256: hash('f')
+		}), undefined, 'tool arguments reject non-finite values');
+
+		const proposalValue = {
+			ok: true,
+			plan,
+			recordSha256: hash('f'),
+			proposal: {
+				protocol: 'fikeya.plan-proposal.v1',
+				sessionId: 'ses_plan_example',
+				callId: 'call_plan_example',
+				usage: { measurement: 'provider-reported', inputTokens: 120, outputTokens: 80, cachedInputTokens: 20 },
+				memory: { status: 'off', coverage: null, evidenceCount: null, receiptId: null, responseSha256: null }
+			}
+		};
+		const proposal = parsePlanProposalView(proposalValue);
+		assert.strictEqual(proposal?.proposal.protocol, 'fikeya.plan-proposal.v1');
+		assert.strictEqual(proposal?.proposal.sessionId, 'ses_plan_example');
+		assert.strictEqual(proposal?.plan.planId, 'pln_example');
+		assert.strictEqual(parsePlanProposalView({
+			...proposalValue,
+			proposal: { ...proposalValue.proposal, protocol: 'fikeya.plan-proposal.v2' }
+		}), undefined);
+	});
+
+	test('accepts a failed plan document while rejecting unsupported tool records', () => {
+		const hash = `sha256:${'a'.repeat(64)}`;
+		const value = {
+			ok: false,
+			recordSha256: hash,
+			plan: {
+				createdAt: '2026-08-26T10:00:00.000Z', failureReason: 'Verification failed.', planId: 'pln_failed', revision: 2, schemaVersion: 1,
+				specSha256: hash, status: 'failed', title: 'Fail safely', updatedAt: '2026-08-26T10:01:00.000Z', workspaceId: 'ws_example',
+				steps: [{ approval: null, dependsOn: [], execution: null, order: 1, status: 'failed', stepId: 'unsafe', title: 'Unsafe tool', toolCall: { arguments: {}, callId: 'call_unsafe', name: 'network.fetch' }, toolCallSha256: hash, verification: null, verificationSpec: { expectedExitCode: null, expectedOutputSha256: null, expectedStatus: 'ok', files: [] } }]
+			}
+		};
+		assert.strictEqual(parsePlanView(value), undefined);
+		value.plan.steps[0].toolCall.name = 'workspace.list_files';
+		assert.strictEqual(parsePlanView(value)?.plan.status, 'failed');
+	});
+
+	test('does not force Electron Node mode for a standalone Node executable', async () => {
+		const extensionPath = path.join(tmpdir(), `fikeya-desktop-node-sidecar-${process.pid}-${Date.now()}`);
+		const sidecarDirectory = path.join(extensionPath, 'sidecar');
+		await mkdir(sidecarDirectory, { recursive: true });
+		await writeFile(path.join(sidecarDirectory, 'qarinah-memory-view.mjs'), 'fixture', 'utf8');
+
+		assert.deepStrictEqual(buildFikeyaRuntimeEnvironment(extensionPath, 'node.exe', { PATH: 'fixed-path' }), {
+			PATH: 'fixed-path',
+			FIKEYA_NODE_EXECUTABLE: 'node.exe',
+			FIKEYA_QARINAH_SIDECAR: path.join(sidecarDirectory, 'qarinah-memory-view.mjs')
+		});
 	});
 
 	test('does not invent Qarinah sidecar configuration for source-only installs', () => {
@@ -392,6 +866,16 @@ describe('Fikeya runtime protocol', () => {
 			outputTokens: 512,
 			qarinahContextReceipts: 2,
 			lastActivity: '2026-08-25T07:29:00.000Z',
+			matchedComparison: {
+				status: 'matched',
+				pairCount: 2,
+				baselineBilledTokens: 1_000,
+				fikeyaBilledTokens: 600,
+				baselineVerifiedSolveRate: 1,
+				fikeyaVerifiedSolveRate: 1,
+				billedTokenReductionPercent: 40,
+				reportSha256: `sha256:${'a'.repeat(64)}`
+			},
 			breakdown: [{
 				provider: 'azure-primary',
 				model: 'gpt-coding',
@@ -415,7 +899,8 @@ describe('Fikeya runtime protocol', () => {
 			outputTokens: value.outputTokens,
 			qarinahContextReceipts: value.qarinahContextReceipts,
 			lastActivity: value.lastActivity,
-			breakdown: value.breakdown
+			breakdown: value.breakdown,
+			matchedComparison: value.matchedComparison
 		});
 	});
 
@@ -433,6 +918,7 @@ describe('Fikeya runtime protocol', () => {
 			outputTokens: null,
 			qarinahContextReceipts: 0,
 			lastActivity: null,
+			matchedComparison: null,
 			breakdown: [{
 				provider: 'local',
 				model: 'unknown',
@@ -448,6 +934,7 @@ describe('Fikeya runtime protocol', () => {
 		assert.strictEqual(parseStatistics({ ...unavailable, inputTokens: 0 }), undefined);
 		assert.strictEqual(parseStatistics({ ...unavailable, measuredProviderCalls: 1 }), undefined);
 		assert.strictEqual(parseStatistics({ ...unavailable, generatedAt: 'not-a-date' }), undefined);
+		assert.strictEqual(parseStatistics({ ...unavailable, matchedComparison: { status: 'matched' } }), undefined);
 	});
 
 	test('rejects provider metadata and probes outside the bounded schema', () => {

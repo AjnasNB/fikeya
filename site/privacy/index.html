@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="Fikeya privacy policy covering local project data, model-provider transfers, credentials, retention, deletion, and optional diagnostics.">
+		<meta name="robots" content="index, follow">
+		<meta name="theme-color" content="#0b0f0e">
+		<meta name="color-scheme" content="dark">
+		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
+		<title>Fikeya privacy policy</title>
+		<link rel="canonical" href="https://fikeya.com/privacy/">
+		<link rel="icon" href="/favicon.svg?v=20260825h" type="image/svg+xml">
+		<link rel="manifest" href="/site.webmanifest">
+		<link rel="stylesheet" href="/styles.css?v=20260826a">
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+		<header class="site-header"><div class="shell nav-shell"><a class="brand" href="/" aria-label="Fikeya home"><img src="/favicon.svg?v=20260825h" width="30" height="30" alt=""><span>Fikeya</span></a><nav aria-label="Primary navigation"><ul class="nav-links"><li><a href="/">Home</a></li><li><a href="/product/">Product</a></li><li><a href="/proof/">Proof</a></li><li><a href="/docs/">Docs</a></li><li><a href="/download/">Download</a></li></ul></nav><div class="nav-actions"><a class="nav-source" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">GitHub</a></div></div></header>
+		<main id="main">
+			<section class="page-hero docs-hero"><div class="shell docs-hero-layout"><div><p class="eyebrow">Privacy policy · 26 August 2026</p><h1>Your project stays local until you choose a provider call.</h1><p class="page-summary">Fikeya is a local-first editor, extension, and CLI. It does not enable product telemetry by default and does not sell personal data.</p></div><nav class="docs-index" aria-label="Privacy sections"><span>On this page</span><a href="#local">Local data</a><a href="#providers">Provider transfers</a><a href="#retention">Retention and deletion</a><a href="#contact">Contact</a></nav></div></section>
+			<section class="section" id="local"><div class="shell docs-layout"><aside><span>01</span><strong>Local data</strong></aside><div class="docs-content"><h2>Workspace data remains on the device.</h2><p>Fikeya stores bounded configuration, conversation history when workspace history is enabled, usage receipts, plans, approvals, and Qarinah project evidence in local application or workspace storage. Provider credentials are stored in the operating-system credential vault and are not written into project files.</p><p>Fikeya does not collect product analytics, advertising identifiers, browsing history, or hidden model reasoning by default.</p></div></div></section>
+			<section class="section" id="providers"><div class="shell docs-layout"><aside><span>02</span><strong>Provider transfers</strong></aside><div class="docs-content"><h2>A configured model provider receives an authorized request.</h2><p>When a user selects a network provider and confirms a turn, Fikeya sends the prompt, selected bounded project context, conversation history required for that turn, and provider configuration needed to execute the request. The provider processes that data under its own agreement and privacy policy. Fikeya does not proxy or retain the provider request on a Fikeya-operated cloud service.</p><p>Loopback providers such as a local Ollama instance can operate without sending project content to an external model provider. Tool and connector network access remains separately controlled.</p></div></div></section>
+			<section class="section" id="retention"><div class="shell docs-layout"><aside><span>03</span><strong>Retention</strong></aside><div class="docs-content"><h2>Users control local retention and deletion.</h2><p>Conversation history is bounded and can be cleared from Fikeya Chat. A workspace can disable retained chat history. Uninstalling the extension or Desktop removes the application but may leave user-owned project evidence so it is not destroyed unexpectedly.</p><p>To remove retained project data, export anything that must be kept, close Fikeya, and delete the project's <code>.fikeya</code> and opted-in <code>.qarinah</code> state. Remove provider credentials through Fikeya Settings or the operating-system credential manager. Provider-side deletion requests must be made to the provider that processed the request.</p></div></div></section>
+			<section class="section" id="contact"><div class="shell docs-layout"><aside><span>04</span><strong>Contact</strong></aside><div class="docs-content"><h2>Questions and security reports.</h2><p>Contact Ajnas N B at <a href="mailto:ajnasnb@gmail.com">ajnasnb@gmail.com</a>. Report security issues through the private process described in the repository's <a href="https://github.com/AjnasNB/fikeya/security/policy" rel="noopener noreferrer">security policy</a>.</p></div></div></section>
+		</main>
+		<footer class="site-footer"><div class="shell footer-layout"><div class="brand footer-brand"><img src="/favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div><p>Local-first project data with explicit provider transfers.</p><div><a href="/signing/">Signing policy</a><a href="/docs/">Docs</a><a href="/download/">Download</a><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a></div></div></footer>
+	</body>
+</html>
+

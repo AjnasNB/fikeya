@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="Inspect Fikeya's reproducible task receipts, live CLI deployment, Qarinah evidence, security boundaries, and scoped token results.">
+		<meta name="robots" content="index, follow, max-image-preview:large">
+		<meta name="theme-color" content="#0b0f0e">
+		<meta name="color-scheme" content="dark">
+		<meta property="og:type" content="website">
+		<meta property="og:site_name" content="Fikeya">
+		<meta property="og:title" content="Fikeya proof | Inspect the work, not just the answer">
+		<meta property="og:description" content="Reproducible fixtures, exact approvals, changed-file hashes, tests, provider usage, and cited project evidence.">
+		<meta property="og:url" content="https://fikeya.com/proof/">
+		<meta property="og:image" content="https://fikeya.com/fikeya-desktop-beta-review.jpg">
+		<meta property="og:image:alt" content="Fikeya Review showing code and execution evidence.">
+		<meta name="twitter:card" content="summary_large_image">
+		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
+		<title>Fikeya proof | Inspect the work, not just the answer</title>
+		<link rel="canonical" href="https://fikeya.com/proof/">
+		<link rel="icon" href="/favicon.svg?v=20260825h" type="image/svg+xml">
+		<link rel="manifest" href="/site.webmanifest">
+		<link rel="stylesheet" href="/styles.css?v=20260826a">
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+		<header class="site-header"><div class="shell nav-shell"><a class="brand" href="/" aria-label="Fikeya home"><img src="/favicon.svg?v=20260825h" width="30" height="30" alt=""><span>Fikeya</span></a><nav aria-label="Primary navigation"><ul class="nav-links"><li><a href="/">Home</a></li><li><a href="/product/">Product</a></li><li><a href="/proof/" aria-current="page">Proof</a></li><li><a href="/docs/">Docs</a></li><li><a href="/enterprise/">Enterprise</a></li><li><a href="/download/">Download</a></li></ul></nav><div class="nav-actions"><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a class="nav-source" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">GitHub</a></div></div></header>
+
+		<main id="main">
+			<section class="page-hero compact-page-hero"><div class="shell page-hero-layout"><div><p class="eyebrow">Proof, not theater</p><h1>Inspect what was proposed, approved, executed, and verified.</h1><p class="page-summary">A Fikeya result is complete only when the task, selected context, plan, approvals, changed files, checks, provider-reported usage, and terminal outcome agree.</p><div class="hero-actions"><a class="button button-primary" href="https://github.com/AjnasNB/fikeya/tree/main/docs/fikeya/verification" rel="noopener noreferrer">Read verification records</a><a class="button button-text" href="/download/">Run the beta</a></div></div><figure class="product-shot page-shot"><div class="product-shot-bar"><span>Fikeya Review</span><span>real repository evidence</span></div><img src="/fikeya-desktop-beta-review.jpg" width="1202" height="801" alt="Fikeya Review mode showing real repository and command evidence"><figcaption>A result links exact operations to hashes and checks. A proposal or approval is never presented as successful execution.</figcaption></figure></div></section>
+
+			<section class="evidence-rail" aria-label="Proof fields"><div class="shell rail-grid"><div><span>Plan</span><strong>Ordered steps and dependencies</strong></div><div><span>Authority</span><strong>Exact one-use approvals</strong></div><div><span>Outcome</span><strong>Hashes, exit state, and checks</strong></div><div><span>Cost</span><strong>Provider-reported usage source</strong></div></div></section>
+
+			<section class="section" id="desktop-plan-proof">
+				<div class="shell">
+					<div class="section-intro workflow-intro"><p class="eyebrow">Real Desktop lifecycle</p><h2>Draft, review, approval, execution, and verification stay inspectable.</h2><p>These captures come from a disposable project running inside the real Fikeya Desktop extension host. One durable plan uses three read-only workspace tools. Each step receives its own expiring, single-use approval before Fikeya executes it and records linked result and verification hashes.</p><div class="hero-actions"><a class="button button-text" href="/fikeya-plan-lifecycle-proof.json">Download the content-free receipt</a></div></div>
+					<div class="capture-sequence">
+						<article>
+							<div><span>01 / Draft</span><h3>The proposal is inspectable before it becomes executable.</h3><p>Fikeya shows the ordered steps, dependencies, exact tool names, arguments, and expected checks. Every step remains pending.</p></div>
+							<figure><img src="/fikeya-plan-draft-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing a three-step draft with every step pending"><figcaption>Draft revision 1. The available action is Review immutable plan. No tool has run.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>02 / Review</span><h3>Review changes plan state, not tool authority.</h3><p>The reviewed revision stays visible with its same steps and arguments. The developer can start the approval phase or cancel the plan.</p></div>
+							<figure><img src="/fikeya-plan-reviewed-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing the reviewed plan before approval"><figcaption>Reviewed revision 2. Review does not grant blanket permission to execute.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>03 / Approval</span><h3>The exact first request is exposed before execution.</h3><p>Fikeya identifies the selected tool, dependencies, arguments, and expected verification while the step remains Awaiting Approval.</p></div>
+							<figure><img src="/fikeya-plan-awaiting-approval-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view stopped at the first exact tool approval boundary"><figcaption>Awaiting Approval, revision 3. At this point no authority has been issued and no tool has run.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>04 / Exact authority</span><h3>The selected read-only call receives one expiring reference.</h3><p>The approval is visibly bound to the selected step and its tool-call evidence hash. It remains unused until the developer resumes that exact work.</p></div>
+							<figure><img src="/fikeya-plan-exact-approval-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing an unused exact approval and expiry"><figcaption>The first step is Approved. Its approval reference and expiry are visible while execution and verification receipts are still absent.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>05 / Execute and verify</span><h3>A safe tool result becomes linked proof.</h3><p>After resume, the first read-only operation succeeds. Fikeya records the consumed approval, execution hash, verification hash, and passing tool-status check before stopping at the next approval.</p></div>
+							<figure><img src="/fikeya-plan-executed-verified-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing a succeeded read-only step with execution and verification hashes"><figcaption>One step is executed and verified; the next remains Awaiting Approval. Authority does not spill across steps.</figcaption></figure>
+						</article>
+						<article>
+							<div><span>06 / Succeeded</span><h3>All three receipt chains agree.</h3><p>The final state retains three consumed approval references and the tool-call, result, execution, and verification SHA-256 values for every safe operation.</p></div>
+							<figure><img src="/fikeya-plan-succeeded-real.png" width="1920" height="1080" loading="lazy" alt="Real Fikeya Desktop Plan view showing the completed succeeded plan and hash-linked receipts"><figcaption>Succeeded after three exact approvals. The downloadable content-free receipt records the final plan and record digests.</figcaption></figure>
+						</article>
+					</div>
+					<p class="capture-boundary"><strong>Capture boundary:</strong> this sequence proves the real Desktop lifecycle with disposable, read-only project inspection. It does not test model quality, mutate source files, invoke a shell, or authorize network access.</p>
+				</div>
+			</section>
+
+			<section class="section"><div class="shell proof-ledger"><article><span>01 / Desktop</span><h2>Chat beside the code</h2><p>A deterministic local provider completed a real conversation inside the extension host and reported 60 input, 12 cached input, and 15 output tokens. The capture explicitly shows that no project context was attached, so it proves Chat and usage reporting rather than Qarinah retrieval.</p><figure><img src="/fikeya-live-chat.png" width="1800" height="1050" loading="lazy" alt="Fikeya right-side chat completing a local deterministic task"></figure></article><article><span>02 / Context</span><h2>A graph you can interrogate</h2><p>A separate initialized workspace reported six cited items and rendered a bounded live graph with 76 nodes, 201 visible links, search, filters, manifest and ledger hashes, pan, zoom, and drag.</p><figure><img src="/fikeya-live-context-graph.png" width="1800" height="1050" loading="lazy" alt="Fikeya live Qarinah context graph"></figure></article></div></section>
+
+			<section class="section"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Plan-to-proof fixture</p><h2>A failing cross-stack task that ends with verified evidence.</h2><p>The local evaluation begins with failing Python and TypeScript implementations. Qarinah retrieves two cited project records within an exact 8,000-character ceiling. Fikeya then stops before execution, consumes four single-use approvals, verifies both test suites, and records hash-linked outcomes.</p><p class="target-line"><strong>Measured boundary:</strong> no model is called, so provider calls are reported as zero and tokens remain explicitly not measured. The result evaluates Fikeya's workflow, not model intelligence.</p><div class="hero-actions"><a class="button button-primary" href="https://github.com/AjnasNB/fikeya/tree/main/bench/fikeya-plan-proof" rel="noopener noreferrer">Run the fixture</a><a class="button button-text" href="https://github.com/AjnasNB/fikeya/blob/main/bench/fikeya-plan-proof/results/latest.json" rel="noopener noreferrer">Inspect the JSON result</a></div></div><div class="proof-sequence"><div><span>1</span><strong>Fail first</strong><p>Both seeded language suites begin red.</p></div><div><span>2</span><strong>Retrieve</strong><p>Two cited Qarinah items, 3,606 of 8,000 characters used.</p></div><div><span>3</span><strong>Approve and run</strong><p>Four exact tool calls consume four one-use references.</p></div><div><span>4</span><strong>Verify</strong><p>Python and TypeScript pass with execution and verification hashes.</p></div></div></div></section>
+
+			<section class="section"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">CLI to Cloudflare</p><h2>A coding run that ended in a live health check.</h2><p>The installed CLI created a Worker project, received four exact approvals, ran a Wrangler dry-run, deployed, and verified a 200 response. The deterministic provider makes the proof reproducible. It does not measure model quality.</p><div class="hero-actions"><a class="button button-primary" href="https://fikeya-cli-proof-20260825165749.ajnasnb.workers.dev/health" rel="noopener noreferrer">Open live health check</a><a class="button button-text" href="https://github.com/AjnasNB/fikeya/blob/main/docs/fikeya/verification/2026-08-25-cli-wrangler.md" rel="noopener noreferrer">Read exact receipt</a></div></div><div class="proof-sequence"><div><span>1</span><strong>Generate fixture</strong><p>Local deterministic plan and file proposal.</p></div><div><span>2</span><strong>Approve exact calls</strong><p>Four one-use request digests.</p></div><div><span>3</span><strong>Dry-run and deploy</strong><p>Wrangler remained the execution boundary.</p></div><div><span>4</span><strong>Verify</strong><p>Live URL returned the expected 200 response.</p></div></div></div></section>
+
+			<section class="section" id="evidence"><div class="shell receipt-layout"><div class="section-intro compact"><p class="eyebrow">Scoped context result</p><h2>98.71% is a six-fixture portable-context estimate.</h2><p>The published Qarinah fixture compares 442,113 baseline tokens with a 5,682-token portable pack, a 77.81:1 ratio. It is not provider-billed usage, total cost, model quality, or a universal result.</p><p class="target-line"><strong>Fikeya target:</strong> reduce billed input tokens on matched coding tasks without a material solve-rate regression. That remains a release target until a pinned, reproducible evaluation supports a product claim.</p><a class="button button-text" href="https://qarinah.io/docs/benchmarks/" rel="noopener noreferrer">Read the Qarinah method</a></div><div class="receipt-card"><div class="receipt-card-head"><span>Matched task receipt</span><span>required fields</span></div><dl><div><dt>Repository and revision</dt><dd>pinned fixture</dd></div><div><dt>Provider and model</dt><dd>same comparison pair</dd></div><div><dt>Tools and limits</dt><dd>fixed before execution</dd></div><div><dt>Input, cached, output</dt><dd>provider reported</dd></div><div><dt>Result</dt><dd>tests and outcome hash</dd></div></dl></div></div></section>
+
+			<section class="section"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Security boundary</p><h2>Permission is exact and temporary.</h2><p>Changing an executable, argument, working directory, environment key, request digest, or checkpoint invalidates a tool approval. Network calls and real processes begin disabled.</p></div><div class="capability-list"><div><span>Before</span><strong>Workspace root, request digest, permission class, and expiry</strong></div><div><span>During</span><strong>Cancellation, bounded retries, and content-addressed revisions</strong></div><div><span>After</span><strong>Exit state, declared file checks and hashes, verification, and evidence refs</strong></div><div><span>Release</span><strong>Checksums and provenance; signature state shown honestly</strong></div></div></div></section>
+
+			<section class="page-cta"><div class="shell"><p class="eyebrow">Reproduce it</p><h2>Run the fixture, inspect the receipts, and challenge the result.</h2><a class="button button-primary" href="/docs/">Open the documentation</a></div></section>
+		</main>
+
+		<footer class="site-footer"><div class="shell footer-layout"><div class="brand footer-brand"><img src="/favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div><p>Reproducible task evidence for a free bring-your-own-model coding workbench.</p><div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a href="/product/">Product</a><a href="/docs/">Docs</a><a href="/enterprise/">Enterprise</a><a href="/download/">Download</a></div></div></footer>
+	</body>
+</html>

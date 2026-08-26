@@ -181,7 +181,7 @@ await writeJson(path.join(stagingRoot, 'sidecar', 'qarinah-runtime.json'), runti
 const artifactPath = path.join(artifactRoot, `fikeya-desktop-${sourcePackage.version}-${vsixTarget}.vsix`);
 await rm(artifactPath, { force: true });
 const vscePath = path.join(extensionRoot, 'node_modules', '@vscode', 'vsce', 'vsce');
-const packaged = spawnSync(process.execPath, [vscePath, 'package', '--no-dependencies', '--target', vsixTarget, '--out', artifactPath], {
+const packaged = spawnSync(process.execPath, [vscePath, 'package', '--pre-release', '--no-dependencies', '--target', vsixTarget, '--out', artifactPath], {
 	cwd: stagingRoot,
 	env: { ...process.env, SOURCE_DATE_EPOCH: sourceDateEpoch },
 	encoding: 'utf8',

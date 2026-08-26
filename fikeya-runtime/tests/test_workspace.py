@@ -32,7 +32,7 @@ def test_initialize_is_idempotent_and_creates_private_local_state(
         "workspace_id_stable": True,
         "config_exists": True,
         "state_exists": True,
-        "ignore": "state.sqlite3\nstate.sqlite3-*\n*.tmp\n",
+        "ignore": "state.sqlite3\nstate.sqlite3-*\nmatched-efficiency.json\n*.tmp\n",
         "loaded": workspace.config.workspace_id,
     }
 

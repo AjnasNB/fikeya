@@ -34,6 +34,7 @@ from fikeya_agent_core import (
 )
 
 from .agent import AgentRunner, MemoryPreparation
+from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
 from .errors import ApprovalError, FikeyaError
 from .events import EventType
@@ -549,7 +550,7 @@ class WorkspaceExecutionBroker:
             min(120.0, self.maximum_process_timeout_seconds),
         )
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-            raise ValueError("timeoutSeconds must be numeric.")
+            raise TypeError("timeoutSeconds must be numeric.")
         if not 0.1 <= float(timeout) <= self.maximum_process_timeout_seconds:
             raise ValueError(
                 f"timeoutSeconds must be between 0.1 and {self.maximum_process_timeout_seconds:g}."
@@ -767,6 +768,7 @@ class CodingAgentRunner:
         progress_handler: ProgressHandler | None = None,
         memory_mode: str = "auto",
         context_max_characters: int = 12_000,
+        history: tuple[ConversationTurn, ...] = (),
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
@@ -776,6 +778,7 @@ class CodingAgentRunner:
                 "mode": "coding-agent",
                 "model": profile.model,
                 "provider": profile.name,
+                "priorConversationTurns": len(history),
             }
         )
         memory_runner = AgentRunner(
@@ -829,7 +832,11 @@ class CodingAgentRunner:
                     broker_timeout_seconds=min(600.0, timeout + 15.0),
                 ),
             )
-            orchestrator.start(prompt, evidence=evidence, session_id=session.session_id)
+            orchestrator.start(
+                build_conversation_prompt(history, prompt),
+                evidence=evidence,
+                session_id=session.session_id,
+            )
             await self._advance(
                 orchestrator,
                 session.session_id,
@@ -852,12 +859,14 @@ class CodingAgentRunner:
                     session.session_id, current.failure_code or current.stage.value
                 )
             return _result(current, memory, recording, broker)
-        except Exception:
+        except Exception as error:
             try:
                 if self.state.get_session(session.session_id).status == "active":
                     self.state.cancel_session(session.session_id, "coding loop failed")
-            except Exception:
-                pass
+            except Exception as cleanup_error:  # noqa: BLE001 - cleanup must not mask the failure.
+                error.add_note(
+                    f"Session cleanup also failed with {type(cleanup_error).__name__}."
+                )
             raise
 
     async def _advance(
@@ -1049,14 +1058,14 @@ def _required_string(
 def _optional_string(arguments: dict[str, object], name: str, *, default: str) -> str:
     value = arguments.get(name, default)
     if not isinstance(value, str):
-        raise ValueError(f"{name} must be a string.")
+        raise TypeError(f"{name} must be a string.")
     return value
 
 
 def _optional_integer(arguments: dict[str, object], name: str, *, default: int) -> int:
     value = arguments.get(name, default)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{name} must be an integer.")
+        raise TypeError(f"{name} must be an integer.")
     return value
 
 

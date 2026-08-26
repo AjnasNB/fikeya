@@ -16,6 +16,8 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Branded current Code OSS desktop: **partial** - a locally verified Windows beta candidate exists; signed cross-platform distributions are not released.
 - Desktop and extension surface split: **integrated beta candidate** - Desktop retains the full native editor, terminal, source-control, and review surfaces while the VS Code extension exposes one focused Fikeya workspace.
 - Python runtime and CLI: **integrated beta candidate** - initialization, diagnostics, providers, bounded model turns, the reviewed coding loop, cancellation, receipts, statistics, and tool-preset management are available.
+- Planning-only provider proposal: **integrated beta candidate** - `fikeya plan propose` sends a versioned stdin request, exposes no tools, accepts only an exact validated proposal envelope, and persists only a draft plus content-free provider/Qarinah receipt fields.
+- Durable plan lifecycle: **integrated beta candidate** - Desktop and CLI consume the same content-addressed plan record across create, show, review, exact step approval, run, resume, cancel, execution, and verification states.
 - Typed local protocol: **partial** - runtime, Desktop, and sidecar validate bounded local messages, but the public TypeScript schema is not yet the one live contract consumed by every component.
 - Provider profiles and secret references: **integrated beta candidate** - metadata remains separate from OS-keyring credential bytes.
 - Azure Entra ID profile and execution: **integrated beta candidate** - the focused runtime path and a scoped connectivity receipt exist.
@@ -25,6 +27,7 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Vertex AI compatible endpoint: **partial** - works with a short-lived bearer token; automatic ADC refresh is planned.
 - Canonical workspace boundary: **partial** - runtime process working directories and sidecar roots are bounded; a complete typed file/patch broker is not implemented.
 - One-use tool approvals: **integrated beta candidate** - Desktop and CLI receive exact file, search, edit, process, and test requests and bind each decision to the immutable request digest.
+- Plan review and tool authority separation: **integrated beta candidate** - reviewing a plan never grants execution; each selected step receives an independent exact single-use approval bound to its canonical call digest.
 - Cancellation: **integrated beta candidate** for provider and reviewed coding turns, with standalone interop cancellation tests.
 - Qarinah context, capture, and receipt adapter: **integrated beta candidate** - workspace initialization, bounded cited retrieval, content-free receipts, and completed-run capture are available.
 - Qarinah graph in Desktop: **integrated beta candidate** - bounded local graph inspection is available without sample-data fallback.

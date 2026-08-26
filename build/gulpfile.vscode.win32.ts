@@ -9,8 +9,8 @@ import { gulp } from './lib/gulp/facade.ts';
 import * as path from 'path';
 import rcedit from 'rcedit';
 import vfs from 'vinyl-fs';
-import pkg from '../package.json' with { type: 'json' };
 import product from '../product.json' with { type: 'json' };
+import fikeyaDistribution from '../fikeya-distribution.json' with { type: 'json' };
 import { getVersion } from './lib/getVersion.ts';
 import * as task from './lib/gulp/task.ts';
 import * as util from './lib/util.ts';
@@ -85,8 +85,8 @@ function buildWin32Setup(arch: string, target: string): task.CallbackTask {
 			NameLong: product.nameLong,
 			NameShort: product.nameShort,
 			DirName: product.win32DirName,
-			Version: pkg.version,
-			RawVersion: pkg.version.replace(/-\w+$/, ''),
+			Version: fikeyaDistribution.version,
+			RawVersion: fikeyaDistribution.desktopNumericVersion,
 			Commit: commit,
 			NameVersion: product.win32NameVersion + (target === 'user' ? ' (User)' : ''),
 			ExeBasename: product.nameShort,
@@ -114,12 +114,18 @@ function buildWin32Setup(arch: string, target: string): task.CallbackTask {
 		};
 
 		if (quality === 'stable' || quality === 'insider') {
-			definitions['AppxPackage'] = `${quality === 'stable' ? 'code' : 'code_insider'}_${arch}.appx`;
-			definitions['AppxPackageDll'] = `${quality === 'stable' ? 'code' : 'code_insider'}_explorer_command_${arch}.dll`;
-			definitions['AppxPackageName'] = `${product.win32AppUserModelId}`;
-			const ctxMenu = (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu;
-			if (ctxMenu && ctxMenu[arch]) {
-				definitions['FileExplorerContextMenuCLSID'] = ctxMenu[arch].clsid;
+			const appxPrefix = quality === 'stable' ? 'code' : 'code_insider';
+			const appxPackage = `${appxPrefix}_${arch}.appx`;
+			const appxPackageDll = `${appxPrefix}_explorer_command_${arch}.dll`;
+			const appxDirectory = path.join(sourcePath, 'appx');
+			if (fs.existsSync(path.join(appxDirectory, appxPackage)) && fs.existsSync(path.join(appxDirectory, appxPackageDll))) {
+				definitions['AppxPackage'] = appxPackage;
+				definitions['AppxPackageDll'] = appxPackageDll;
+				definitions['AppxPackageName'] = `${product.win32AppUserModelId}`;
+				const ctxMenu = (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu;
+				if (ctxMenu && ctxMenu[arch]) {
+					definitions['FileExplorerContextMenuCLSID'] = ctxMenu[arch].clsid;
+				}
 			}
 		}
 

@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/fikeya-components.yml'
       - 'bench/fikeya-efficiency/**'
+      - 'bench/fikeya-plan-proof/**'
       - 'build/filters.ts'
       - 'build/gulpfile.hygiene.ts'
       - 'extensions/fikeya-desktop/**'
@@ -24,6 +25,7 @@ on:
     paths:
       - '.github/workflows/fikeya-components.yml'
       - 'bench/fikeya-efficiency/**'
+      - 'bench/fikeya-plan-proof/**'
       - 'build/filters.ts'
       - 'build/gulpfile.hygiene.ts'
       - 'extensions/fikeya-desktop/**'
@@ -128,6 +130,24 @@ jobs:
       - run: npm test
       - run: npm run compare:fixtures
 
+  plan-proof:
+    name: Plan-to-proof fixture / Python 3.12 / Node 24
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: integrations/qarinah-sidecar/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the pinned Qarinah sidecar dependency
+        run: npm ci --prefix integrations/qarinah-sidecar --ignore-scripts
+      - name: Run the no-model plan-to-proof evaluation
+        run: python -m unittest bench/fikeya-plan-proof/test_run.py
+
   memory-sidecar:
     name: Qarinah sidecar / Node ${{ matrix.node }}
     runs-on: ubuntu-latest
@@ -209,6 +229,11 @@ jobs:
       - name: Install the runtime and its source agent core
         run: python -m pip install -e ../fikeya-agent-core -e ".[test,azure]"
       - run: python -m pytest
+      - name: Verify the installed console entry point
+        run: |
+          fikeya --version
+          fikeya --help
+          python ../scripts/fikeya/test_installed_coding.py
 
   agent-core:
     name: Agent core / Python ${{ matrix.python }}

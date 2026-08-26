@@ -8,10 +8,19 @@ import json
 import socket
 from pathlib import Path
 
+import pytest
 from fikeya_runtime.cli import main
 from fikeya_runtime.errors import SecretStoreUnavailable
 
 _ORIGINAL_SOCKET_CONNECT = socket.socket.connect
+
+
+def test_cli_reports_the_installed_version(capsys: object) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == "fikeya 0.1.0b2\n"
 
 
 class _ProtocolInput:
@@ -79,19 +88,62 @@ def test_cli_init_and_provider_listing_make_no_network_calls(
     statistics = json.loads(capsys.readouterr().out)
     assert statistics == {
         "breakdown": [],
-        "cachedInputTokens": 0,
+        "cachedInputTokens": None,
         "generatedAt": statistics["generatedAt"],
-        "inputTokens": 0,
+        "inputTokens": None,
         "lastActivity": None,
-        "measurement": "provider-reported-only",
+        "matchedComparison": None,
+        "measurement": "unavailable",
         "measuredProviderCalls": 0,
         "ok": True,
-        "outputTokens": 0,
+        "outputTokens": None,
         "providerCalls": 0,
         "qarinahContextReceipts": 0,
         "sessions": 0,
         "source": "local-runtime-sqlite",
     }
+
+
+def test_cli_stats_exposes_only_a_valid_matched_comparison(
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    report = {
+        "reportVersion": "1.0.0",
+        "status": "matched",
+        "pairCount": 2,
+        "matchedFields": ["task.promptSha256", "model.name"],
+        "baseline": {
+            "verifiedSolveRate": 1.0,
+            "billedTokens": {"totalBilled": 1_000},
+        },
+        "fikeya": {
+            "verifiedSolveRate": 1.0,
+            "billedTokens": {"totalBilled": 600},
+        },
+        "delta": {"billedTokens": -400},
+    }
+    report_path = workspace / ".fikeya" / "matched-efficiency.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    assert main(["stats", "--workspace", str(workspace), "--json"]) == 0
+    statistics = json.loads(capsys.readouterr().out)
+    comparison = statistics["matchedComparison"]
+    assert comparison["status"] == "matched"
+    assert comparison["pairCount"] == 2
+    assert comparison["baselineBilledTokens"] == 1_000
+    assert comparison["fikeyaBilledTokens"] == 600
+    assert comparison["billedTokenReductionPercent"] == 40.0
+    assert comparison["reportSha256"].startswith("sha256:")
+
+    report["status"] = "unmatched"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert main(["stats", "--workspace", str(workspace), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["matchedComparison"] is None
 
 
 def test_cli_agent_requires_stdin_and_explicit_network_opt_in(
@@ -153,6 +205,84 @@ def test_cli_agent_requires_stdin_and_explicit_network_opt_in(
                 "--provider",
                 "local",
                 "--prompt-stdin",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    denied = json.loads(capsys.readouterr().out)
+    assert "Model execution denied" in denied["error"]
+
+
+def test_cli_plan_proposal_requires_stdin_and_explicit_network_opt_in(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: object,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["--home", str(home), "init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "provider",
+                "configure",
+                "local",
+                "--kind",
+                "ollama",
+                "--model",
+                "qwen",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "plan",
+                "propose",
+                str(workspace),
+                "--provider",
+                "local",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    missing_stdin = json.loads(capsys.readouterr().out)
+    assert "--request-stdin" in missing_stdin["error"]
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        _ProtocolInput(
+            [
+                {
+                    "protocol": "fikeya.plan-request.v1",
+                    "prompt": "plan this request",
+                }
+            ]
+        ),
+    )
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "plan",
+                "propose",
+                str(workspace),
+                "--provider",
+                "local",
+                "--request-stdin",
                 "--json",
             ]
         )
@@ -235,6 +365,11 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
             pass
 
         async def run(self, **kwargs: object) -> FakeResult:
+            history = kwargs["history"]
+            assert [(turn.role, turn.content) for turn in history] == [
+                ("user", "Inspect the existing implementation."),
+                ("assistant", "The implementation uses bounded receipts."),
+            ]
             progress = kwargs["progress_handler"]
             approval = kwargs["approval_handler"]
             progress(
@@ -268,7 +403,20 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
         "sys.stdin",
         _ProtocolInput(
             [
-                {"type": "start", "prompt": "Inspect the project."},
+                {
+                    "type": "start",
+                    "prompt": "Inspect the project.",
+                    "history": [
+                        {
+                            "role": "user",
+                            "content": "Inspect the existing implementation.",
+                        },
+                        {
+                            "role": "assistant",
+                            "content": "The implementation uses bounded receipts.",
+                        },
+                    ],
+                },
                 {
                     "type": "approval",
                     "requestId": "approval_read",

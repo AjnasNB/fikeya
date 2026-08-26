@@ -16,8 +16,8 @@ import * as task from './lib/gulp/task.ts';
 import buildfile from './buildfile.ts';
 import * as optimize from './lib/optimize.ts';
 import { inlineMeta } from './lib/inlineMeta.ts';
-import packageJson from '../package.json' with { type: 'json' };
 import product from '../product.json' with { type: 'json' };
+import fikeyaDistribution from '../fikeya-distribution.json' with { type: 'json' };
 import * as crypto from 'crypto';
 import * as cp from 'child_process';
 import * as i18n from './lib/i18n.ts';
@@ -311,12 +311,8 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		const sources = es.merge(src, extensions)
 			.pipe(filter(sourceFilterPattern, { dot: true }));
 
-		let version = packageJson.version;
+		const version = fikeyaDistribution.version;
 		const quality = (product as { quality?: string }).quality;
-
-		if (quality && quality !== 'stable') {
-			version += '-' + quality;
-		}
 
 		const name = product.nameShort;
 		const packageJsonUpdates: Record<string, unknown> = { name, version };
@@ -370,7 +366,14 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		// TODO the API should be copied to `out` during compile, not here
 		const api = gulp.src('src/vscode-dts/vscode.d.ts').pipe(rename('out/vscode-dts/vscode.d.ts'));
 
-		const telemetry = gulp.src('.build/telemetry/**', { base: '.build/telemetry', dot: true });
+		// Release CI populates this directory with the extracted telemetry manifest.
+		// Local reproducible builds intentionally permit it to be absent instead of
+		// depending on an undocumented prior pipeline stage.
+		fs.mkdirSync('.build/telemetry', { recursive: true });
+		if (fs.readdirSync('.build/telemetry').length === 0) {
+			fs.writeFileSync('.build/telemetry/local-build.json', JSON.stringify({ generated: false, reason: 'Local build without a telemetry-extraction stage.' }) + '\n');
+		}
+		const telemetry = gulp.src('.build/telemetry/**', { base: '.build/telemetry', dot: true, allowEmpty: true });
 
 		const jsFilter = util.filter(data => !data.isDirectory() && /\.js$/.test(data.path));
 		const root = path.resolve(path.join(import.meta.dirname, '..'));
@@ -386,15 +389,15 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 			.pipe(filter(depFilterPattern))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, '.moduleignore')))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, `.moduleignore.${process.platform}`)));
+		const dependencyStreams = [cleanedDeps];
 		if (includeCopilot) {
 			ensureCopilotPlatformPackage(platform, arch);
+			dependencyStreams.push(gulp.src(getCopilotRuntimePrebuildFiles(platform, arch), { base: '.', dot: true, allowEmpty: true }));
 		}
-		const copilotRuntimePrebuilds = includeCopilot
-			? gulp.src(getCopilotRuntimePrebuildFiles(platform, arch), { base: '.', dot: true, allowEmpty: true })
-			: es.readArray([]);
 		ensureOSProxyResolverPlatformPackage(platform, arch);
 		const osProxyResolverPlatformPackage = gulp.src(getOSProxyResolverPlatformFiles(platform, arch), { base: '.', dot: true, allowEmpty: true });
-		const deps = es.merge(cleanedDeps, copilotRuntimePrebuilds, osProxyResolverPlatformPackage)
+		dependencyStreams.push(osProxyResolverPlatformPackage);
+		const deps = es.merge(...dependencyStreams)
 			.pipe(filter(getCopilotExcludeFilter(platform, arch)))
 			.pipe(filter(getCopilotTgrepExcludeFilter(platform, arch)))
 			.pipe(filter(getRipgrepExcludeFilter(platform, arch)))
@@ -657,9 +660,8 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 			glob('**/tgrep.exe', { cwd }),
 			glob('**/*explorer_command*.dll', { cwd }),
 		])).flatMap(o => o);
-		const packageJson = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'package.json'), 'utf8'));
 		const product = JSON.parse(await fs.promises.readFile(path.join(cwd, versionedResourcesFolder, 'resources', 'app', 'product.json'), 'utf8'));
-		const baseVersion = packageJson.version.replace(/-.*$/, '');
+		const baseVersion = fikeyaDistribution.desktopNumericVersion;
 
 		const patchPromises = deps.map<Promise<unknown>>(async dep => {
 			const basename = path.basename(dep);
@@ -681,17 +683,47 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
 				'version-string': {
 					'CompanyName': 'Microsoft Corporation',
 					'FileDescription': product.nameLong,
-					'FileVersion': packageJson.version,
+					'FileVersion': fikeyaDistribution.version,
 					'InternalName': basename,
 					'LegalCopyright': 'Copyright (C) 2026 Microsoft. All rights reserved',
 					'OriginalFilename': basename,
 					'ProductName': product.nameLong,
-					'ProductVersion': packageJson.version,
+					'ProductVersion': fikeyaDistribution.version,
 				}
 			});
 		});
 
 		await Promise.all(patchPromises);
+	};
+}
+
+function patchWin32ProductExecutableTask(destinationFolderName: string) {
+	const cwd = path.join(path.dirname(root), destinationFolderName);
+
+	return async () => {
+		const executablePath = path.join(cwd, `${product.nameShort}.exe`);
+		const numericVersion = fikeyaDistribution.desktopNumericVersion;
+
+		await stripAuthenticodeSignature(executablePath);
+		// rcedit overwrites the public ProductVersion string when numeric and
+		// display values are supplied together. Patch the numeric PE resources
+		// first, then restore the human-facing prerelease string separately.
+		await rcedit(executablePath, {
+			'file-version': numericVersion,
+			'product-version': numericVersion,
+		});
+		await rcedit(executablePath, {
+			'version-string': {
+				'CompanyName': 'Ajnas N B',
+				'FileDescription': product.nameLong,
+				'FileVersion': numericVersion,
+				'InternalName': `${product.nameShort}.exe`,
+				'LegalCopyright': 'Copyright (C) 2026 Ajnas N B and Fikeya contributors',
+				'OriginalFilename': `${product.nameShort}.exe`,
+				'ProductName': product.nameLong,
+				'ProductVersion': fikeyaDistribution.version,
+			}
+		});
 	};
 }
 
@@ -741,6 +773,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 		];
 
 		if (platform === 'win32') {
+			packageTasks.push(patchWin32ProductExecutableTask(destinationFolderName));
 			packageTasks.push(patchWin32DependenciesTask(destinationFolderName));
 		}
 
