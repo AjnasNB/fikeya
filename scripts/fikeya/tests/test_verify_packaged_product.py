@@ -10,6 +10,7 @@ from pathlib import Path
 from scripts.fikeya.verify_packaged_product import (
     verify_built_in_ai_extensions,
     verify_packaged_product,
+    verify_runtime_version_identity,
     verify_windows_executable_metadata,
 )
 
@@ -35,6 +36,67 @@ class PackagedProductVerificationTests(unittest.TestCase):
             product_path.parent.mkdir(parents=True)
             product_path.write_text(json.dumps({"builtInAiExtensions": []}), encoding="utf-8")
             verify_packaged_product(product_path)
+
+    def test_accepts_separate_runtime_and_distribution_versions(self) -> None:
+        verify_runtime_version_identity(
+            {
+                "version": "1.136.0",
+                "distributionVersion": "0.1.0-beta.2",
+            },
+            {
+                "version": "1.136.0",
+                "distributionVersion": "0.1.0-beta.2",
+            },
+            runtime_version="1.136.0",
+            public_version="0.1.0-beta.2",
+        )
+
+    def test_rejects_public_version_as_extension_api_version(self) -> None:
+        with self.assertRaisesRegex(ValueError, "extension API compatibility"):
+            verify_runtime_version_identity(
+                {
+                    "version": "0.1.0-beta.2",
+                    "distributionVersion": "0.1.0-beta.2",
+                },
+                {
+                    "version": "0.1.0-beta.2",
+                    "distributionVersion": "0.1.0-beta.2",
+                },
+                runtime_version="1.136.0",
+                public_version="0.1.0-beta.2",
+            )
+
+    def test_verifies_packaged_product_and_package_together(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app_path = Path(temporary_directory) / "resources" / "app"
+            app_path.mkdir(parents=True)
+            product_path = app_path / "product.json"
+            package_path = app_path / "package.json"
+            product_path.write_text(
+                json.dumps(
+                    {
+                        "builtInAiExtensions": [],
+                        "version": "1.136.0",
+                        "distributionVersion": "0.1.0-beta.2",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            package_path.write_text(
+                json.dumps(
+                    {
+                        "version": "1.136.0",
+                        "distributionVersion": "0.1.0-beta.2",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            verify_packaged_product(
+                product_path,
+                package_path=package_path,
+                runtime_version="1.136.0",
+                public_version="0.1.0-beta.2",
+            )
 
     def test_accepts_the_exact_windows_executable_identity(self) -> None:
         verify_windows_executable_metadata(

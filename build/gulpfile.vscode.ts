@@ -45,6 +45,9 @@ const rcedit = promisify(rceditCallback);
 const root = path.dirname(import.meta.dirname);
 const commit = getVersion(root);
 const includeCopilot = product.builtInAiExtensions.length > 0;
+const packageConfiguration = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as {
+	readonly version: string;
+};
 const packageLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8')) as {
 	readonly packages?: Readonly<Record<string, { readonly version?: string }>>;
 };
@@ -311,11 +314,19 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		const sources = es.merge(src, extensions)
 			.pipe(filter(sourceFilterPattern, { dot: true }));
 
-		const version = fikeyaDistribution.version;
+		// Extension compatibility is evaluated against product.version and the
+		// packaged package.json version. Keep those on the Code OSS API version;
+		// Fikeya's independently released product version is stamped separately.
+		const runtimeCompatibilityVersion = packageConfiguration.version;
+		const distributionVersion = fikeyaDistribution.version;
 		const quality = (product as { quality?: string }).quality;
 
 		const name = product.nameShort;
-		const packageJsonUpdates: Record<string, unknown> = { name, version };
+		const packageJsonUpdates: Record<string, unknown> = {
+			name,
+			version: runtimeCompatibilityVersion,
+			distributionVersion
+		};
 
 		if (platform === 'linux') {
 			packageJsonUpdates.desktopName = `${product.applicationName}.desktop`;
@@ -335,7 +346,8 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				json.commit = commit;
 				json.date = readISODate(out);
 				json.checksums = checksums;
-				json.version = version;
+				json.version = runtimeCompatibilityVersion;
+				json.distributionVersion = distributionVersion;
 				json.copilotVersions = {
 					runtime: getLockedPackageVersion('@github/copilot'),
 					sdk: getLockedPackageVersion('@github/copilot-sdk'),
