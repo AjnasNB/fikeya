@@ -74,7 +74,7 @@ Fikeya CLI $releaseVersion
 3. Install the Agent Core wheel, then the Runtime wheel:
 
    python -m pip install fikeya_agent_core-$agentCoreVersion-py3-none-any.whl
-   python -m pip install fikeya_runtime-$runtimeVersion-py3-none-any.whl
+   python -m pip install "fikeya-runtime[azure] @ file:./fikeya_runtime-$runtimeVersion-py3-none-any.whl"
    python -m pip install fikeya_interop-$interopVersion-py3-none-any.whl
 
 4. Verify the installation:
