@@ -475,8 +475,7 @@ const scenario: Scenario = {
 					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
 					const provider = document.querySelector('[data-agent-form] [name="providerName"]');
 					const contextBudget = document.querySelector('[data-agent-form] [name="contextMaxCharacters"]');
-					const consent = document.querySelector('[data-network-consent]');
-					if (!form || !prompt || !provider || !contextBudget || !consent) return false;
+					if (!form || !prompt || !provider || !contextBudget) return false;
 					provider.value = ${JSON.stringify(providerName)};
 					provider.dispatchEvent(new Event('change', { bubbles: true }));
 					// The control has min=512 and step=256. Use a value on that exact
@@ -485,10 +484,12 @@ const scenario: Scenario = {
 					contextBudget.dispatchEvent(new Event('input', { bubbles: true }));
 					prompt.value = 'Inspect this proof workspace and explain what the bounded project evidence verifies.';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
-					consent.checked = true;
-					consent.dispatchEvent(new Event('change', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
+					const confirmation = document.querySelector('[data-network-confirmation]');
+					const sendOnce = document.querySelector('[data-network-confirm]');
+					if (!confirmation || confirmation.hidden || !sendOnce) return false;
+					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -576,7 +577,7 @@ const scenario: Scenario = {
 					const openPlan = document.querySelector('[data-open-plan]');
 					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
 					const send = document.querySelector('[data-agent-run]');
-					const createPlan = document.querySelector('[data-agent-plan]');
+					const moreOptions = document.querySelector('.run-controls > summary');
 					const value = {
 						viewportWidth: window.innerWidth,
 						documentWidth: document.documentElement.scrollWidth,
@@ -586,7 +587,7 @@ const scenario: Scenario = {
 						openPlanVisible: visible(openPlan),
 						promptVisible: visible(prompt),
 						sendVisible: visible(send),
-						createPlanVisible: visible(createPlan)
+						moreOptionsVisible: visible(moreOptions)
 					};
 					return value.viewportWidth >= 340 && value.viewportWidth <= 420
 						&& value.documentWidth <= value.viewportWidth + 1
@@ -610,7 +611,18 @@ const scenario: Scenario = {
 				if (!planOpened) {
 					throw new Error('Open Plan did not expose the draft review control at the narrow panel width.');
 				}
-				return `At ${narrow.viewportWidth}px, Chat, Plan, Open Plan, the composer, Send, and Create plan remained usable with no horizontal document overflow.`;
+				const optionsReachable = await evaluateFikeya<boolean>(code, `(() => {
+					const options = document.querySelector('.run-controls');
+					if (!options) return false;
+					options.open = true;
+					const createPlan = document.querySelector('[data-agent-plan]');
+					const rect = createPlan?.getBoundingClientRect();
+					return Boolean(rect && rect.width > 0 && rect.right <= window.innerWidth + 1);
+				})()`);
+				if (!optionsReachable) {
+					throw new Error('More chat options did not expose Create plan at the narrow panel width.');
+				}
+				return `At ${narrow.viewportWidth}px, Chat, Plan, Open Plan, the composer, Send, and the compact More options menu remained usable with no horizontal document overflow.`;
 			}
 		},
 		{

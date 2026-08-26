@@ -45,6 +45,7 @@ describe('Fikeya webview message validation', () => {
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.mode.research' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.usage' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.setup' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.files.openFolder' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.terminal.sendSequence' }),
 			parseWebviewMessage({ type: 'selectMode', mode: 'review' }),
 			parseWebviewMessage({ type: 'switchLayout', layout: 'agentFocus' })
@@ -54,6 +55,7 @@ describe('Fikeya webview message validation', () => {
 			{ type: 'openCommand', command: 'fikeya.mode.research' },
 			{ type: 'openCommand', command: 'fikeya.view.usage' },
 			{ type: 'openCommand', command: 'fikeya.view.setup' },
+			{ type: 'openCommand', command: 'workbench.action.files.openFolder' },
 			undefined,
 			undefined,
 			undefined

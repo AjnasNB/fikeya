@@ -41,7 +41,8 @@ export type FikeyaCommand =
 	| 'fikeya.mode.research'
 	| 'fikeya.mode.lab'
 	| 'fikeya.view.usage'
-	| 'fikeya.view.setup';
+	| 'fikeya.view.setup'
+	| 'workbench.action.files.openFolder';
 
 const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.configureProvider',
@@ -54,7 +55,8 @@ const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.mode.research',
 	'fikeya.mode.lab',
 	'fikeya.view.usage',
-	'fikeya.view.setup'
+	'fikeya.view.setup',
+	'workbench.action.files.openFolder'
 ];
 
 const maximumPromptBytes = 262_144;

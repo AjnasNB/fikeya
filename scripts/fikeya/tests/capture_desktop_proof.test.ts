@@ -187,6 +187,9 @@ test('Electron Chat proof validates a real 360px-class responsive panel', async 
 	assert.match(scenario, /\[data-agent-form\] \[name="prompt"\]/u);
 	assert.match(scenario, /\[data-agent-run\]/u);
 	assert.match(scenario, /\[data-agent-plan\]/u);
+	assert.match(scenario, /\[data-network-confirmation\]/u);
+	assert.match(scenario, /\[data-network-confirm\]/u);
+	assert.match(scenario, /\.run-controls > summary/u);
 	assert.match(scenario, /minimumPanelWidth = 340/u);
 	assert.match(scenario, /maximumPanelWidth = 420/u);
 });
