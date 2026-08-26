@@ -20,7 +20,8 @@ describe('safe chat Markdown', () => {
 
 	test('escapes raw HTML and does not emit unsafe links', () => {
 		const html = renderSafeMarkdown('<script>alert(1)</script> [bad](javascript:alert(1)) [file](src/index.ts)', labels);
-		assert.doesNotMatch(html, /<script>/);
+		assert.strictEqual(html.includes('<script'), false);
+		assert.strictEqual(html.includes('<SCRIPT'), false);
 		assert.doesNotMatch(html, /javascript:/);
 		assert.match(html, /data-open-file="src\/index\.ts"/);
 	});

@@ -102,10 +102,26 @@ async function writeProtocolFixture(
 	records: readonly Readonly<Record<string, unknown>>[]
 ): Promise<void> {
 	const output = records.map(record => `${JSON.stringify(record)}\n`).join('');
+	await writeFile(path.join(workspacePath, `${command}.stdout`), output, 'utf8');
 	const source = command === 'agent'
-		? `process.stdin.once('data', () => { process.stdin.pause(); process.stdout.end(${JSON.stringify(output)}, () => process.exit(0)); });\n`
-		: `process.stdout.end(${JSON.stringify(output)});\n`;
+		? "const fs = require('node:fs'); const output = fs.readFileSync(`${process.argv[1]}.stdout`, 'utf8'); process.stdin.once('data', () => { process.stdin.pause(); process.stdout.end(output, () => process.exit(0)); });\n"
+		: "const fs = require('node:fs'); const output = fs.readFileSync(`${process.argv[1]}.stdout`, 'utf8'); process.stdout.end(output);\n";
 	await writeFile(path.join(workspacePath, command), source, 'utf8');
+}
+
+async function writeCapturingProtocolFixture(
+	workspacePath: string,
+	command: 'agent' | 'plan',
+	output: string
+): Promise<string> {
+	const fixturePath = path.join(workspacePath, command);
+	const capturePath = `${fixturePath}.capture`;
+	await writeFile(`${fixturePath}.stdout`, output, 'utf8');
+	const source = command === 'agent'
+		? "const fs = require('node:fs'); const base = process.argv[1]; const output = fs.readFileSync(`${base}.stdout`, 'utf8'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; const newline = input.indexOf('\\n'); if (newline < 0) return; fs.writeFileSync(`${base}.capture`, input.slice(0, newline), 'utf8'); process.stdin.pause(); process.stdout.end(output, () => process.exit(0)); });\n"
+		: "const fs = require('node:fs'); const base = process.argv[1]; const output = fs.readFileSync(`${base}.stdout`, 'utf8'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => { fs.writeFileSync(`${base}.capture`, input, 'utf8'); process.stdout.end(output); });\n";
+	await writeFile(fixturePath, source, 'utf8');
+	return capturePath;
 }
 
 describe('Fikeya runtime protocol', () => {
@@ -266,26 +282,16 @@ describe('Fikeya runtime protocol', () => {
 				{ role: 'user', content: 'Inspect the current implementation.' },
 				{ role: 'assistant', content: 'I inspected the focused files.' }
 			] as const;
-			const agentCapturePath = path.join(workspacePath, 'agent-start.json');
 			const agentOutput = `${JSON.stringify(agentResultRecord())}\n`;
-			await writeFile(
-				path.join(workspacePath, 'agent'),
-				`const fs = require('node:fs'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; const newline = input.indexOf('\\n'); if (newline < 0) return; fs.writeFileSync(${JSON.stringify(agentCapturePath)}, input.slice(0, newline), 'utf8'); process.stdin.pause(); process.stdout.end(${JSON.stringify(agentOutput)}, () => process.exit(0)); });\n`,
-				'utf8'
-			);
+			const agentCapturePath = await writeCapturingProtocolFixture(workspacePath, 'agent', agentOutput);
 			const agentOperation = startFikeyaAgentRun(
 				'fixture-provider', 'Continue the work.', 256, 512, 'off', workspacePath,
 				async () => 'deny_once', history, protocolInvocation, process.env
 			);
 			const agentResult = await agentOperation.result;
 
-			const proposalCapturePath = path.join(workspacePath, 'proposal-request.json');
 			const proposalOutput = `${JSON.stringify(planProposalResultRecord())}\n`;
-			await writeFile(
-				path.join(workspacePath, 'plan'),
-				`const fs = require('node:fs'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => { fs.writeFileSync(${JSON.stringify(proposalCapturePath)}, input, 'utf8'); process.stdout.end(${JSON.stringify(proposalOutput)}); });\n`,
-				'utf8'
-			);
+			const proposalCapturePath = await writeCapturingProtocolFixture(workspacePath, 'plan', proposalOutput);
 			const proposalOperation = startFikeyaPlanProposal(
 				'fixture-provider', 'Create the next plan.', 256, 512, 'off', workspacePath,
 				history, protocolInvocation, process.env
