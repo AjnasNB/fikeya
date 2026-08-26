@@ -149,37 +149,17 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 async function runDesktopOnboarding(context: vscode.ExtensionContext, provider: FikeyaWebviewViewProvider): Promise<void> {
-	const onboardingKey = 'fikeya.desktop.onboarding.v1';
+	const onboardingKey = 'fikeya.desktop.onboarding.v2';
 	if (context.globalState.get<boolean>(onboardingKey)) {
 		return;
 	}
 	await vscode.workspace.getConfiguration('workbench').update('colorTheme', 'Fikeya Dark', vscode.ConfigurationTarget.Global);
-	const selection = await vscode.window.showQuickPick([
-		{
-			label: vscode.l10n.t('Agent workspace'),
-			description: vscode.l10n.t('Start with Fikeya Agent, providers, Qarinah memory, and local usage statistics.'),
-			mode: 'chat'
-		},
-		{
-			label: vscode.l10n.t('Code workspace'),
-			description: vscode.l10n.t('Start with the familiar editor, Explorer, source control, and terminal.'),
-			mode: 'editor'
-		}
-	], {
-		title: vscode.l10n.t('Choose your Fikeya workspace'),
-		placeHolder: vscode.l10n.t('You can switch modes later from the Command Palette.'),
-		ignoreFocusOut: true
-	});
-	if (!selection) {
-		return;
-	}
 	await context.globalState.update(onboardingKey, true);
-	if (selection.mode === 'chat') {
-		provider.openWorkspacePanel();
-		await provider.configureProvider();
-	} else {
-		await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
-	}
+	// Start in the non-modal Agent workspace. Its empty state explains the available
+	// surfaces and links to Setup when no provider exists, while Code remains one
+	// click away. A modal Quick Pick here can race the command that activated the
+	// extension and accidentally turn a workspace action into provider setup.
+	provider.openWorkspacePanel('chat');
 }
 
 class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -1306,7 +1286,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.native-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; justify-content: end; gap: 3px; }
 		button.quiet { min-height: 28px; border-color: var(--vscode-widget-border); color: var(--vscode-foreground); background: transparent; }
 		button.quiet:hover { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-		.active-surface, .surface-panel { display: grid; min-width: 0; max-width: 100%; gap: 10px; }
+		.active-surface, .surface-panel { display: grid; width: 100%; min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 		.surface-panel[hidden] { display: none; }
 		.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 		.sidebar-launch { border-top: 2px solid var(--vscode-focusBorder); }
@@ -1447,12 +1427,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.plan-lines { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 20px; }
 		.plan-lines li { padding-left: 3px; line-height: 1.45; }
 		.plan-boundary { margin-top: 10px; padding-left: 9px; border-left: 2px solid var(--vscode-focusBorder); }
-		.memory-graph { min-width: 0; }
+		.memory-graph { width: 100%; min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); overflow: hidden; }
 		.graph-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(105px, .4fr) minmax(120px, .48fr) auto; gap: 6px; }
+		.graph-controls > *, .graph-workspace > * { min-width: 0; max-width: 100%; }
+		.graph-controls input, .graph-controls select { min-width: 0; max-width: 100%; }
 		.graph-controls input { min-height: 30px; padding: 4px 7px; }
-		.graph-workspace { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(240px, 340px); gap: 8px; }
-		.graph-viewport { position: relative; min-width: 0; min-height: clamp(420px, 58vh, 680px); overflow: hidden; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
-		.graph-canvas { display: block; width: 100%; height: 100%; min-height: clamp(420px, 58vh, 680px); touch-action: none; user-select: none; }
+		.graph-workspace { display: grid; width: 100%; min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr) minmax(240px, 340px); gap: 8px; }
+		.graph-viewport { position: relative; width: 100%; min-width: 0; max-width: 100%; min-height: clamp(420px, 58vh, 680px); overflow: hidden; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
+		.graph-canvas { display: block; width: 100%; max-width: 100%; height: 100%; min-height: clamp(420px, 58vh, 680px); touch-action: none; user-select: none; }
 		.graph-hit { fill: transparent; cursor: grab; }
 		.graph-hit[data-panning="true"] { cursor: grabbing; }
 		.graph-edge { stroke: var(--vscode-editorWidget-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -1462,7 +1444,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.graph-halo { fill: var(--vscode-editor-background); stroke: var(--vscode-widget-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
 		.graph-dot { stroke: var(--vscode-editor-foreground); stroke-width: .6; vector-effect: non-scaling-stroke; }
 		.graph-label { fill: var(--vscode-editor-foreground); stroke: var(--vscode-editor-background); stroke-width: 3px; paint-order: stroke; font-family: var(--vscode-editor-font-family); font-size: 9px; pointer-events: none; }
-		.graph-details { display: grid; min-width: 0; max-height: clamp(420px, 58vh, 680px); align-content: start; gap: 8px; overflow: auto; padding: 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
+		.graph-details { display: grid; width: 100%; min-width: 0; max-width: 100%; max-height: clamp(420px, 58vh, 680px); align-content: start; gap: 8px; overflow: auto; padding: 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.graph-details h3 { margin: 0; font-size: 13px; }
 		.graph-details code { overflow-wrap: anywhere; }
 		.graph-legend { display: flex; flex-wrap: wrap; gap: 5px 10px; color: var(--vscode-descriptionForeground); font-size: 11px; }
@@ -1473,7 +1455,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.graph-legend i[data-type="file"] { background: var(--vscode-charts-blue); }
 		.graph-legend i[data-type="concept"] { background: var(--vscode-charts-purple); }
 		.graph-legend i[data-type="directory"] { background: var(--vscode-charts-yellow); }
-		.graph-summary { color: var(--vscode-descriptionForeground); font-size: 11px; }
+		.graph-summary, .graph-summary code { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+		.graph-summary { max-width: 100%; color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
 		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
 			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
