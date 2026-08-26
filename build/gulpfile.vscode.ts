@@ -366,7 +366,14 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		// TODO the API should be copied to `out` during compile, not here
 		const api = gulp.src('src/vscode-dts/vscode.d.ts').pipe(rename('out/vscode-dts/vscode.d.ts'));
 
-		const telemetry = gulp.src('.build/telemetry/**', { base: '.build/telemetry', dot: true });
+		// Release CI populates this directory with the extracted telemetry manifest.
+		// Local reproducible builds intentionally permit it to be absent instead of
+		// depending on an undocumented prior pipeline stage.
+		fs.mkdirSync('.build/telemetry', { recursive: true });
+		if (fs.readdirSync('.build/telemetry').length === 0) {
+			fs.writeFileSync('.build/telemetry/local-build.json', JSON.stringify({ generated: false, reason: 'Local build without a telemetry-extraction stage.' }) + '\n');
+		}
+		const telemetry = gulp.src('.build/telemetry/**', { base: '.build/telemetry', dot: true, allowEmpty: true });
 
 		const jsFilter = util.filter(data => !data.isDirectory() && /\.js$/.test(data.path));
 		const root = path.resolve(path.join(import.meta.dirname, '..'));
@@ -382,15 +389,15 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 			.pipe(filter(depFilterPattern))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, '.moduleignore')))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, `.moduleignore.${process.platform}`)));
+		const dependencyStreams = [cleanedDeps];
 		if (includeCopilot) {
 			ensureCopilotPlatformPackage(platform, arch);
+			dependencyStreams.push(gulp.src(getCopilotRuntimePrebuildFiles(platform, arch), { base: '.', dot: true, allowEmpty: true }));
 		}
-		const copilotRuntimePrebuilds = includeCopilot
-			? gulp.src(getCopilotRuntimePrebuildFiles(platform, arch), { base: '.', dot: true, allowEmpty: true })
-			: es.readArray([]);
 		ensureOSProxyResolverPlatformPackage(platform, arch);
 		const osProxyResolverPlatformPackage = gulp.src(getOSProxyResolverPlatformFiles(platform, arch), { base: '.', dot: true, allowEmpty: true });
-		const deps = es.merge(cleanedDeps, copilotRuntimePrebuilds, osProxyResolverPlatformPackage)
+		dependencyStreams.push(osProxyResolverPlatformPackage);
+		const deps = es.merge(...dependencyStreams)
 			.pipe(filter(getCopilotExcludeFilter(platform, arch)))
 			.pipe(filter(getCopilotTgrepExcludeFilter(platform, arch)))
 			.pipe(filter(getRipgrepExcludeFilter(platform, arch)))
