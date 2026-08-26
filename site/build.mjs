@@ -44,8 +44,10 @@ const pageDirectories = [
 	'docs',
 	'download',
 	'enterprise',
+	'privacy',
 	'product',
-	'proof'
+	'proof',
+	'signing'
 ];
 
 const dataDirectories = [

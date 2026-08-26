@@ -23,9 +23,11 @@ const requiredFiles = [
 	'index.html',
 	'product',
 	'proof',
+	'privacy',
 	'robots.txt',
 	'sitemap.xml',
 	'site.webmanifest',
+	'signing',
 	'styles.css',
 	'updates',
 	'worker.ts',
@@ -50,7 +52,9 @@ const pagePaths = [
 	'download/index.html',
 	'enterprise/index.html',
 	'product/index.html',
-	'proof/index.html'
+	'proof/index.html',
+	'privacy/index.html',
+	'signing/index.html'
 ];
 const pageDocuments = new Map(await Promise.all(pagePaths.map(async pagePath => [
 	pagePath,
@@ -185,7 +189,7 @@ assert(headers.includes('Permissions-Policy:'), 'Permissions Policy header is mi
 assert(manifest.name === 'Fikeya', 'Web manifest name is incorrect');
 assert(robots.includes('Sitemap: https://fikeya.com/sitemap.xml'), 'Robots sitemap declaration is missing');
 assert(sitemap.includes('<loc>https://fikeya.com/</loc>'), 'Canonical sitemap location is missing');
-for (const route of ['product', 'proof', 'docs', 'enterprise', 'download']) {
+for (const route of ['product', 'proof', 'docs', 'enterprise', 'download', 'privacy', 'signing']) {
 	assert(sitemap.includes(`<loc>https://fikeya.com/${route}/</loc>`), `Sitemap is missing /${route}/`);
 }
 assert(assetsIgnore.includes('.wrangler'), 'Wrangler local state is not excluded from static assets');
@@ -255,7 +259,12 @@ const allowedExternalLinks = new Set([
 	'https://fikeya.com/docs/',
 	'https://fikeya.com/enterprise/',
 	'https://fikeya.com/download/',
+	'https://fikeya.com/privacy/',
+	'https://fikeya.com/signing/',
+	'https://github.com/AjnasNB',
 	'https://github.com/AjnasNB/fikeya',
+	'https://github.com/AjnasNB/fikeya/security/policy',
+	'https://github.com/cognifyrdotco',
 	'https://github.com/AjnasNB/fikeya/tree/main/docs/fikeya/verification',
 	'https://github.com/sponsors/AjnasNB',
 	'https://github.com/AjnasNB/fikeya/releases/tag/v0.1.0-beta.1',

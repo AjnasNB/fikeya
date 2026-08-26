@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="Fikeya code-signing policy, release roles, build verification controls, current signature status, and SignPath Foundation application status.">
+		<meta name="robots" content="index, follow">
+		<meta name="theme-color" content="#0b0f0e">
+		<meta name="color-scheme" content="dark">
+		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
+		<title>Fikeya code-signing policy</title>
+		<link rel="canonical" href="https://fikeya.com/signing/">
+		<link rel="icon" href="/favicon.svg?v=20260825h" type="image/svg+xml">
+		<link rel="manifest" href="/site.webmanifest">
+		<link rel="stylesheet" href="/styles.css?v=20260826a">
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+		<header class="site-header"><div class="shell nav-shell"><a class="brand" href="/" aria-label="Fikeya home"><img src="/favicon.svg?v=20260825h" width="30" height="30" alt=""><span>Fikeya</span></a><nav aria-label="Primary navigation"><ul class="nav-links"><li><a href="/">Home</a></li><li><a href="/product/">Product</a></li><li><a href="/proof/">Proof</a></li><li><a href="/docs/">Docs</a></li><li><a href="/download/">Download</a></li></ul></nav><div class="nav-actions"><a class="nav-source" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">GitHub</a></div></div></header>
+		<main id="main">
+			<section class="page-hero docs-hero"><div class="shell docs-hero-layout"><div><p class="eyebrow">Release trust</p><h1>Sign the artifact that the protected build produced.</h1><p class="page-summary">Fikeya has applied for the SignPath Foundation open-source program. The current beta-1 Windows installer remains unsigned and can show an unknown-publisher warning.</p></div><nav class="docs-index" aria-label="Signing sections"><span>On this page</span><a href="#status">Status</a><a href="#roles">Roles</a><a href="#controls">Controls</a><a href="#removal">Updates and removal</a></nav></div></section>
+			<section class="section" id="status"><div class="shell docs-layout"><aside><span>01</span><strong>Status</strong></aside><div class="docs-content"><h2>No current artifact is claimed as SignPath-signed.</h2><p>The application is pending. If Fikeya is accepted, eligible release and download pages will carry the required attribution:</p><blockquote><p>Free code signing provided by SignPath.io, certificate by SignPath Foundation</p></blockquote><p>A release is described as signed only when its public verification manifest reports a valid signature and timestamp for the exact downloadable bytes.</p></div></div></section>
+			<section class="section" id="roles"><div class="shell docs-layout"><aside><span>02</span><strong>Roles</strong></aside><div class="docs-content"><h2>Source review and signing approval are separate.</h2><ul><li><strong>Authors</strong> propose changes through pull requests.</li><li><strong>Reviewers</strong> with repository write access review the exact source diff and required checks. The current independent reviewer is <a href="https://github.com/cognifyrdotco" rel="noopener noreferrer">cognifyrdotco</a>.</li><li><strong>Approver</strong> <a href="https://github.com/AjnasNB" rel="noopener noreferrer">Ajnas N B</a> manually approves the exact signing request only after source review and release verification pass.</li></ul></div></div></section>
+			<section class="section" id="controls"><div class="shell docs-layout"><aside><span>03</span><strong>Controls</strong></aside><div class="docs-content"><h2>Protected source, reproducible identity, manual release approval.</h2><ol class="docs-steps"><li><strong>Protected tag.</strong><p>The release tag resolves to reviewed source in <code>AjnasNB/fikeya</code>.</p></li><li><strong>Automated build.</strong><p>GitHub Actions builds the installer and packages from that revision.</p></li><li><strong>Exact signing request.</strong><p>The final artifact is submitted to the configured service. Fikeya signs only its own binaries.</p></li><li><strong>Manual approval.</strong><p>The approver checks the source revision, workflow, artifact identity, and review before signing.</p></li><li><strong>Verification.</strong><p>Signature, timestamp, digest, provenance, and manifest must agree before publishing.</p></li></ol><p>Signing credentials and certificate material are never stored in the repository.</p></div></div></section>
+			<section class="section" id="removal"><div class="shell docs-layout"><aside><span>04</span><strong>Updates</strong></aside><div class="docs-content"><h2>No silent unsigned update.</h2><p>The Desktop update feed remains disabled until Fikeya can verify a signed release manifest. Users can remove the VS Code extension through the host extension manager, uninstall Fikeya Desktop through the operating system, and delete local Fikeya/Qarinah state after exporting evidence they want to retain.</p><div class="hero-actions"><a class="button button-primary" href="/download/">Download and verify</a><a class="button button-text" href="/privacy/">Read the privacy policy</a></div></div></div></section>
+		</main>
+		<footer class="site-footer"><div class="shell footer-layout"><div class="brand footer-brand"><img src="/favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div><p>Explicit signing state, protected builds, and verifiable release artifacts.</p><div><a href="/privacy/">Privacy</a><a href="/docs/">Docs</a><a href="/download/">Download</a><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a></div></div></footer>
+	</body>
+</html>
