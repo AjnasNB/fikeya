@@ -192,8 +192,11 @@ jobs:
             }
           }
           $mode = if ($hasPfx) { 'pfx' } elseif ($hasAzure) { 'azure' } else { 'none' }
-          if ($mode -ne 'none' -and [string]::IsNullOrWhiteSpace($env:FIKEYA_EXPECTED_SIGNER_SUBJECT)) {
-            throw 'FIKEYA_EXPECTED_SIGNER_SUBJECT is required for signed releases.'
+          if ($mode -eq 'none') {
+            throw 'Tagged releases require protected PFX signing or Azure Artifact Signing. Unsigned installers may be built for local verification but cannot be published.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:FIKEYA_EXPECTED_SIGNER_SUBJECT)) {
+            throw 'FIKEYA_EXPECTED_SIGNER_SUBJECT is required for tagged releases.'
           }
           "mode=$mode" >> $env:GITHUB_OUTPUT
       - name: Sign installer with protected PFX
@@ -246,10 +249,6 @@ jobs:
           if ($installers.Count -eq 0) { throw 'No Windows installer was downloaded.' }
           foreach ($installer in $installers) {
             $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
-            if ($env:FIKEYA_SIGNING_MODE -eq 'none') {
-              if ($signature.Status -ne 'NotSigned') { throw "Expected an unsigned beta; $($installer.Name) is $($signature.Status)." }
-              continue
-            }
             if ($signature.Status -ne 'Valid') { throw "$($installer.Name) signature is $($signature.Status)." }
             if ($signature.SignerCertificate.Subject -cne $env:FIKEYA_EXPECTED_SIGNER_SUBJECT) { throw 'Installer signer subject does not match the protected release configuration.' }
             if (-not [string]::IsNullOrWhiteSpace($env:FIKEYA_EXPECTED_SIGNER_THUMBPRINT) -and $signature.SignerCertificate.Thumbprint -cne $env:FIKEYA_EXPECTED_SIGNER_THUMBPRINT) { throw 'Installer signer thumbprint does not match the protected release configuration.' }
