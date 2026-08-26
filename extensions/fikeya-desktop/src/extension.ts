@@ -1339,12 +1339,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const initialSurface = this.state.activeMode === 'plan' || this.state.activeMode === 'context' || this.state.activeMode === 'usage' || this.state.activeMode === 'setup'
 			? this.state.activeMode
 			: 'chat';
-		const desktopNavigation = `<div class="workspace-navigation"><nav class="mode-switcher" role="tablist" aria-label="${escapeHtml(strings.workspaceModes)}">
-			<button id="surface-tab-chat" role="tab" aria-controls="surface-panel-chat" aria-selected="${initialSurface === 'chat'}" tabindex="${initialSurface === 'chat' ? '0' : '-1'}" data-surface-tab="chat" data-surface-target="chat" type="button">${escapeHtml(vscode.l10n.t('Chat'))}</button>
-			<button id="surface-tab-plan" role="tab" aria-controls="surface-panel-plan" aria-selected="${initialSurface === 'plan'}" tabindex="${initialSurface === 'plan' ? '0' : '-1'}" data-surface-tab="plan" data-surface-target="plan" type="button">${escapeHtml(vscode.l10n.t('Plan'))}</button>
-			<button id="surface-tab-context" role="tab" aria-controls="surface-panel-context" aria-selected="${initialSurface === 'context'}" tabindex="${initialSurface === 'context' ? '0' : '-1'}" data-surface-tab="context" data-surface-target="context" type="button">${escapeHtml(vscode.l10n.t('Context'))}</button>
-			<button id="surface-tab-usage" role="tab" aria-controls="surface-panel-usage" aria-selected="${initialSurface === 'usage'}" tabindex="${initialSurface === 'usage' ? '0' : '-1'}" data-surface-tab="usage" data-surface-target="usage" type="button">${escapeHtml(vscode.l10n.t('Usage'))}</button>
-		</nav><nav class="native-actions" aria-label="${escapeHtml(vscode.l10n.t('Workbench destinations'))}"><button class="quiet" data-command="fikeya.mode.research" type="button">${escapeHtml(vscode.l10n.t('Research'))}</button><button class="quiet" id="surface-action-setup" data-surface-target="setup" data-command="fikeya.view.setup" type="button">${escapeHtml(vscode.l10n.t('Setup'))}</button><button class="quiet" data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Code'))}</button><button class="quiet" data-command="fikeya.mode.terminal" type="button">${escapeHtml(strings.terminalMode)}</button><button class="quiet" data-command="fikeya.mode.review" type="button">${escapeHtml(strings.reviewMode)}</button></nav></div>`;
+			const desktopNavigation = `<div class="workspace-navigation">
+				<div class="workspace-current"><span class="status-dot" aria-hidden="true"></span><strong>${escapeHtml(initialSurface === 'chat' ? vscode.l10n.t('Chat') : initialSurface === 'plan' ? vscode.l10n.t('Plan') : initialSurface === 'context' ? vscode.l10n.t('Context') : initialSurface === 'usage' ? vscode.l10n.t('Usage') : vscode.l10n.t('Setup'))}</strong></div>
+				<details class="workspace-menu"><summary aria-label="${escapeHtml(vscode.l10n.t('Open Fikeya workspace menu'))}" title="${escapeHtml(vscode.l10n.t('Workspace menu'))}">${escapeHtml(vscode.l10n.t('Workspace'))} <span aria-hidden="true">⌄</span></summary><div class="workspace-menu-popover">
+					<nav class="mode-switcher" role="tablist" aria-label="${escapeHtml(strings.workspaceModes)}">
+						<button id="surface-tab-chat" role="tab" aria-controls="surface-panel-chat" aria-selected="${initialSurface === 'chat'}" tabindex="${initialSurface === 'chat' ? '0' : '-1'}" data-surface-tab="chat" data-surface-target="chat" type="button">${escapeHtml(vscode.l10n.t('Chat'))}</button>
+						<button id="surface-tab-plan" role="tab" aria-controls="surface-panel-plan" aria-selected="${initialSurface === 'plan'}" tabindex="${initialSurface === 'plan' ? '0' : '-1'}" data-surface-tab="plan" data-surface-target="plan" type="button">${escapeHtml(vscode.l10n.t('Plan'))}</button>
+						<button id="surface-tab-context" role="tab" aria-controls="surface-panel-context" aria-selected="${initialSurface === 'context'}" tabindex="${initialSurface === 'context' ? '0' : '-1'}" data-surface-tab="context" data-surface-target="context" type="button">${escapeHtml(vscode.l10n.t('Context graph'))}</button>
+						<button id="surface-tab-usage" role="tab" aria-controls="surface-panel-usage" aria-selected="${initialSurface === 'usage'}" tabindex="${initialSurface === 'usage' ? '0' : '-1'}" data-surface-tab="usage" data-surface-target="usage" type="button">${escapeHtml(vscode.l10n.t('Usage'))}</button>
+					</nav>
+					<nav class="native-actions" aria-label="${escapeHtml(vscode.l10n.t('Workbench destinations'))}"><button class="quiet" data-command="fikeya.mode.research" type="button">${escapeHtml(vscode.l10n.t('Research'))}</button><button class="quiet" id="surface-action-setup" data-surface-target="setup" data-command="fikeya.view.setup" type="button">${escapeHtml(vscode.l10n.t('Models and setup'))}</button><button class="quiet" data-command="workbench.action.files.openFolder" type="button">${escapeHtml(vscode.l10n.t('Open project folder'))}</button><button class="quiet" data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Code'))}</button><button class="quiet" data-command="fikeya.mode.terminal" type="button">${escapeHtml(strings.terminalMode)}</button><button class="quiet" data-command="fikeya.mode.review" type="button">${escapeHtml(strings.reviewMode)}</button></nav>
+				</div></details>
+			</div>`;
 		const setupCards = `<section class="grid two compact-grid">
 			<article class="card">
 				<div class="card-heading"><h2>${escapeHtml(strings.getStarted)}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
@@ -1371,17 +1377,17 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			<div class="sidebar-destinations"><button data-command="fikeya.mode.agent" type="button">${escapeHtml(vscode.l10n.t('Open Chat'))}</button><button data-command="fikeya.mode.lab" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Open Context Graph'))}</button><button data-command="fikeya.view.usage" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Open Usage'))}</button></div>
 			<dl class="receipt compact-receipt"><dt>${escapeHtml(strings.providerAndModel)}</dt><dd>${escapeHtml(providerSummary)}</dd><dt>${escapeHtml(strings.runtime)}</dt><dd>${escapeHtml(runtimeLabel(this.state.runtime, strings))}</dd><dt>${escapeHtml(strings.context)}</dt><dd>${escapeHtml(contextStatus)}</dd></dl>
 		</section>`;
-		const editorContent = `${desktopNavigation}
-		<section class="run-strip" aria-label="${escapeHtml(strings.runContext)}">
-			<div class="run-metric provider"><span>${escapeHtml(strings.providerAndModel)}</span><strong>${escapeHtml(providerSummary)}</strong></div>
+			const editorContent = `${desktopNavigation}
+			<details class="run-summary"><summary><span><strong>${escapeHtml(providerSummary)}</strong><small>${escapeHtml(runtimeLabel(this.state.runtime, strings))}</small></span><span>${escapeHtml(vscode.l10n.t('Run details'))}</span></summary><div class="run-summary-body"><section class="run-strip" aria-label="${escapeHtml(strings.runContext)}">
+				<div class="run-metric provider"><span>${escapeHtml(strings.providerAndModel)}</span><strong>${escapeHtml(providerSummary)}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.runtime)}</span><strong>${escapeHtml(runtimeLabel(this.state.runtime, strings))}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.inputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.inputTokens, strings.waitingForFirstRun))}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.cachedInputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.cachedInputTokens, strings.waitingForFirstRun))}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.outputTokens)}</span><strong>${escapeHtml(formatUsageValue(this.state.agent.usage?.outputTokens, strings.waitingForFirstRun))}</strong></div>
 			<div class="run-metric"><span>${escapeHtml(strings.context)}</span><strong>${escapeHtml(contextStatus)}</strong></div>
-		</section>
-		<p class="usage-basis">${escapeHtml(strings.usageSource)} ${escapeHtml(usageBasis)}. ${escapeHtml(strings.metricsDisclaimer)}</p>
-		${surfacePanels}`;
+			</section>
+			<p class="usage-basis">${escapeHtml(strings.usageSource)} ${escapeHtml(usageBasis)}. ${escapeHtml(strings.metricsDisclaimer)}</p></div></details>
+			${surfacePanels}`;
 
 		return `<!DOCTYPE html>
 <html lang="en">
@@ -1421,12 +1427,26 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.run-metric span { display: block; color: var(--vscode-descriptionForeground); font-size: 10px; }
 		.run-metric strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 12px; font-variant-numeric: tabular-nums; }
 		.usage-basis { color: var(--vscode-descriptionForeground); font-size: 10px; }
-		.workspace-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-		.mode-switcher { display: grid; min-width: min(100%, 480px); max-width: 100%; grid-template-columns: repeat(4, minmax(82px, 1fr)); overflow-x: auto; border: 1px solid var(--vscode-widget-border); background: var(--vscode-widget-border); gap: 1px; }
-		.mode-switcher button { min-width: 82px; border: 0; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background); font-size: 11px; }
-		.mode-switcher button:hover { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-		.mode-switcher button[aria-selected="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); }
-		.native-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; justify-content: end; gap: 3px; }
+			.workspace-navigation { position: relative; display: flex; align-items: center; justify-content: space-between; min-width: 0; min-height: 34px; padding: 0 2px; border-bottom: 1px solid var(--vscode-widget-border); }
+			.workspace-current { display: inline-flex; min-width: 0; align-items: center; gap: 7px; }
+			.status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--vscode-testing-iconPassed); }
+			.workspace-menu { position: relative; z-index: 20; }
+			.workspace-menu > summary { display: inline-flex; min-height: 28px; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid transparent; color: var(--vscode-descriptionForeground); cursor: pointer; list-style: none; user-select: none; }
+			.workspace-menu > summary::-webkit-details-marker { display: none; }
+			.workspace-menu > summary:hover, .workspace-menu[open] > summary { border-color: var(--vscode-widget-border); color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+			.workspace-menu-popover { position: absolute; top: calc(100% + 4px); right: 0; display: grid; width: min(280px, calc(100vw - 28px)); gap: 1px; padding: 4px; border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border)); background: var(--vscode-menu-background); box-shadow: 0 8px 24px var(--vscode-widget-shadow); }
+			.mode-switcher, .native-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
+			.mode-switcher { padding-bottom: 4px; border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-widget-border)); }
+			.mode-switcher button, .native-actions button { min-width: 0; justify-content: start; border: 0; color: var(--vscode-menu-foreground); background: transparent; font-size: 12px; text-align: left; }
+			.mode-switcher button:hover { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+			.mode-switcher button[aria-selected="true"] { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
+			.run-summary { min-width: 0; }
+			.run-summary > summary { display: flex; min-height: 34px; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 8px; border: 1px solid var(--vscode-widget-border); color: var(--vscode-descriptionForeground); cursor: pointer; list-style: none; }
+			.run-summary > summary::-webkit-details-marker { display: none; }
+			.run-summary > summary span:first-child { display: grid; min-width: 0; gap: 1px; }
+			.run-summary > summary strong { overflow: hidden; color: var(--vscode-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+			.run-summary > summary small { font-size: 10px; }
+			.run-summary-body { display: grid; gap: 7px; padding-top: 7px; }
 		button.quiet { min-height: 28px; border-color: var(--vscode-widget-border); color: var(--vscode-foreground); background: transparent; }
 		button.quiet:hover { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 		.active-surface, .surface-panel { display: grid; width: 100%; min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); gap: 10px; }
@@ -1507,24 +1527,32 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.message-actions { display: flex; justify-content: end; margin-top: 6px; }
 		.thinking-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-progressBar-background); animation: fikeya-pulse 1.2s ease-in-out infinite; }
 		@keyframes fikeya-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
-		.agent-form { display: grid; gap: 8px; padding: 0 14px; }
-		.agent-form .composer textarea { min-height: 88px; border-color: var(--vscode-focusBorder); }
-		.composer-bar { display: grid; grid-template-columns: minmax(180px, .8fr) auto auto; align-items: start; gap: 8px; }
-		.inline-field select { max-width: 340px; }
-		.run-controls { min-width: 0; }
-		.run-controls summary { min-height: 30px; padding: 6px 9px; border: 1px solid var(--vscode-widget-border); cursor: pointer; list-style: none; }
-		.run-controls summary::-webkit-details-marker { display: none; }
-		.run-controls[open] .control-grid { display: grid; }
-		.control-grid { display: none; width: min(100%, 640px); grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 5px; padding: 12px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-menu-background); }
-		.control-grid .field:first-child { grid-column: 1 / -1; }
-		.composer-actions { justify-content: end; }
+			.agent-form { position: sticky; bottom: 0; z-index: 10; display: grid; gap: 0; margin: 0 14px 14px; padding: 8px; border: 1px solid var(--vscode-focusBorder); background: var(--vscode-editor-background); box-shadow: 0 -6px 20px var(--vscode-widget-shadow); }
+			.agent-form .composer textarea { min-height: 78px; max-height: 260px; border: 0; background: transparent; resize: none; }
+			.composer-bar { display: flex; min-width: 0; align-items: center; gap: 6px; padding-top: 6px; border-top: 1px solid var(--vscode-widget-border); }
+			.inline-field { min-width: 0; max-width: min(42%, 360px); }
+			.inline-field select { max-width: 100%; border: 0; background: var(--vscode-dropdown-background); }
+			.run-controls { position: relative; min-width: 0; }
+			.run-controls summary { display: grid; width: 30px; min-height: 30px; place-items: center; padding: 0; border: 1px solid var(--vscode-widget-border); cursor: pointer; list-style: none; }
+			.run-controls summary::-webkit-details-marker { display: none; }
+			.run-controls[open] .control-grid { display: grid; }
+			.control-grid { position: absolute; right: 0; bottom: calc(100% + 5px); display: none; width: min(420px, calc(100vw - 44px)); grid-template-columns: 1fr 1fr; gap: 9px; padding: 12px; border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border)); background: var(--vscode-menu-background); box-shadow: 0 8px 24px var(--vscode-widget-shadow); }
+			.control-grid .field:first-child { grid-column: 1 / -1; }
+			.composer-actions { margin-left: auto; flex-wrap: nowrap; justify-content: end; }
+			.composer-actions button { min-width: 58px; }
+			.composer-icon { display: grid; width: 30px; min-width: 30px; min-height: 30px; place-items: center; padding: 0; border-color: transparent; }
+			.network-confirmation { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; padding: 7px 8px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
+			.network-confirmation[hidden] { display: none; }
+			.network-confirmation-copy { display: grid; min-width: 0; gap: 2px; }
+			.network-confirmation-copy span { color: var(--vscode-descriptionForeground); font-size: 10px; }
+			.network-confirmation .actions { flex-wrap: nowrap; }
 		.field { display: grid; gap: 4px; }
 		.field > span { color: var(--vscode-foreground); font-weight: 600; }
 		select, textarea, input[type="number"], input[type="search"] { width: 100%; border: 1px solid var(--vscode-input-border, transparent); border-radius: 0; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font: inherit; }
 		select, input[type="number"], input[type="search"] { min-height: 30px; padding: 4px 7px; }
 		textarea { min-height: 108px; resize: vertical; padding: 7px; line-height: 1.45; }
 		select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-		.composer-foot { display: flex; align-items: start; justify-content: space-between; gap: 10px; color: var(--vscode-descriptionForeground); font-size: 10px; }
+			.composer-foot { display: flex; align-items: start; justify-content: end; gap: 10px; margin-top: 5px; color: var(--vscode-descriptionForeground); font-size: 10px; }
 		.consent { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 7px; color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.4; }
 		.consent input { margin: 2px 0 0; }
 		.agent-status { margin: 0 14px; padding: 8px 9px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-textBlockQuote-background); }
@@ -1622,10 +1650,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
 			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 		@media (max-width: 900px) { .graph-workspace, .plan-workspace { grid-template-columns: 1fr; } .graph-details { max-height: none; } }
-		@media (max-width: 780px) { .workspace-navigation { align-items: stretch; flex-direction: column; } .mode-switcher { width: 100%; } .native-actions { justify-content: start; } }
-		@media (max-width: 720px) { .chat-plan-strip { grid-template-columns: minmax(0, 1fr) auto; } .chat-plan-copy { grid-column: 1 / -1; } .composer-bar { grid-template-columns: 1fr; } .inline-field select { max-width: none; } .control-grid { width: 100%; grid-template-columns: 1fr; } .control-grid .field:first-child { grid-column: auto; } .composer-actions { justify-content: start; } .composer-foot { flex-direction: column; } .plan-evidence { grid-template-columns: 1fr; } .plan-lifecycle { grid-template-columns: 1fr; } }
+			@media (max-width: 780px) { .workspace-menu-popover { position: fixed; top: 52px; right: 12px; } }
+			@media (max-width: 720px) { .chat-plan-strip { grid-template-columns: minmax(0, 1fr) auto; } .chat-plan-copy { grid-column: 1 / -1; } .composer-bar { flex-wrap: wrap; } .inline-field { max-width: calc(100% - 108px); flex: 1 1 190px; } .inline-field select { max-width: none; } .control-grid { width: min(420px, calc(100vw - 32px)); grid-template-columns: 1fr; } .control-grid .field:first-child { grid-column: auto; } .composer-foot { flex-direction: column; } .network-confirmation { align-items: stretch; flex-direction: column; } .network-confirmation .actions button { flex: 1; } .plan-evidence { grid-template-columns: 1fr; } .plan-lifecycle { grid-template-columns: 1fr; } }
 			@media (max-width: 520px) { .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } .statistics-status { grid-template-columns: 1fr; } }
-		@media (max-width: ${fikeyaNarrowPanelMaximumWidth}px) { body[data-surface="editor"] .shell { padding-inline: 8px; } .masthead { padding-inline: 9px; } .workspace-label { max-width: 42%; } .mode-switcher { min-width: 0; grid-template-columns: repeat(4, minmax(64px, 1fr)); } .mode-switcher button { min-width: 64px; padding-inline: 5px; } .native-actions button { flex: 1 1 auto; } .run-strip, .statistics-grid { grid-template-columns: 1fr; } .run-metric.provider { grid-column: auto; } .agent-heading, .plan-heading { align-items: stretch; flex-direction: column; } .agent-heading-actions { justify-content: space-between; } .chat-plan-strip { grid-template-columns: 1fr; margin-inline: 8px; } .chat-plan-copy { grid-column: auto; } .chat-plan-strip button { width: 100%; } .chat-thread { min-height: 260px; padding: 14px 10px; } .chat-message { max-width: 100%; } .message-meta { flex-wrap: wrap; } .message-meta time { margin-left: 0; } .agent-form { padding-inline: 8px; } .control-grid { max-width: 100%; padding: 8px; } .composer-actions { display: grid; grid-template-columns: 1fr; } .composer-actions button { width: 100%; } .agent-status, .run-details { margin-inline: 8px; } .receipt, .statistics-status dl { grid-template-columns: 1fr; } .table-scroll { overscroll-behavior-inline: contain; } .plan-step { grid-template-columns: 26px minmax(0, 1fr); } .plan-step-status { grid-column: 2; } .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } .graph-viewport, .graph-canvas { min-height: 340px; } .graph-details { padding: 8px; } }
+			@media (max-width: ${fikeyaNarrowPanelMaximumWidth}px) { body[data-surface="editor"] .shell { padding-inline: 8px; } .masthead { padding-inline: 9px; } .workspace-label { max-width: 42%; } .mode-switcher { min-width: 0; grid-template-columns: 1fr; } .mode-switcher button { min-width: 0; padding-inline: 8px; } .run-strip, .statistics-grid { grid-template-columns: 1fr; } .run-metric.provider { grid-column: auto; } .agent-heading, .plan-heading { align-items: stretch; flex-direction: column; } .agent-heading-actions { justify-content: space-between; } .chat-plan-strip { grid-template-columns: 1fr; margin-inline: 8px; } .chat-plan-copy { grid-column: auto; } .chat-plan-strip button { width: 100%; } .chat-thread { min-height: 260px; padding: 14px 10px; } .chat-message { max-width: 100%; } .message-meta { flex-wrap: wrap; } .message-meta time { margin-left: 0; } .agent-form { margin-inline: 8px; padding: 8px; } .control-grid { max-width: calc(100vw - 28px); padding: 8px; } .composer-actions { display: flex; } .composer-actions button { width: auto; } .agent-status, .run-details { margin-inline: 8px; } .receipt, .statistics-status dl { grid-template-columns: 1fr; } .table-scroll { overscroll-behavior-inline: contain; } .plan-step { grid-template-columns: 26px minmax(0, 1fr); } .plan-step-status { grid-column: 2; } .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } .graph-viewport, .graph-canvas { min-height: 340px; } .graph-details { padding: 8px; } }
 		@media (max-width: 280px) { .provider-card { grid-template-columns: 1fr; } }
 		@media (prefers-reduced-motion: reduce) { .chat-thread { scroll-behavior: auto; } .thinking-dot { animation: none; opacity: 1; } }
 	</style>
@@ -1661,10 +1689,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			const state = vscode.getState() || {};
 			vscode.setState({ ...state, surface: surfaceName, planId: activePlanId, planStep: state.planId === activePlanId ? state.planStep : undefined });
 		};
-		for (const target of surfaceTargets) target.addEventListener('click', () => {
-			activateSurface(target.dataset.surfaceTarget);
-			if (target.dataset.surfaceTab) vscode.postMessage({ type: 'selectSurface', surface: target.dataset.surfaceTab });
-		});
+			for (const target of surfaceTargets) target.addEventListener('click', () => {
+				activateSurface(target.dataset.surfaceTarget);
+				if (target.dataset.surfaceTab) vscode.postMessage({ type: 'selectSurface', surface: target.dataset.surfaceTab });
+				target.closest('details')?.removeAttribute('open');
+			});
 		document.querySelector('[data-open-plan]')?.addEventListener('click', () => {
 			activateSurface('plan', true);
 			vscode.postMessage({ type: 'selectSurface', surface: 'plan' });
@@ -1806,19 +1835,21 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const memoryModeField = agentForm?.querySelector('[name="memoryMode"]');
 		const contextBudgetField = agentForm?.querySelector('[name="contextMaxCharacters"]');
 		const outputBudgetField = agentForm?.querySelector('[name="maxOutputTokens"]');
+		const networkConfirmation = agentForm?.querySelector('[data-network-confirmation]');
+		const networkConfirmButton = agentForm?.querySelector('[data-network-confirm]');
+		const networkCancelButton = agentForm?.querySelector('[data-network-cancel]');
 		if (promptField && typeof persistedState.chatDraft === 'string') promptField.value = persistedState.chatDraft;
 		if (providerField && Array.from(providerField.options).some(option => option.value === persistedState.chatProvider)) providerField.value = persistedState.chatProvider;
 		if (memoryModeField && ['auto', 'off', 'required'].includes(persistedState.chatMemoryMode)) memoryModeField.value = persistedState.chatMemoryMode;
 		if (contextBudgetField && Number.isSafeInteger(persistedState.chatContextBudget)) contextBudgetField.value = String(persistedState.chatContextBudget);
 		if (outputBudgetField && Number.isSafeInteger(persistedState.chatOutputBudget)) outputBudgetField.value = String(persistedState.chatOutputBudget);
-		if (networkConsent && typeof persistedState.chatNetworkConsent === 'boolean') networkConsent.checked = persistedState.chatNetworkConsent;
+		if (networkConsent) networkConsent.checked = false;
 		const saveComposer = () => persistUiState({
 			chatDraft: promptField?.value || '',
 			chatProvider: providerField?.value || '',
 			chatMemoryMode: memoryModeField?.value || 'auto',
 			chatContextBudget: Number(contextBudgetField?.value),
-			chatOutputBudget: Number(outputBudgetField?.value),
-			chatNetworkConsent: Boolean(networkConsent?.checked)
+			chatOutputBudget: Number(outputBudgetField?.value)
 		});
 		for (const input of [promptField, providerField, memoryModeField, contextBudgetField, outputBudgetField, networkConsent]) {
 			input?.addEventListener(input === promptField ? 'input' : 'change', saveComposer);
@@ -1830,36 +1861,64 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			promptField.focus();
 		}));
 		if (agentForm && networkConsent && runButton) {
+			let pendingAgentAction = 'run';
 			const readAgentRequest = () => {
 				const providerName = agentForm.querySelector('[name="providerName"]')?.value;
 				const prompt = agentForm.querySelector('[name="prompt"]')?.value;
 				const maxOutputTokens = Number(agentForm.querySelector('[name="maxOutputTokens"]')?.value);
 				const contextMaxCharacters = Number(agentForm.querySelector('[name="contextMaxCharacters"]')?.value);
 				const memoryMode = agentForm.querySelector('[name="memoryMode"]')?.value;
-				if (!networkConsent.checked || !providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return undefined;
+				if (!providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return undefined;
 				return { providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true };
 			};
 			const setRunButtonsDisabled = disabled => {
 				runButton.disabled = disabled;
 				if (planButton) planButton.disabled = disabled;
 			};
-			const updateRunButtons = () => setRunButtonsDisabled(!networkConsent.checked);
-			networkConsent.addEventListener('change', updateRunButtons);
-			updateRunButtons();
+			const hideNetworkConfirmation = () => {
+				if (networkConfirmation) networkConfirmation.hidden = true;
+			};
+			const executeAgentAction = action => {
+				if (!providerField?.value) {
+					vscode.postMessage({ type: 'openCommand', command: 'fikeya.configureProvider' });
+					return;
+				}
+				const request = readAgentRequest();
+				if (!request) {
+					promptField?.focus();
+					return;
+				}
+				if (!networkConsent.checked) {
+					pendingAgentAction = action;
+					if (networkConfirmation) networkConfirmation.hidden = false;
+					networkConfirmButton?.focus();
+					return;
+				}
+				setRunButtonsDisabled(true);
+				hideNetworkConfirmation();
+				networkConsent.checked = false;
+				persistUiState({ chatDraft: '' });
+				vscode.postMessage({ type: action === 'plan' ? 'proposePlan' : 'runAgent', ...request });
+			};
 			agentForm.addEventListener('submit', event => {
 				event.preventDefault();
-				const request = readAgentRequest();
-				if (!request) return;
-				setRunButtonsDisabled(true);
-				persistUiState({ chatDraft: '', chatNetworkConsent: false });
-				vscode.postMessage({ type: 'runAgent', ...request });
+				executeAgentAction('run');
 			});
 			planButton?.addEventListener('click', () => {
-				const request = readAgentRequest();
-				if (!request) return;
-				setRunButtonsDisabled(true);
-				persistUiState({ chatDraft: '', chatNetworkConsent: false });
-				vscode.postMessage({ type: 'proposePlan', ...request });
+				executeAgentAction('plan');
+			});
+			networkConfirmButton?.addEventListener('click', () => {
+				networkConsent.checked = true;
+				executeAgentAction(pendingAgentAction);
+			});
+			networkCancelButton?.addEventListener('click', () => {
+				networkConsent.checked = false;
+				hideNetworkConfirmation();
+				promptField?.focus();
+			});
+			for (const input of [promptField, providerField]) input?.addEventListener(input === promptField ? 'input' : 'change', () => {
+				networkConsent.checked = false;
+				hideNetworkConfirmation();
 			});
 			promptField?.addEventListener('keydown', event => {
 				if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -2351,7 +2410,8 @@ function formatRunProgress(progress: FikeyaRunProgress): string {
 function renderAgentSurface(state: DashboardState, strings: WebviewStrings, researchMode: boolean, planOperationInProgress: boolean, canRestoreConversation: boolean): string {
 	const running = state.agent.status === 'running';
 	const interactionBlocked = isChatInteractionBlocked({ agentRunning: running, planRunning: planOperationInProgress, planCancellationInProgress: false });
-	const controlsDisabled = interactionBlocked || state.providers.length === 0;
+	const controlsDisabled = interactionBlocked;
+	const providerControlsDisabled = interactionBlocked || state.providers.length === 0;
 	const providerOptions = state.providers.length === 0
 		? `<option value="">${escapeHtml(strings.noProviders)}</option>`
 		: state.providers.map(provider => `<option value="${escapeHtml(provider.name)}"${state.agent.providerName === provider.name ? ' selected' : ''}>${escapeHtml(`${provider.name} | ${provider.model}`)}</option>`).join('');
@@ -2374,8 +2434,10 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, rese
 		<div class="chat-thread" data-chat-thread data-message-count="${state.conversation.length}" aria-live="polite">${conversation}${progress}</div>
 		<form class="agent-form" data-agent-form autocomplete="off">
 			<label class="field composer"><span class="sr-only">${escapeHtml(strings.prompt)}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(researchMode ? vscode.l10n.t('Research a technical question and ask for cited findings...') : vscode.l10n.t('Ask Fikeya to inspect, edit, run, or review this project...'))}"${controlsDisabled ? ' disabled' : ''} required></textarea></label>
-			<div class="composer-bar"><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${controlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label><details class="run-controls"><summary>${escapeHtml(vscode.l10n.t('Model and context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label></div></details><div class="actions composer-actions"><button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(researchMode ? vscode.l10n.t('Research') : vscode.l10n.t('Send'))}</button><button class="secondary" data-agent-plan type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Create plan'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div></div>
-			<div class="composer-foot"><label class="consent"><input data-network-consent type="checkbox"${controlsDisabled ? ' disabled' : ''}><span>${escapeHtml(vscode.l10n.t('Allow provider network for this turn'))}</span></label><span>${escapeHtml(vscode.l10n.t('Enter to send, Shift+Enter for a new line'))}</span></div>
+			<div class="composer-bar"><button class="quiet composer-icon" data-command="workbench.action.files.openFolder" type="button" aria-label="${escapeHtml(vscode.l10n.t('Open a project folder'))}" title="${escapeHtml(vscode.l10n.t('Open a project folder'))}"><span aria-hidden="true">＋</span></button><label class="field inline-field"><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(strings.provider)}"${providerControlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label><button class="quiet composer-icon" data-command="fikeya.configureProvider" type="button" aria-label="${escapeHtml(vscode.l10n.t('Configure models'))}" title="${escapeHtml(vscode.l10n.t('Configure models'))}"><span aria-hidden="true">⚙</span></button><details class="run-controls"><summary aria-label="${escapeHtml(vscode.l10n.t('More chat options'))}" title="${escapeHtml(vscode.l10n.t('More chat options'))}"><span aria-hidden="true">•••</span></summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label><button class="secondary" data-agent-plan type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Create a plan from this prompt'))}</button></div></details><div class="actions composer-actions"><button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(researchMode ? vscode.l10n.t('Research') : state.providers.length === 0 ? vscode.l10n.t('Configure') : vscode.l10n.t('Send'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div></div>
+			<div class="network-confirmation" data-network-confirmation hidden role="alertdialog" aria-label="${escapeHtml(vscode.l10n.t('Confirm provider access'))}"><div class="network-confirmation-copy"><strong>${escapeHtml(vscode.l10n.t('Send this prompt to the selected model?'))}</strong><span>${escapeHtml(vscode.l10n.t('Fikeya will use provider network access for this message only. Tool calls still require their own approval.'))}</span></div><div class="actions"><button data-network-confirm type="button">${escapeHtml(vscode.l10n.t('Send once'))}</button><button class="secondary" data-network-cancel type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button></div></div>
+			<input data-network-consent type="checkbox" hidden aria-hidden="true" tabindex="-1">
+			<div class="composer-foot"><span>${escapeHtml(vscode.l10n.t('Enter to send · Shift+Enter for a new line'))}</span></div>
 		</form>
 		<div class="agent-status" data-tone="${statusTone}" role="status">${escapeHtml(state.providers.length === 0 ? vscode.l10n.t('Add a model in Fikeya Settings to begin.') : planOperationInProgress ? vscode.l10n.t('Chat is paused while the current plan executes or cancels.') : agentStatusLabel(state.agent, strings))}</div>
 		${runDetails}
