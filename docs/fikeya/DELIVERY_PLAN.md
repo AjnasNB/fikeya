@@ -25,7 +25,7 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Hugging Face Inference Providers and Groq profiles: **integrated beta candidate** - both use the bounded OpenAI-compatible execution path with credentials stored by reference.
 - Quota-aware provider handoff: **integrated beta candidate** - Desktop classifies a provider `429`, offers another configured profile or an explicit persistent always-switch preference, and recompiles the same workspace-scoped Qarinah context before continuing. It does not silently switch by default.
 - Vertex AI compatible endpoint: **partial** - works with a short-lived bearer token; automatic ADC refresh is planned.
-- Canonical workspace boundary: **partial** - runtime process working directories and sidecar roots are bounded; a complete typed file/patch broker is not implemented.
+- Canonical workspace boundary: **integrated beta candidate** - file operations and process working directories are root-bounded, protected metadata checks are case-insensitive, direct writes use SHA-256 preconditions and atomic replacement, and approved process mutations receive a bounded before/after scan. Transactional multi-file staging and rollback remain planned.
 - One-use tool approvals: **integrated beta candidate** - Desktop and CLI receive exact file, search, edit, process, and test requests and bind each decision to the immutable request digest.
 - Plan review and tool authority separation: **integrated beta candidate** - reviewing a plan never grants execution; each selected step receives an independent exact single-use approval bound to its canonical call digest.
 - Cancellation: **integrated beta candidate** for provider and reviewed coding turns, with standalone interop cancellation tests.
@@ -40,7 +40,8 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 
 ## P1: Agent interoperability and repository intelligence
 
-- Native plan/act/observe/review core: **integrated beta candidate** - Desktop and CLI use the runtime adapter with approvals, root-bound tools, changed-file hashes, tests, cancellation, and execution receipts.
+- Native plan/act/observe/review core: **integrated beta candidate** - Desktop and CLI use the runtime adapter with approvals, root-bound tools, direct and process-derived changed-file hashes, tests, cancellation, and execution receipts.
+- Coordinated team run: **integrated beta candidate** - selected read-only planning, research, and review specialists run through a bounded parallel pool before one selected lead model verifies their findings and enters the normal approval-gated coding loop. Parallel writers and delegated worktree merges are not claimed.
 - Deep Agents and LangGraph integration: **planned** - the current native core does not require or bundle them.
 - ACP client boundary: **standalone implemented** - local stdio session start/resume/fork, negotiation, cancellation, permissions, and bounded callbacks exist; product wiring and a native ACP agent remain planned.
 - MCP client boundary: **standalone implemented** - discovery, allowlists, normalized calls, permission checks, limits, cancellation, and receipts exist; a product-level session manager, server, and registry remain planned.
@@ -60,7 +61,7 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Signed tool marketplace and permission manifests: **planned**.
 - Production sandbox backend: **planned**.
 - Remote workspace adapter: **planned**.
-- Multi-agent task graph and delegated worktrees: **planned**.
+- Multi-agent task graph and delegated worktrees: **partial** - the bounded specialist-to-lead flow ships; recursive delegation, parallel writers, worktree merges, and failure recovery remain planned.
 - Offline matched-receipt comparator: **standalone implemented** - it validates paired task conditions and computes solve rate, billed tokens, cost per verified task, and latency from completed receipts; it does not run agents or constitute product-performance evidence.
 - Evaluation runner across provider and model profiles: **planned**.
 - Cost and latency policy router: **planned**.

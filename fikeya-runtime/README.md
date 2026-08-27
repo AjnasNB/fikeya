@@ -71,7 +71,10 @@ printf '%s' "$MODEL_SECRET" | fikeya provider configure work \
 The metadata file stores only a `keyring://...` reference. The secret itself is
 written to the current user's operating system keyring. Supported profiles are
 Azure OpenAI, OpenAI API models, Anthropic, OpenRouter, NVIDIA NIM, Google
-Gemini, Ollama, and generic OpenAI-compatible endpoints. Codex-capable OpenAI
+Gemini, Hugging Face Inference Providers, Groq, Ollama, and generic
+OpenAI-compatible endpoints. The Desktop uses that compatible contract for
+named DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, Amazon Bedrock,
+Azure AI Foundry, Vertex AI, and local no-auth presets. Codex-capable OpenAI
 models work when they are available to the user's OpenAI API account. A
 ChatGPT, Codex, Claude, or Gemini consumer subscription is not an API
 credential. Vertex AI can use the compatible profile with its regional

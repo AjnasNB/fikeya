@@ -1,6 +1,6 @@
 # Fikeya 0.1.0-beta.3
 
-Fikeya 0.1.0-beta.3 is the current public-beta source candidate. It keeps Chat as the primary workspace in both the complete Desktop and focused VS Code extension while retaining the editor, terminal, review, plan, context graph, usage, and provider setup surfaces.
+Fikeya 0.1.0-beta.3 was the preceding public-beta source candidate. It kept Chat as the primary workspace in both the complete Desktop and focused VS Code extension while retaining the editor, terminal, review, plan, context graph, usage, and provider setup surfaces.
 
 ## What changed
 
