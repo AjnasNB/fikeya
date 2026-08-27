@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -25,6 +28,11 @@ from .util import sha256_bytes, stable_json
 
 MAX_REQUEST_BYTES = 1_048_576
 MAX_RESPONSE_BYTES = 4_194_304
+MAX_IMAGE_BYTES = 393_216
+MAX_TOTAL_IMAGE_BYTES = 524_288
+MAX_IMAGE_COUNT = 4
+_IMAGE_NAME = re.compile(r"^[^\\/\x00-\x1f\x7f]{1,160}$")
+_IMAGE_TYPES = frozenset({"image/gif", "image/jpeg", "image/png", "image/webp"})
 
 
 class CancellationToken:
@@ -52,13 +60,44 @@ class CancellationToken:
 
 
 @dataclass(frozen=True, slots=True)
+class InferenceImage:
+    """One bounded ephemeral image supplied to a vision-capable provider."""
+
+    name: str
+    media_type: str
+    base64_data: str
+    size_bytes: int
+
+    def __post_init__(self) -> None:
+        if not _IMAGE_NAME.fullmatch(self.name):
+            raise ConfigurationError("Image name is invalid or exceeds 160 characters.")
+        if self.media_type not in _IMAGE_TYPES:
+            raise ConfigurationError("Image type must be GIF, JPEG, PNG, or WebP.")
+        if not 1 <= self.size_bytes <= MAX_IMAGE_BYTES:
+            raise ConfigurationError(
+                f"Image bytes must be between 1 and {MAX_IMAGE_BYTES}."
+            )
+        try:
+            decoded = base64.b64decode(self.base64_data, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ConfigurationError("Image data must be canonical base64.") from error
+        if len(decoded) != self.size_bytes or base64.b64encode(decoded).decode("ascii") != self.base64_data:
+            raise ConfigurationError("Image size or base64 encoding is inconsistent.")
+
+    @property
+    def data_url(self) -> str:
+        return f"data:{self.media_type};base64,{self.base64_data}"
+
+
+@dataclass(frozen=True, slots=True)
 class InferenceRequest:
-    """One bounded text request; callers retain ownership of its content."""
+    """One bounded multimodal request; callers retain ownership of its content."""
 
     prompt: str
     system: str | None = None
     max_output_tokens: int = 1_024
     temperature: float | None = None
+    images: tuple[InferenceImage, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.prompt or len(self.prompt.encode("utf-8")) > MAX_REQUEST_BYTES:
@@ -76,6 +115,49 @@ class InferenceRequest:
             raise ConfigurationError("max_output_tokens must be between 1 and 32768.")
         if self.temperature is not None and not 0 <= self.temperature <= 2:
             raise ConfigurationError("temperature must be between 0 and 2.")
+        if len(self.images) > MAX_IMAGE_COUNT:
+            raise ConfigurationError(f"At most {MAX_IMAGE_COUNT} images are accepted.")
+        if sum(image.size_bytes for image in self.images) > MAX_TOTAL_IMAGE_BYTES:
+            raise ConfigurationError(
+                f"Combined image bytes cannot exceed {MAX_TOTAL_IMAGE_BYTES}."
+            )
+
+
+def parse_inference_images(value: object) -> tuple[InferenceImage, ...]:
+    """Strictly decode the private stdin image envelope."""
+
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(value) > MAX_IMAGE_COUNT:
+        raise ConfigurationError(f"Images must be a list of at most {MAX_IMAGE_COUNT} items.")
+    images: list[InferenceImage] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {
+            "base64Data",
+            "mimeType",
+            "name",
+            "sizeBytes",
+        }:
+            raise ConfigurationError("Each image must contain exact bounded image fields.")
+        name = item.get("name")
+        media_type = item.get("mimeType")
+        base64_data = item.get("base64Data")
+        size_bytes = item.get("sizeBytes")
+        if (
+            not isinstance(name, str)
+            or not isinstance(media_type, str)
+            or not isinstance(base64_data, str)
+            or isinstance(size_bytes, bool)
+            or not isinstance(size_bytes, int)
+        ):
+            raise ConfigurationError("Image fields have invalid types.")
+        images.append(InferenceImage(name, media_type, base64_data, size_bytes))
+    normalized = tuple(images)
+    if sum(image.size_bytes for image in normalized) > MAX_TOTAL_IMAGE_BYTES:
+        raise ConfigurationError(
+            f"Combined image bytes cannot exceed {MAX_TOTAL_IMAGE_BYTES}."
+        )
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,26 +405,65 @@ def _request_payload(
     request: InferenceRequest,
 ) -> dict[str, object]:
     if profile.kind == ProviderKind.ANTHROPIC and profile.api_mode == "native":
+        content: str | list[dict[str, object]] = request.prompt
+        if request.images:
+            content = [
+                {"type": "text", "text": request.prompt},
+                *[
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image.media_type,
+                            "data": image.base64_data,
+                        },
+                    }
+                    for image in request.images
+                ],
+            ]
         payload: dict[str, object] = {
             "max_tokens": request.max_output_tokens,
-            "messages": [{"content": request.prompt, "role": "user"}],
+            "messages": [{"content": content, "role": "user"}],
             "model": profile.model,
         }
         if request.system is not None:
             payload["system"] = request.system
     elif profile.api_mode == "responses":
+        input_value: str | list[dict[str, object]] = request.prompt
+        if request.images:
+            input_value = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": request.prompt},
+                        *[
+                            {"type": "input_image", "image_url": image.data_url}
+                            for image in request.images
+                        ],
+                    ],
+                }
+            ]
         payload: dict[str, object] = {
-            "input": request.prompt,
+            "input": input_value,
             "max_output_tokens": request.max_output_tokens,
             "model": profile.model,
         }
         if request.system is not None:
             payload["instructions"] = request.system
     else:
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, object]] = []
         if request.system is not None:
             messages.append({"content": request.system, "role": "system"})
-        messages.append({"content": request.prompt, "role": "user"})
+        user_content: str | list[dict[str, object]] = request.prompt
+        if request.images:
+            user_content = [
+                {"type": "text", "text": request.prompt},
+                *[
+                    {"type": "image_url", "image_url": {"url": image.data_url}}
+                    for image in request.images
+                ],
+            ]
+        messages.append({"content": user_content, "role": "user"})
         payload = {
             "max_tokens": request.max_output_tokens,
             "messages": messages,

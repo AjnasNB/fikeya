@@ -39,6 +39,7 @@ from .credentials import CredentialResolver
 from .errors import ApprovalError, FikeyaError
 from .events import EventType
 from .inference import (
+    InferenceImage,
     InferenceRequest,
     ProviderCallResult,
     ProviderExecutor,
@@ -769,6 +770,7 @@ class CodingAgentRunner:
         memory_mode: str = "auto",
         context_max_characters: int = 12_000,
         history: tuple[ConversationTurn, ...] = (),
+        images: tuple[InferenceImage, ...] = (),
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
@@ -811,6 +813,12 @@ class CodingAgentRunner:
                 lambda: self.credentials.resolve(profile),
                 allow_network=allow_network,
                 timeout_seconds=timeout,
+                request_factory=lambda provider_prompt, provider_system, maximum_tokens: InferenceRequest(
+                    prompt=provider_prompt,
+                    system=provider_system,
+                    max_output_tokens=maximum_tokens,
+                    images=images,
+                ),
             )
             broker = WorkspaceExecutionBroker(
                 self.workspace,

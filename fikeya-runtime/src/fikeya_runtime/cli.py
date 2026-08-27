@@ -30,7 +30,7 @@ from .errors import (
     ProviderHttpError,
     SecretStoreUnavailable,
 )
-from .inference import MAX_REQUEST_BYTES, CancellationToken
+from .inference import MAX_REQUEST_BYTES, CancellationToken, parse_inference_images
 from .planning import (
     PLAN_PROPOSAL_PROTOCOL,
     PLAN_REQUEST_PROTOCOL,
@@ -779,11 +779,13 @@ def _run_coding_agent(
         not in (
             {"prompt", "type"},
             {"history", "prompt", "type"},
+            {"images", "prompt", "type"},
+            {"history", "images", "prompt", "type"},
         )
         or start.get("type") != "start"
     ):
         raise ProviderError(
-            "The first protocol message must contain type=start, prompt, and optional history."
+            "The first protocol message must contain type=start, prompt, and optional history and images."
         )
     prompt = start.get("prompt")
     if (
@@ -793,6 +795,7 @@ def _run_coding_agent(
     ):
         raise ProviderError(f"Agent prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes.")
     history = parse_conversation_history(start.get("history", []))
+    images = parse_inference_images(start.get("images", []))
 
     try:
         from fikeya_agent_core import (
@@ -847,6 +850,7 @@ def _run_coding_agent(
                     memory_mode=args.memory,
                     context_max_characters=args.context_max_characters,
                     history=history,
+                    images=images,
                 )
             )
     except ProviderConnectivityError as error:
@@ -931,9 +935,11 @@ def _run_plan(args: argparse.Namespace) -> int:
         if set(request) not in (
             {"prompt", "protocol"},
             {"history", "prompt", "protocol"},
+            {"images", "prompt", "protocol"},
+            {"history", "images", "prompt", "protocol"},
         ):
             raise ProviderError(
-                "Plan requests must contain protocol, prompt, and optional history."
+                "Plan requests must contain protocol, prompt, and optional history and images."
             )
         if request.get("protocol") != PLAN_REQUEST_PROTOCOL:
             raise ProviderError(
@@ -949,6 +955,7 @@ def _run_plan(args: argparse.Namespace) -> int:
                 f"Plan prompt must be 1-{MAX_REQUEST_BYTES} UTF-8 bytes."
             )
         history = parse_conversation_history(request.get("history", []))
+        images = parse_inference_images(request.get("images", []))
         store = ProviderStore(runtime_home(args.home))
         agent = AgentRunner(workspace, store)
         if args.memory != "off":
@@ -969,6 +976,7 @@ def _run_plan(args: argparse.Namespace) -> int:
                     memory_mode=args.memory,
                     context_max_characters=args.context_max_characters,
                     history=history,
+                    images=images,
                 )
         except CancellationError:
             _emit(

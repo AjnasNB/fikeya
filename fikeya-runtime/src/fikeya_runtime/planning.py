@@ -12,7 +12,7 @@ from typing import cast
 from .agent import AgentRunner, AgentRunResult
 from .conversation import ConversationTurn
 from .errors import ConfigurationError, FikeyaError
-from .inference import CancellationToken
+from .inference import CancellationToken, InferenceImage
 from .plans import PlanRecord, PlanService
 
 PLAN_PROPOSAL_PROTOCOL = "fikeya.plan-proposal.v1"
@@ -136,6 +136,7 @@ class PlanProposalRunner:
         memory_mode: str = "auto",
         context_max_characters: int = 12_000,
         history: tuple[ConversationTurn, ...] = (),
+        images: tuple[InferenceImage, ...] = (),
     ) -> PlanProposalResult:
         """Persist a strict draft while keeping the prompt and raw response ephemeral."""
 
@@ -163,6 +164,7 @@ class PlanProposalRunner:
             trusted_system=planning_system_instructions(),
             output_handler=persist_valid_draft,
             history=history,
+            images=images,
         )
         if len(accepted) != 1:
             raise PlanProposalError("The planning response was not persisted.")

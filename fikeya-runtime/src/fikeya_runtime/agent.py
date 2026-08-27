@@ -16,6 +16,7 @@ from .errors import CancellationError
 from .events import EventType
 from .inference import (
     CancellationToken,
+    InferenceImage,
     InferenceRequest,
     ProviderCallResult,
     ProviderExecutor,
@@ -103,6 +104,7 @@ class AgentRunner:
         trusted_system: str | None = None,
         output_handler: Callable[[str], None] | None = None,
         history: tuple[ConversationTurn, ...] = (),
+        images: tuple[InferenceImage, ...] = (),
     ) -> AgentRunResult:
         """Execute one request with exact call hashes and provider-reported usage."""
 
@@ -139,6 +141,7 @@ class AgentRunner:
             prompt=build_conversation_prompt(history, prompt),
             system=system,
             max_output_tokens=max_output_tokens,
+            images=images,
         )
         fingerprint = provider_request_fingerprint(profile, request)
         requested = self.state.append_event(
