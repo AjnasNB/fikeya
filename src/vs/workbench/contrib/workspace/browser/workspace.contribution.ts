@@ -805,7 +805,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 			},
 			[WORKSPACE_TRUST_STARTUP_PROMPT]: {
 				type: 'string',
-				default: 'never',
+				default: 'once',
 				description: localize('workspace.trust.startupPrompt.description', "Controls when the startup prompt to trust a workspace is shown."),
 				tags: [WORKSPACE_TRUST_SETTING_TAG],
 				scope: ConfigurationScope.APPLICATION,
@@ -818,7 +818,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 			},
 			[WORKSPACE_TRUST_BANNER]: {
 				type: 'string',
-				default: 'untilDismissed',
+				default: 'never',
 				description: localize('workspace.trust.banner.description', "Controls when the restricted mode banner is shown."),
 				tags: [WORKSPACE_TRUST_SETTING_TAG],
 				scope: ConfigurationScope.APPLICATION,
