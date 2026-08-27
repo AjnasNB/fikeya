@@ -402,7 +402,7 @@ wheels = [
 
 [[package]]
 name = "fikeya-agent-core"
-version = "0.1.0b3"
+version = "0.1.0b4"
 source = { directory = "../fikeya-agent-core" }
 
 [package.metadata]
@@ -415,7 +415,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "fikeya-runtime"
-version = "0.1.0b3"
+version = "0.1.0b4"
 source = { editable = "." }
 dependencies = [
     { name = "fikeya-agent-core" },

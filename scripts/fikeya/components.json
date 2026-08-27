@@ -19,7 +19,7 @@
 			"id": "agent-core",
 			"kind": "python",
 			"path": "fikeya-agent-core",
-			"version": "0.1.0b3",
+			"version": "0.1.0b4",
 			"verify": "python -c \"import fikeya_agent_core\""
 		},
 		{
@@ -42,7 +42,7 @@
 			"id": "runtime",
 			"kind": "python",
 			"path": "fikeya-runtime",
-			"version": "0.1.0b3",
+			"version": "0.1.0b4",
 			"extra": "azure",
 			"constraints": "scripts/fikeya/runtime-constraints.txt",
 			"verify": "fikeya --help"

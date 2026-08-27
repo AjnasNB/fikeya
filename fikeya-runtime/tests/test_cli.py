@@ -21,7 +21,7 @@ def test_cli_reports_the_installed_version(capsys: object) -> None:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out == "fikeya 0.1.0b3\n"
+    assert capsys.readouterr().out == "fikeya 0.1.0b4\n"
 
 
 class _ProtocolInput:
