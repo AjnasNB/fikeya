@@ -225,13 +225,14 @@
 		"compile": "tsc --project ./tsconfig.json",
 		"watch": "tsc --project ./tsconfig.json --watch",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/fileInputs.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",
 		"package:vsix": "npm run build:vsix && npm run check:vsix && npm run test:isolated-vsix"
 	},
 	"devDependencies": {
+		"@fikeya/protocol": "file:../../packages/fikeya-protocol",
 		"@types/node": "24.x",
 		"@vscode/vsce": "3.9.2",
 		"esbuild": "0.28.1",

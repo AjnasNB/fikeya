@@ -66,6 +66,19 @@ describe('Fikeya webview message validation', () => {
 		assert.strictEqual(escapeHtml(`<script data-value="x">'&</script>`), '&lt;script data-value=&quot;x&quot;&gt;&#39;&amp;&lt;/script&gt;');
 	});
 
+	test('accepts the canonical shared UI notification envelope', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			jsonrpc: '2.0',
+			method: 'ui.openCommand',
+			params: { type: 'openCommand', command: 'fikeya.configureProvider' }
+		}), { type: 'openCommand', command: 'fikeya.configureProvider' });
+		assert.strictEqual(parseWebviewMessage({
+			jsonrpc: '2.0',
+			method: 'ui.openFile',
+			params: { type: 'openCommand', path: 'src/index.ts' }
+		}), undefined);
+	});
+
 	test('accepts bounded agent turns only with per-run network consent', () => {
 		const request = {
 			type: 'runAgent',
@@ -86,6 +99,7 @@ describe('Fikeya webview message validation', () => {
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
 			images: [],
+			files: [],
 			mode: 'research',
 			allowNetwork: true
 		});
@@ -97,6 +111,7 @@ describe('Fikeya webview message validation', () => {
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
 			images: [],
+			files: [],
 			allowNetwork: true
 		});
 
@@ -137,6 +152,40 @@ describe('Fikeya webview message validation', () => {
 		}]);
 		assert.strictEqual(parseWebviewMessage({ ...request, images: [{ ...request.images[0], sizeBytes: 7 }] }), undefined);
 		assert.strictEqual(parseWebviewMessage({ ...request, images: Array.from({ length: 5 }, () => request.images[0]) }), undefined);
+	});
+
+	test('accepts only bounded canonical UTF-8 text-file attachments', () => {
+		const text = 'export const answer = 42;\n';
+		const file = {
+			name: 'answer.ts',
+			relativePath: 'src/answer.ts',
+			mimeType: 'text/plain',
+			text,
+			sizeBytes: Buffer.byteLength(text, 'utf8')
+		};
+		const request = {
+			type: 'runAgent',
+			providerName: 'openrouter-primary',
+			prompt: 'Review the attached code.',
+			maxOutputTokens: 1024,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
+			mode: 'agent',
+			allowNetwork: true,
+			images: [],
+			files: [file]
+		};
+		const parsed = parseWebviewMessage(request);
+		assert.ok(parsed && parsed.type === 'runAgent');
+		assert.deepStrictEqual(parsed.files, [file]);
+		assert.strictEqual(parseWebviewMessage({
+			...request,
+			files: [{ ...file, name: '.env', relativePath: '.env' }]
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			...request,
+			files: [{ ...file, relativePath: '../answer.ts' }]
+		}), undefined);
 	});
 
 	test('submits untouched Chat defaults and invokes the selected provider', async () => {

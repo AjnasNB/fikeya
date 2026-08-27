@@ -3,8 +3,10 @@
  *  Copyright (C) 2026 Fikeya contributors
  *--------------------------------------------------------------------------------------------*/
 
+import type { FikeyaUiNotification } from '@fikeya/protocol';
 import type { FikeyaPlanSpecification } from './runtime';
 import { agentComposerConstraints, FikeyaAgentMemoryMode, FikeyaAgentMode, isAgentComposerNumberValid } from './agentComposer';
+import { FikeyaTextFileInput, parseTextFileInputs } from './fileInputs';
 import { FikeyaImageInput, parseImageInputs } from './imageInputs';
 
 export type FikeyaWebviewMessage =
@@ -12,9 +14,9 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'refreshProviders' }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
 	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly prompt: string; readonly maxConcurrency: number; readonly allowNetwork: true }
-	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly images: readonly FikeyaImageInput[]; readonly allowNetwork: true }
+	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
@@ -71,6 +73,7 @@ const supportedPlanTools = new Set(['process.run', 'workspace.list_files', 'work
 
 /** Parses one untrusted webview message into the small command surface the extension accepts. */
 export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | undefined {
+	value = unwrapUiNotification(value);
 	if (!isRecord(value) || typeof value.type !== 'string') {
 		return undefined;
 	}
@@ -126,6 +129,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'runAgent':
 		case 'proposePlan': {
 			const images = parseImageInputs(value.images);
+			const files = parseTextFileInputs(value.files);
 			if (!isProviderName(value.providerName)
 				|| typeof value.prompt !== 'string'
 				|| value.prompt.trim().length === 0
@@ -137,6 +141,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
 				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
 				|| images === undefined
+				|| files === undefined
 				|| (value.type === 'runAgent' && value.mode !== 'agent' && value.mode !== 'research')) {
 				return undefined;
 			}
@@ -147,6 +152,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				contextMaxCharacters: value.contextMaxCharacters,
 				memoryMode: value.memoryMode as FikeyaAgentMemoryMode,
 				images,
+				files,
 				allowNetwork: true as const
 			};
 			return value.type === 'runAgent'
@@ -335,6 +341,25 @@ function hasBoundedFiniteJsonEncoding(value: unknown, maximumBytes: number): boo
 
 function isProviderName(value: unknown): value is string {
 	return typeof value === 'string' && providerNamePattern.test(value);
+}
+
+function unwrapUiNotification(value: unknown): unknown {
+	if (!isRecord(value) || !('jsonrpc' in value || 'method' in value || 'params' in value)) {
+		return value;
+	}
+	const envelope = value as Partial<FikeyaUiNotification>;
+	if (envelope.jsonrpc !== '2.0'
+		|| typeof envelope.method !== 'string'
+		|| !envelope.method.startsWith('ui.')
+		|| !isRecord(envelope.params)
+		|| typeof envelope.params.type !== 'string') {
+		return undefined;
+	}
+	const action = envelope.method.slice(3);
+	if (envelope.params.type !== action) {
+		return undefined;
+	}
+	return envelope.params;
 }
 
 /** Escapes text before it is interpolated into a webview HTML document. */

@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isLifecycleEvent, isProtocolMessage, isUsageReceipt, protocolVersion } from '../dist/index.js';
+import { isFikeyaUiNotification, isLifecycleEvent, isProtocolMessage, isUsageReceipt, protocolVersion } from '../dist/index.js';
 
 test('accepts a valid request', () => {
 	assert.equal(isProtocolMessage({
@@ -18,6 +18,14 @@ test('accepts a valid request', () => {
 
 test('rejects an invalid protocol version', () => {
 	assert.equal(isProtocolMessage({ jsonrpc: '1.0', id: 'req-1', method: 'run' }), false);
+});
+
+test('accepts only matching Fikeya UI actions and payload discriminants', () => {
+	assert.deepEqual([
+		isFikeyaUiNotification({ jsonrpc: '2.0', method: 'ui.runAgent', params: { type: 'runAgent', prompt: 'Build it.' } }),
+		isFikeyaUiNotification({ jsonrpc: '2.0', method: 'ui.runAgent', params: { type: 'proposePlan' } }),
+		isFikeyaUiNotification({ jsonrpc: '2.0', method: 'ui.shellAnything', params: { type: 'shellAnything' } })
+	], [true, false, false]);
 });
 
 test('accepts a valid lifecycle event', () => {
