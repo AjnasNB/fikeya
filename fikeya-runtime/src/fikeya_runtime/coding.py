@@ -93,6 +93,9 @@ _DEFAULT_ALLOWED_EXECUTABLES = frozenset(
 _IGNORED_DIRECTORIES = frozenset(
     {".fikeya", ".git", ".hg", ".svn", "__pycache__", "node_modules"}
 )
+_IGNORED_DIRECTORIES_CASEFOLDED = frozenset(
+    value.casefold() for value in _IGNORED_DIRECTORIES
+)
 _TEST_EXECUTABLES = frozenset(
     {
         "bun",
@@ -385,7 +388,7 @@ class WorkspaceExecutionBroker:
         values: list[str] = []
         for root, directories, files in os.walk(directory, followlinks=False):
             directories[:] = sorted(
-                name for name in directories if name not in _IGNORED_DIRECTORIES
+                name for name in directories if not _is_ignored_directory(name)
             )
             for name in sorted(files):
                 candidate = Path(root) / name
@@ -446,7 +449,7 @@ class WorkspaceExecutionBroker:
         truncated = False
         for candidate in candidates:
             relative_path = candidate.relative_to(self.workspace.root)
-            if any(part in _IGNORED_DIRECTORIES for part in relative_path.parts):
+            if any(_is_ignored_directory(part) for part in relative_path.parts):
                 continue
             try:
                 path = self.workspace.boundary.resolve(relative_path, must_exist=True)
@@ -594,7 +597,10 @@ class WorkspaceExecutionBroker:
         if not relative or relative == ".":
             raise ValueError("A file path is required.")
         path = self.workspace.boundary.resolve(relative, must_exist=must_exist)
-        if ".fikeya" in path.relative_to(self.workspace.root).parts:
+        if any(
+            part.casefold() == ".fikeya"
+            for part in path.relative_to(self.workspace.root).parts
+        ):
             raise ValueError("Fikeya metadata is not an editable project file.")
         return path
 
@@ -1108,12 +1114,16 @@ def _candidate_files(root: Path) -> list[Path]:
     values: list[Path] = []
     for directory, directories, files in os.walk(root, followlinks=False):
         directories[:] = sorted(
-            name for name in directories if name not in _IGNORED_DIRECTORIES
+            name for name in directories if not _is_ignored_directory(name)
         )
         values.extend(Path(directory) / name for name in sorted(files))
         if len(values) >= _MAX_LISTED_FILES:
             break
     return values[:_MAX_LISTED_FILES]
+
+
+def _is_ignored_directory(name: str) -> bool:
+    return name.casefold() in _IGNORED_DIRECTORIES_CASEFOLDED
 
 
 def _is_test_command(executable: str, arguments: list[str]) -> bool:

@@ -416,8 +416,31 @@ def test_broker_rejects_stale_edits_and_workspace_escape(
         ),
         monkeypatch,
     )
-    assert hasattr(stale, "status") and hasattr(escaped, "status")
+
+    metadata_case_bypass = _run(
+        broker.execute(
+            ToolCall(
+                "write:metadata-case",
+                "workspace.write_file",
+                {
+                    "content": "must not be written",
+                    "expectedSha256": None,
+                    "path": ".FIKEYA/unsafe.txt",
+                },
+            ),
+            cancellation,
+            idempotency_key="3" * 64,
+        ),
+        monkeypatch,
+    )
+    assert (
+        hasattr(stale, "status")
+        and hasattr(escaped, "status")
+        and hasattr(metadata_case_bypass, "status")
+    )
 
     assert stale.status == "error"
     assert escaped.status == "error"
+    assert metadata_case_bypass.status == "error"
+    assert not (root / ".FIKEYA" / "unsafe.txt").exists()
     assert file.read_text(encoding="utf-8") == "current"
