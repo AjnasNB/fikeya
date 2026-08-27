@@ -37,6 +37,34 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
         self.assertNotIn('class="quiet composer-add-model"', surface)
         self.assertNotIn('class="run-controls"', surface)
 
+    def test_desktop_opens_chat_as_the_primary_surface_and_extension_stays_beside(self) -> None:
+        source = (
+            REPOSITORY_ROOT / "extensions/fikeya-desktop/src/extension.ts"
+        ).read_text(encoding="utf-8")
+
+        activation = source[source.index("export function activate(") : source.index("class FikeyaWebviewViewProvider")]
+        panel = source[source.index("public openWorkspacePanel(") : source.index("public async configureProvider(")]
+
+        self.assertIn("provider.openWorkspacePanel('chat')", activation)
+        self.assertIn("this.hostCapabilities.isFikeyaProduct", panel)
+        self.assertIn("? vscode.ViewColumn.One", panel)
+        self.assertIn(": vscode.ViewColumn.Beside", panel)
+        self.assertNotIn("queueMicrotask", activation)
+
+    def test_composer_accepts_ephemeral_images_without_persisting_data_urls(self) -> None:
+        source = (
+            REPOSITORY_ROOT / "extensions/fikeya-desktop/src/extension.ts"
+        ).read_text(encoding="utf-8")
+        conversation = (
+            REPOSITORY_ROOT / "extensions/fikeya-desktop/src/conversation.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("data-image-input", source)
+        self.assertIn("clipboardData?.items", source)
+        self.assertIn("images: imageAttachments", source)
+        self.assertNotIn("dataUrl", conversation)
+        self.assertIn("Content-free metadata only", conversation)
+
 
 if __name__ == "__main__":
     unittest.main()

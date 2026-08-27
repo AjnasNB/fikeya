@@ -5,15 +5,16 @@
 
 import type { FikeyaPlanSpecification } from './runtime';
 import { agentComposerConstraints, FikeyaAgentMemoryMode, FikeyaAgentMode, isAgentComposerNumberValid } from './agentComposer';
+import { FikeyaImageInput, parseImageInputs } from './imageInputs';
 
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly allowNetwork: true }
 	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly prompt: string; readonly maxConcurrency: number; readonly allowNetwork: true }
-	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly images: readonly FikeyaImageInput[]; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
@@ -124,6 +125,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		}
 		case 'runAgent':
 		case 'proposePlan': {
+			const images = parseImageInputs(value.images);
 			if (!isProviderName(value.providerName)
 				|| typeof value.prompt !== 'string'
 				|| value.prompt.trim().length === 0
@@ -134,6 +136,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| typeof value.contextMaxCharacters !== 'number'
 				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
 				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
+				|| images === undefined
 				|| (value.type === 'runAgent' && value.mode !== 'agent' && value.mode !== 'research')) {
 				return undefined;
 			}
@@ -143,6 +146,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				maxOutputTokens: value.maxOutputTokens,
 				contextMaxCharacters: value.contextMaxCharacters,
 				memoryMode: value.memoryMode as FikeyaAgentMemoryMode,
+				images,
 				allowNetwork: true as const
 			};
 			return value.type === 'runAgent'

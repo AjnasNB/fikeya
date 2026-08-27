@@ -8,6 +8,7 @@ import path from 'node:path';
 import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'node:util';
 import type { FikeyaProviderHistoryMessage } from './conversation';
+import { FikeyaImageInput, isImageInputs } from './imageInputs';
 
 const maximumOutputBytes = 1024 * 1024;
 const maximumAgentOutputBytes = 5 * 1024 * 1024;
@@ -433,6 +434,7 @@ export function startFikeyaAgentRun(
 	workspacePath: string,
 	approvalHandler: FikeyaAgentApprovalHandler,
 	history: readonly FikeyaProviderHistoryMessage[] = [],
+	images: readonly FikeyaImageInput[] = [],
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaAgentRunHandle {
@@ -446,7 +448,8 @@ export function startFikeyaAgentRun(
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
-		|| !isValidProviderHistory(history)) {
+		|| !isValidProviderHistory(history)
+		|| !isImageInputs(images)) {
 		return {
 			result: Promise.resolve(invalidLocalRequest()),
 			onProgress: () => () => undefined,
@@ -459,6 +462,7 @@ export function startFikeyaAgentRun(
 		workspacePath,
 		prompt,
 		history,
+		images,
 		approvalHandler,
 		agentTimeoutMilliseconds,
 		maximumAgentOutputBytes,
@@ -517,6 +521,7 @@ export function startFikeyaPlanProposal(
 	memoryMode: FikeyaMemoryMode,
 	workspacePath: string,
 	history: readonly FikeyaProviderHistoryMessage[] = [],
+	images: readonly FikeyaImageInput[] = [],
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaPlanProposalRunHandle {
@@ -530,14 +535,15 @@ export function startFikeyaPlanProposal(
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
-		|| !isValidProviderHistory(history)) {
+		|| !isValidProviderHistory(history)
+		|| !isImageInputs(images)) {
 		return { result: Promise.resolve(invalidLocalRequest()), cancel: () => undefined };
 	}
 	return startBoundedJsonCli(
 		buildPlanProposalArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
 		workspacePath,
 		parsePlanProposalView,
-		JSON.stringify({ protocol: 'fikeya.plan-request.v1', prompt, history }),
+		JSON.stringify({ protocol: 'fikeya.plan-request.v1', prompt, history, images }),
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
 		invocation,
@@ -1964,6 +1970,7 @@ function startAgentProtocolCli(
 	workspacePath: string,
 	prompt: string,
 	history: readonly FikeyaProviderHistoryMessage[],
+	images: readonly FikeyaImageInput[],
 	approvalHandler: FikeyaAgentApprovalHandler,
 	timeoutMilliseconds: number,
 	outputLimitBytes: number,
@@ -2154,7 +2161,7 @@ function startAgentProtocolCli(
 			}).catch(() => finish({ ok: false, exitCode, failure: 'invalid-json' }));
 		});
 
-		void writeMessage({ type: 'start', prompt, history }).catch(() => stop('runtime-error'));
+		void writeMessage({ type: 'start', prompt, history, images }).catch(() => stop('runtime-error'));
 		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
 	});
 	return { result, onProgress: progressChannel.onProgress, cancel: () => cancelOperation() };

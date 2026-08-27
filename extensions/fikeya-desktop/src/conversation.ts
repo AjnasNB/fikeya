@@ -5,6 +5,13 @@
 
 export type FikeyaConversationRole = 'user' | 'assistant' | 'notice';
 
+export interface FikeyaConversationAttachment {
+	readonly name: string;
+	readonly mimeType: string;
+	readonly sizeBytes: number;
+	readonly sha256: string;
+}
+
 export interface FikeyaConversationMessage {
 	readonly id: string;
 	readonly role: FikeyaConversationRole;
@@ -12,6 +19,8 @@ export interface FikeyaConversationMessage {
 	readonly createdAt: string;
 	readonly providerName?: string;
 	readonly tone?: 'normal' | 'error';
+	/** Content-free metadata only. Raw attachment bytes are intentionally never persisted. */
+	readonly attachments?: readonly FikeyaConversationAttachment[];
 }
 
 /** Roles that are safe to send through a provider conversation protocol. */
@@ -176,6 +185,10 @@ function normalizeConversationMessage(value: unknown, redact: boolean): FikeyaCo
 		|| (value.tone !== undefined && value.tone !== 'normal' && value.tone !== 'error')) {
 		return undefined;
 	}
+	const attachments = normalizeAttachments(value.attachments);
+	if (attachments === undefined) {
+		return undefined;
+	}
 	const redactedContent = redact ? redactConversationContent(value.content) : value.content;
 	if (redactedContent.trim().length === 0) {
 		return undefined;
@@ -189,8 +202,38 @@ function normalizeConversationMessage(value: unknown, redact: boolean): FikeyaCo
 		content,
 		createdAt: value.createdAt,
 		...(providerName === undefined ? {} : { providerName }),
-		...(tone === undefined ? {} : { tone })
+		...(tone === undefined ? {} : { tone }),
+		...(attachments.length === 0 ? {} : { attachments })
 	};
+}
+
+function normalizeAttachments(value: unknown): readonly FikeyaConversationAttachment[] | undefined {
+	if (value === undefined) {
+		return [];
+	}
+	if (!Array.isArray(value) || value.length > 4) {
+		return undefined;
+	}
+	const attachments: FikeyaConversationAttachment[] = [];
+	for (const item of value) {
+		if (!isRecord(item)
+			|| Object.keys(item).some(key => !['mimeType', 'name', 'sha256', 'sizeBytes'].includes(key))
+			|| typeof item.name !== 'string'
+			|| item.name.length < 1
+			|| item.name.length > 160
+			|| typeof item.mimeType !== 'string'
+			|| !/^image\/(?:gif|jpeg|png|webp)$/u.test(item.mimeType)
+			|| typeof item.sizeBytes !== 'number'
+			|| !Number.isSafeInteger(item.sizeBytes)
+			|| item.sizeBytes < 1
+			|| item.sizeBytes > 393_216
+			|| typeof item.sha256 !== 'string'
+			|| !/^sha256:[0-9a-f]{64}$/u.test(item.sha256)) {
+			return undefined;
+		}
+		attachments.push({ name: item.name, mimeType: item.mimeType, sizeBytes: item.sizeBytes, sha256: item.sha256 });
+	}
+	return attachments;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

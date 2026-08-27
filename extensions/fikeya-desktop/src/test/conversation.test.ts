@@ -59,6 +59,18 @@ describe('Fikeya live conversation state', () => {
 		]);
 	});
 
+	test('retains only content-free image metadata across restarts', () => {
+		const attachment = {
+			name: 'screen.png',
+			mimeType: 'image/png',
+			sizeBytes: 8,
+			sha256: `sha256:${'a'.repeat(64)}`
+		};
+		const serialized = serializeConversationState([{ ...message(1, 'Explain this image.'), attachments: [attachment] }]);
+		assert.doesNotMatch(serialized, /data:image|base64Data/u);
+		assert.deepStrictEqual(parseConversationState(serialized), [{ ...message(1, 'Explain this image.'), attachments: [attachment] }]);
+	});
+
 	test('fails closed for malformed, oversized, or partially invalid snapshots', () => {
 		const valid = message(1);
 		assert.deepStrictEqual({

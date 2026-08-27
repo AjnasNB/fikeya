@@ -74,6 +74,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			images: [],
 			mode: 'research',
 			allowNetwork: true
 		};
@@ -84,6 +85,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			images: [],
 			mode: 'research',
 			allowNetwork: true
 		});
@@ -94,6 +96,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			images: [],
 			allowNetwork: true
 		});
 
@@ -106,6 +109,34 @@ describe('Fikeya webview message validation', () => {
 			memoryMode: 'required',
 			allowNetwork: false
 		}), undefined);
+	});
+
+	test('accepts only canonical bounded image attachments', () => {
+		const request = {
+			type: 'runAgent',
+			providerName: 'openrouter-primary',
+			prompt: 'Explain this screenshot.',
+			maxOutputTokens: 1024,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
+			mode: 'agent',
+			allowNetwork: true,
+			images: [{
+				dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+				name: 'screen.png',
+				sizeBytes: 8
+			}]
+		};
+		const parsed = parseWebviewMessage(request);
+		assert.ok(parsed && parsed.type === 'runAgent');
+		assert.deepStrictEqual(parsed.images, [{
+			base64Data: 'iVBORw0KGgo=',
+			mimeType: 'image/png',
+			name: 'screen.png',
+			sizeBytes: 8
+		}]);
+		assert.strictEqual(parseWebviewMessage({ ...request, images: [{ ...request.images[0], sizeBytes: 7 }] }), undefined);
+		assert.strictEqual(parseWebviewMessage({ ...request, images: Array.from({ length: 5 }, () => request.images[0]) }), undefined);
 	});
 
 	test('submits untouched Chat defaults and invokes the selected provider', async () => {
