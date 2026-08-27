@@ -371,4 +371,37 @@ describe('Fikeya webview message validation', () => {
 			{ type: 'refreshMemory' }
 		]);
 	});
+
+	test('accepts a bounded provider profile without normalizing credentials', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: 'DeepSeek work',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat',
+			secret: 'secret-value'
+		}), {
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: 'DeepSeek work',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat',
+			secret: 'secret-value'
+		});
+		assert.strictEqual(parseWebviewMessage({
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: 'DeepSeek work',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat',
+			secret: ' leaked '
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: '',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat'
+		}), undefined);
+	});
 });

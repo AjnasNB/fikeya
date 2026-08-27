@@ -53,7 +53,7 @@ import {
 	testFikeyaProvider
 } from './runtime';
 
-interface ProviderDefinition {
+export interface ProviderDefinition {
 	readonly id: string;
 	readonly label: string;
 	readonly detail: string;
@@ -402,6 +402,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			case 'refreshProviders':
 				await this.refreshProviders(true);
 				break;
+			case 'configureProviderProfile':
+				await this.configureProviderProfile(message.providerId, message.profileLabel, message.baseUrl, message.model, message.secret);
+				break;
 			case 'testProvider':
 				await this.testProvider(message.providerName);
 				break;
@@ -720,6 +723,47 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		await this.refreshProviders(false);
 		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
 		void vscode.window.showInformationMessage(vscode.l10n.t('{0} was configured in Fikeya Runtime.', profileLabel.trim()));
+	}
+
+	private async configureProviderProfile(providerId: string, profileLabel: string, baseUrl: string, model: string, suppliedSecret?: string): Promise<void> {
+		const workspacePath = getLocalWorkspacePath();
+		const definition = getProviderDefinitions().find(candidate => candidate.id === providerId);
+		if (!workspacePath || !definition) {
+			return;
+		}
+		const urlFailure = validateProviderUrl(baseUrl, true);
+		if (urlFailure) {
+			void vscode.window.showErrorMessage(urlFailure);
+			return;
+		}
+		if (definition.secretPrompt && !suppliedSecret) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Enter the credential for {0}.', definition.label));
+			return;
+		}
+		if (!definition.secretPrompt && suppliedSecret !== undefined) {
+			return;
+		}
+
+		const configuration: FikeyaProviderConfiguration = {
+			name: createProviderName(definition.id, profileLabel),
+			kind: definition.runtimeKind,
+			model,
+			baseUrl,
+			credentialType: definition.credentialType
+		};
+		let secret = suppliedSecret;
+		const result = await vscode.window.withProgress(
+			{ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Adding {0}', definition.label) },
+			() => configureFikeyaProvider(configuration, workspacePath, secret)
+		);
+		secret = undefined;
+		if (!result.ok) {
+			void vscode.window.showErrorMessage(runtimeFailureMessage(result.failure));
+			return;
+		}
+		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
+		await this.refreshProviders(false);
+		void vscode.window.showInformationMessage(vscode.l10n.t('{0} is ready.', profileLabel));
 	}
 
 	public async runRuntimeCommand(command: 'doctor' | 'init'): Promise<void> {
@@ -1681,6 +1725,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const initialModal = this.state.activeMode === 'context' || this.state.activeMode === 'usage' || this.state.activeMode === 'setup'
 			? this.state.activeMode
 			: '';
+		const providerDefinitionOptions = getProviderDefinitions().map((definition, index) => `<option value="${escapeHtml(definition.id)}" data-label="${escapeHtml(definition.label)}" data-detail="${escapeHtml(definition.detail)}" data-base-url="${escapeHtml(definition.defaultBaseUrl)}" data-requires-secret="${definition.secretPrompt ? 'true' : 'false'}"${index === 0 ? ' selected' : ''}>${escapeHtml(definition.label)}</option>`).join('');
 		const setupCards = `<section class="grid two compact-grid">
 			<article class="card">
 				<div class="card-heading"><h2>${escapeHtml(strings.getStarted)}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
@@ -1690,7 +1735,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			<article class="card">
 				<div class="card-heading"><h2>${escapeHtml(strings.providers)}</h2><span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span></div>
 				<div class="providers">${providerCards}</div>
-				<div class="actions"><button data-command="fikeya.configureProvider" type="button">${escapeHtml(strings.configureProvider)}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
+				<div class="actions"><button data-provider-modal-open type="button">${escapeHtml(strings.configureProvider)}</button><button data-command="fikeya.configureProvider" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Azure CLI discovery'))}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
 			</article>
 		</section>`;
 		const usageSurface = `${statisticsSurface}${this.state.agent.outcome ? `<section class="card">${renderCodingOutcome(this.state.agent.outcome, strings)}</section>` : ''}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
@@ -1700,6 +1745,20 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			<dialog class="workspace-overlay" data-workspace-modal="context" aria-label="${escapeHtml(vscode.l10n.t('Context graph'))}"><header><strong>${escapeHtml(vscode.l10n.t('Qarinah context graph'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${memoryGraph}</div></dialog>
 			<dialog class="workspace-overlay" data-workspace-modal="usage" aria-label="${escapeHtml(vscode.l10n.t('Usage and receipts'))}"><header><strong>${escapeHtml(vscode.l10n.t('Usage and receipts'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${usageSurface}</div></dialog>
 			<dialog class="workspace-overlay" data-workspace-modal="setup" aria-label="${escapeHtml(vscode.l10n.t('Models and setup'))}"><header><strong>${escapeHtml(vscode.l10n.t('Models and setup'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${setupCards}</div></dialog>
+			<dialog class="provider-modal" data-provider-modal aria-label="${escapeHtml(vscode.l10n.t('Add a model'))}">
+				<form data-provider-form autocomplete="off">
+					<header><div><strong>${escapeHtml(vscode.l10n.t('Add a model'))}</strong><span>${escapeHtml(vscode.l10n.t('Your credential is sent once to the local runtime and stored in the operating system credential store.'))}</span></div><button class="quiet" data-provider-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">×</button></header>
+					<div class="provider-modal-body">
+						<label class="field"><span>${escapeHtml(vscode.l10n.t('Provider'))}</span><select name="providerId">${providerDefinitionOptions}</select></label>
+						<p class="provider-definition-detail" data-provider-detail></p>
+						<div class="provider-fields"><label class="field"><span>${escapeHtml(vscode.l10n.t('Profile name'))}</span><input name="profileLabel" maxlength="80" required></label><label class="field"><span>${escapeHtml(vscode.l10n.t('Model or deployment'))}</span><input name="model" maxlength="160" placeholder="${escapeHtml(vscode.l10n.t('Enter the exact model ID'))}" required></label></div>
+						<label class="field"><span>${escapeHtml(vscode.l10n.t('Endpoint'))}</span><input name="baseUrl" type="url" maxlength="4096" required></label>
+						<label class="field" data-provider-secret-field><span>${escapeHtml(vscode.l10n.t('API key or token'))}</span><input name="secret" type="password" maxlength="16384" autocomplete="new-password"></label>
+						<p class="provider-form-error" data-provider-error role="alert" hidden></p>
+					</div>
+					<footer><button class="secondary" data-provider-modal-close type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button><button type="submit">${escapeHtml(vscode.l10n.t('Add model'))}</button></footer>
+				</form>
+			</dialog>
 		</div>`;
 		const sidebarContent = chatWorkspace;
 		const editorContent = chatWorkspace;
@@ -1768,6 +1827,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.workspace-overlay > header { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 10px; border-bottom: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.workspace-overlay-body { height: calc(100% - 42px); padding: 10px; overflow: auto; }
 		.overlay-close { margin-left: auto; }
+		.provider-modal { width: min(560px, calc(100vw - 24px)); max-width: 560px; padding: 0; overflow: hidden; border: 1px solid var(--vscode-widget-border); border-radius: 14px; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background); box-shadow: 0 20px 64px var(--vscode-widget-shadow); }
+		.provider-modal::backdrop { background: rgba(0, 0, 0, .56); backdrop-filter: blur(2px); }
+		.provider-modal form { display: grid; max-height: min(720px, calc(100vh - 24px)); grid-template-rows: auto minmax(0, 1fr) auto; }
+		.provider-modal header, .provider-modal footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
+		.provider-modal header { border-bottom: 1px solid var(--vscode-widget-border); }
+		.provider-modal header > div { display: grid; min-width: 0; gap: 3px; }
+		.provider-modal header strong { font-size: 14px; }
+		.provider-modal header span { color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.35; }
+		.provider-modal footer { justify-content: flex-end; border-top: 1px solid var(--vscode-widget-border); }
+		.provider-modal-body { display: grid; gap: 10px; padding: 14px; overflow: auto; }
+		.provider-fields { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 10px; }
+		.provider-definition-detail, .provider-form-error { padding: 8px 9px; border-left: 2px solid var(--vscode-focusBorder); background: var(--vscode-textBlockQuote-background); font-size: 11px; }
+		.provider-form-error { border-left-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
 		.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 		.sidebar-launch { border-top: 2px solid var(--vscode-focusBorder); }
 		.sidebar-destinations { display: grid; gap: 6px; }
@@ -2026,7 +2098,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		@media (max-width: 900px) { .graph-workspace, .plan-workspace { grid-template-columns: 1fr; } .graph-details { max-height: none; } }
 			@media (max-width: 780px) { .workspace-menu-popover { position: fixed; top: 52px; right: 12px; } }
 			@media (max-width: 720px) { .chat-plan-strip { grid-template-columns: minmax(0, 1fr) auto; } .chat-plan-copy { grid-column: 1 / -1; } .composer-bar { gap: 3px; } .composer-mode { width: 76px; min-width: 68px; } .inline-field { min-width: 0; max-width: none; flex: 1 1 auto; } .composer-menu-controls { grid-template-columns: 1fr; } .composer-menu-controls .field:first-child { grid-column: auto; } .network-confirmation { align-items: stretch; flex-direction: column; } .network-confirmation .actions button { flex: 1; } .plan-evidence { grid-template-columns: 1fr; } .plan-lifecycle { grid-template-columns: 1fr; } }
-			@media (max-width: 520px) { .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } .statistics-status { grid-template-columns: 1fr; } }
+			@media (max-width: 520px) { .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } .statistics-status { grid-template-columns: 1fr; } .provider-fields { grid-template-columns: 1fr; } }
 			@media (max-width: ${fikeyaNarrowPanelMaximumWidth}px) { body[data-surface="editor"] .shell { padding-inline: 8px; } .masthead { padding-inline: 9px; } .workspace-label { max-width: 42%; } .mode-switcher { min-width: 0; grid-template-columns: 1fr; } .mode-switcher button { min-width: 0; padding-inline: 8px; } .run-strip, .statistics-grid { grid-template-columns: 1fr; } .run-metric.provider { grid-column: auto; } .agent-heading, .plan-heading { align-items: stretch; flex-direction: column; } .agent-heading-actions { justify-content: space-between; } .chat-plan-strip { grid-template-columns: 1fr; margin-inline: 8px; } .chat-plan-copy { grid-column: auto; } .chat-plan-strip button { width: 100%; } .chat-thread { min-height: 0; padding: 14px 10px; } .chat-message { max-width: 100%; } .message-meta { flex-wrap: wrap; } .message-meta time { margin-left: 0; } .agent-form { margin-inline: 8px; padding: 8px; } .control-grid { max-width: calc(100vw - 28px); padding: 8px; } .composer-actions { display: flex; } .composer-actions button { width: auto; } .agent-status, .run-details { margin-inline: 8px; } .receipt, .statistics-status dl { grid-template-columns: 1fr; } .table-scroll { overscroll-behavior-inline: contain; } .plan-step { grid-template-columns: 26px minmax(0, 1fr); } .plan-step-status { grid-column: 2; } .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } .graph-viewport, .graph-canvas { min-height: 340px; } .graph-details { padding: 8px; } }
 		@media (max-height: 620px) { .chat-thread { gap: 10px; padding-block: 10px 8px; } .chat-empty { min-height: 0; place-content: start; } .prompt-suggestions { margin-top: 10px; } .agent-form { margin-bottom: 6px; } .composer textarea { min-height: 54px; max-height: 112px; } }
 		@media (max-width: 280px) { .provider-card { grid-template-columns: 1fr; } }
@@ -2079,6 +2151,63 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const serverInitialModal = surfaceRoot?.dataset.initialModal || '';
 		const initialModal = serverInitialModal || (typeof persistedState.modal === 'string' ? persistedState.modal : '');
 		if (initialModal) openWorkspaceModal(initialModal);
+		const providerModal = document.querySelector('[data-provider-modal]');
+		const providerForm = providerModal?.querySelector('[data-provider-form]');
+		const providerIdField = providerForm?.querySelector('[name="providerId"]');
+		const providerLabelField = providerForm?.querySelector('[name="profileLabel"]');
+		const providerModelField = providerForm?.querySelector('[name="model"]');
+		const providerBaseUrlField = providerForm?.querySelector('[name="baseUrl"]');
+		const providerSecretField = providerForm?.querySelector('[name="secret"]');
+		const providerSecretContainer = providerForm?.querySelector('[data-provider-secret-field]');
+		const providerDetail = providerForm?.querySelector('[data-provider-detail]');
+		const providerError = providerForm?.querySelector('[data-provider-error]');
+		const syncProviderDefinition = () => {
+			const selected = providerIdField?.selectedOptions?.[0];
+			if (!selected) return;
+			if (providerLabelField) providerLabelField.value = selected.dataset.label || '';
+			if (providerBaseUrlField) providerBaseUrlField.value = selected.dataset.baseUrl || '';
+			if (providerSecretField) {
+				providerSecretField.value = '';
+				providerSecretField.required = selected.dataset.requiresSecret === 'true';
+			}
+			if (providerSecretContainer) providerSecretContainer.hidden = selected.dataset.requiresSecret !== 'true';
+			if (providerDetail) providerDetail.textContent = selected.dataset.detail || '';
+			if (providerError) providerError.hidden = true;
+		};
+		const openProviderModal = () => {
+			for (const candidate of workspaceModals) if (candidate.open) candidate.close();
+			syncProviderDefinition();
+			if (providerModal && !providerModal.open) providerModal.showModal();
+			providerModelField?.focus();
+		};
+		for (const button of document.querySelectorAll('[data-provider-modal-open]')) button.addEventListener('click', () => {
+			button.closest('details')?.removeAttribute('open');
+			openProviderModal();
+		});
+		for (const button of document.querySelectorAll('[data-provider-modal-close]')) button.addEventListener('click', () => providerModal?.close());
+		providerIdField?.addEventListener('change', syncProviderDefinition);
+		providerForm?.addEventListener('submit', event => {
+			event.preventDefault();
+			const providerId = providerIdField?.value || '';
+			const profileLabel = providerLabelField?.value?.trim() || '';
+			const model = providerModelField?.value?.trim() || '';
+			const baseUrl = providerBaseUrlField?.value?.trim() || '';
+			const secret = providerSecretField?.value || undefined;
+			const selected = providerIdField?.selectedOptions?.[0];
+			const requiresSecret = selected?.dataset.requiresSecret === 'true';
+			if (!providerId || !profileLabel || !model || !baseUrl || (requiresSecret && !secret)) {
+				if (providerError) {
+					providerError.textContent = 'Complete the required model fields.';
+					providerError.hidden = false;
+				}
+				return;
+			}
+			const submit = providerForm.querySelector('button[type="submit"]');
+			if (submit) submit.disabled = true;
+			postUi('configureProviderProfile', { providerId, profileLabel, baseUrl, model, ...(secret ? { secret } : {}) });
+			if (providerSecretField) providerSecretField.value = '';
+			providerModal?.close();
+		});
 		const chatPlanDetails = document.querySelector('[data-chat-plan-details]');
 		if (chatPlanDetails) {
 			const planStateMatches = persistedState.chatPlanId === activePlanId;
@@ -3110,7 +3239,7 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 	const providerOptions = state.providers.length === 0
 		? `<option value="">${escapeHtml(strings.noProviders)}</option>`
 		: state.providers.map(provider => `<option value="${escapeHtml(provider.name)}"${state.agent.providerName === provider.name ? ' selected' : ''}>${escapeHtml(`${provider.name} | ${provider.model}`)}</option>`).join('');
-	const emptyActions = `${state.providers.length === 0 ? `<button data-command="fikeya.configureProvider" type="button">${escapeHtml(strings.configureProvider)}</button>` : ''}${canRestoreConversation ? `<button class="secondary" data-conversation-restore type="button">${escapeHtml(vscode.l10n.t('Restore prior chat'))}</button>` : ''}`;
+	const emptyActions = `${state.providers.length === 0 ? `<button data-provider-modal-open type="button">${escapeHtml(strings.configureProvider)}</button>` : ''}${canRestoreConversation ? `<button class="secondary" data-conversation-restore type="button">${escapeHtml(vscode.l10n.t('Restore prior chat'))}</button>` : ''}`;
 	const conversation = state.conversation.length === 0
 		? `<div class="chat-empty"><strong>${escapeHtml(vscode.l10n.t('What should Fikeya work on?'))}</strong><p>${escapeHtml(vscode.l10n.t('Ask, plan, research, or run a coding task. Choose the mode and model beside the composer.'))}</p>${emptyActions ? `<div class="actions">${emptyActions}</div>` : ''}<div class="prompt-suggestions"><button class="quiet" data-prompt-value="Explain this project and cite the files that matter." type="button">${escapeHtml(vscode.l10n.t('Explain this project'))}</button><button class="quiet" data-prompt-value="Inspect the current changes and identify the highest-risk issue." type="button">${escapeHtml(vscode.l10n.t('Review current changes'))}</button><button class="quiet" data-prompt-value="Run the relevant tests, diagnose any failure, and propose the smallest fix." type="button">${escapeHtml(vscode.l10n.t('Diagnose failing tests'))}</button></div></div>`
 		: state.conversation.map(renderConversationMessage).join('');
@@ -3141,8 +3270,8 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 				<label class="field composer-mode"><span class="sr-only">${escapeHtml(vscode.l10n.t('Mode'))}</span><select name="chatMode" aria-label="${escapeHtml(vscode.l10n.t('Chat mode'))}"${controlsDisabled ? ' disabled' : ''}><option value="agent"${initialComposerMode === 'agent' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Agent'))}</option><option value="plan"${initialComposerMode === 'plan' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Plan'))}</option><option value="research"${initialComposerMode === 'research' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Research'))}</option><option value="multitask">${escapeHtml(vscode.l10n.t('Multitask'))}</option></select></label>
 				<label class="field inline-field" data-single-provider><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(vscode.l10n.t('Model provider'))}" title="${escapeHtml(vscode.l10n.t('Choose a model'))}"${providerControlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label>
 				<details class="agent-picker" data-agent-picker hidden><summary>${escapeHtml(vscode.l10n.t('Agents'))}<span data-agent-count>0</span></summary><div class="agent-picker-menu"><strong>${escapeHtml(vscode.l10n.t('Parallel advisory agents'))}</strong><p class="muted">${escapeHtml(vscode.l10n.t('Select independent planning, research, or review agents. Approvals remain serialized.'))}</p>${agentProfileOptions}<label class="field"><span>${escapeHtml(vscode.l10n.t('Maximum parallel agents'))}</span><select name="maxConcurrency"${controlsDisabled ? ' disabled' : ''}><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option></select></label><button class="secondary" data-command="fikeya.configureAgents" type="button">${escapeHtml(vscode.l10n.t('Configure agents'))}</button></div></details>
-				<details class="composer-route"><summary aria-label="${escapeHtml(vscode.l10n.t('Model, context, and chat actions'))}" title="${escapeHtml(vscode.l10n.t('More'))}">•••</summary><div class="composer-route-menu"><div class="composer-menu-controls"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label></div><nav aria-label="${escapeHtml(vscode.l10n.t('Chat actions'))}"><button data-command="fikeya.configureProvider" type="button">${escapeHtml(vscode.l10n.t('Configure models'))}</button><button data-command="fikeya.layout.project" type="button">${escapeHtml(vscode.l10n.t('Project UI'))}</button><button data-command="fikeya.layout.editor" type="button">${escapeHtml(vscode.l10n.t('Editor UI'))}</button><button data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Focus editor'))}</button><button data-command="fikeya.mode.terminal" type="button">${escapeHtml(vscode.l10n.t('Terminal'))}</button><button data-command="fikeya.mode.review" type="button">${escapeHtml(vscode.l10n.t('Review changes'))}</button><button data-modal-open="context" type="button">${escapeHtml(vscode.l10n.t('Context graph'))}</button><button data-modal-open="usage" type="button">${escapeHtml(vscode.l10n.t('Usage and receipts'))}</button><button data-modal-open="setup" type="button">${escapeHtml(vscode.l10n.t('Models and setup'))}</button><button data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button></nav></div></details>
-				<div class="actions composer-actions">${state.providers.length === 0 ? `<button data-command="fikeya.configureProvider" type="button" aria-label="${escapeHtml(vscode.l10n.t('Configure a model'))}" title="${escapeHtml(vscode.l10n.t('Add model'))}"><span aria-hidden="true">＋</span></button>` : `<button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''} aria-label="${escapeHtml(vscode.l10n.t('Send message'))}" title="${escapeHtml(vscode.l10n.t('Send message'))}"><span aria-hidden="true">↑</span></button>`}${running ? `<button class="secondary" data-agent-cancel type="button" aria-label="${escapeHtml(strings.cancel)}" title="${escapeHtml(strings.cancel)}"><span aria-hidden="true">■</span></button>` : ''}</div>
+				<details class="composer-route"><summary aria-label="${escapeHtml(vscode.l10n.t('Model, context, and chat actions'))}" title="${escapeHtml(vscode.l10n.t('More'))}">•••</summary><div class="composer-route-menu"><div class="composer-menu-controls"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label></div><nav aria-label="${escapeHtml(vscode.l10n.t('Chat actions'))}"><button data-provider-modal-open type="button">${escapeHtml(vscode.l10n.t('Configure models'))}</button><button data-command="fikeya.layout.project" type="button">${escapeHtml(vscode.l10n.t('Project UI'))}</button><button data-command="fikeya.layout.editor" type="button">${escapeHtml(vscode.l10n.t('Editor UI'))}</button><button data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Focus editor'))}</button><button data-command="fikeya.mode.terminal" type="button">${escapeHtml(vscode.l10n.t('Terminal'))}</button><button data-command="fikeya.mode.review" type="button">${escapeHtml(vscode.l10n.t('Review changes'))}</button><button data-modal-open="context" type="button">${escapeHtml(vscode.l10n.t('Context graph'))}</button><button data-modal-open="usage" type="button">${escapeHtml(vscode.l10n.t('Usage and receipts'))}</button><button data-modal-open="setup" type="button">${escapeHtml(vscode.l10n.t('Models and setup'))}</button><button data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button></nav></div></details>
+				<div class="actions composer-actions">${state.providers.length === 0 ? `<button data-provider-modal-open type="button" aria-label="${escapeHtml(vscode.l10n.t('Configure a model'))}" title="${escapeHtml(vscode.l10n.t('Add model'))}"><span aria-hidden="true">＋</span></button>` : `<button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''} aria-label="${escapeHtml(vscode.l10n.t('Send message'))}" title="${escapeHtml(vscode.l10n.t('Send message'))}"><span aria-hidden="true">↑</span></button>`}${running ? `<button class="secondary" data-agent-cancel type="button" aria-label="${escapeHtml(strings.cancel)}" title="${escapeHtml(strings.cancel)}"><span aria-hidden="true">■</span></button>` : ''}</div>
 			</div>
 			<div class="network-confirmation" data-network-confirmation hidden role="alertdialog" aria-label="${escapeHtml(vscode.l10n.t('Confirm provider access'))}"><div class="network-confirmation-copy"><strong>${escapeHtml(vscode.l10n.t('Send this prompt to the selected model?'))}</strong><span>${escapeHtml(vscode.l10n.t('Fikeya will use provider network access for this message only. Tool calls still require their own approval.'))}</span></div><div class="actions"><button data-network-confirm type="button">${escapeHtml(vscode.l10n.t('Send once'))}</button><button class="secondary" data-network-cancel type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button></div></div>
 			<input data-network-consent type="checkbox" hidden aria-hidden="true" tabindex="-1">
@@ -3574,7 +3703,7 @@ function getWebviewStrings(): WebviewStrings {
 	};
 }
 
-function getProviderDefinitions(): readonly ProviderDefinition[] {
+export function getProviderDefinitions(): readonly ProviderDefinition[] {
 	return [
 		{
 			id: 'azure-openai',
@@ -3648,12 +3777,92 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 			secretPrompt: vscode.l10n.t('Enter the Groq API Key')
 		},
 		{
+			id: 'deepseek',
+			label: vscode.l10n.t('DeepSeek'),
+			detail: vscode.l10n.t('Use DeepSeek models through its OpenAI-compatible endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://api.deepseek.com/v1',
+			secretPrompt: vscode.l10n.t('Enter the DeepSeek API Key')
+		},
+		{
+			id: 'mistral',
+			label: vscode.l10n.t('Mistral AI'),
+			detail: vscode.l10n.t('Use Mistral models through its OpenAI-compatible endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://api.mistral.ai/v1',
+			secretPrompt: vscode.l10n.t('Enter the Mistral API Key')
+		},
+		{
+			id: 'xai',
+			label: vscode.l10n.t('xAI'),
+			detail: vscode.l10n.t('Use Grok models through the xAI OpenAI-compatible endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://api.x.ai/v1',
+			secretPrompt: vscode.l10n.t('Enter the xAI API Key')
+		},
+		{
+			id: 'together',
+			label: vscode.l10n.t('Together AI'),
+			detail: vscode.l10n.t('Use hosted open models through an OpenAI-compatible endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://api.together.xyz/v1',
+			secretPrompt: vscode.l10n.t('Enter the Together AI API Key')
+		},
+		{
+			id: 'fireworks',
+			label: vscode.l10n.t('Fireworks AI'),
+			detail: vscode.l10n.t('Use serverless open models through an OpenAI-compatible endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://api.fireworks.ai/inference/v1',
+			secretPrompt: vscode.l10n.t('Enter the Fireworks AI API Key')
+		},
+		{
+			id: 'cerebras',
+			label: vscode.l10n.t('Cerebras'),
+			detail: vscode.l10n.t('Use Cerebras inference through its OpenAI-compatible endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://api.cerebras.ai/v1',
+			secretPrompt: vscode.l10n.t('Enter the Cerebras API Key')
+		},
+		{
+			id: 'amazon-bedrock',
+			label: vscode.l10n.t('Amazon Bedrock'),
+			detail: vscode.l10n.t('Use a Bedrock OpenAI-compatible endpoint with an AWS Bedrock API key.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/v1',
+			secretPrompt: vscode.l10n.t('Enter the Amazon Bedrock API Key')
+		},
+		{
+			id: 'azure-ai-foundry',
+			label: vscode.l10n.t('Azure AI Foundry Models'),
+			detail: vscode.l10n.t('Use an Azure AI Foundry OpenAI-compatible project or deployment endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'bearer',
+			defaultBaseUrl: '',
+			secretPrompt: vscode.l10n.t('Enter the Azure AI Foundry Token')
+		},
+		{
 			id: 'ollama',
 			label: vscode.l10n.t('Ollama'),
 			detail: vscode.l10n.t('Use a model running on this device.'),
 			runtimeKind: 'ollama',
 			credentialType: 'none',
 			defaultBaseUrl: 'http://127.0.0.1:11434/v1'
+		},
+		{
+			id: 'local-openai-compatible',
+			label: vscode.l10n.t('Local or No-Auth Compatible'),
+			detail: vscode.l10n.t('Use LM Studio, vLLM, LocalAI, or another trusted no-auth OpenAI-compatible endpoint.'),
+			runtimeKind: 'openai-compatible',
+			credentialType: 'none',
+			defaultBaseUrl: 'http://127.0.0.1:1234/v1'
 		},
 		{
 			id: 'openai-compatible',

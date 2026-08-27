@@ -12,6 +12,7 @@ import { FikeyaImageInput, parseImageInputs } from './imageInputs';
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
+	| { readonly type: 'configureProviderProfile'; readonly providerId: string; readonly profileLabel: string; readonly baseUrl: string; readonly model: string; readonly secret?: string }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
 	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
@@ -96,6 +97,31 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'refreshStatistics':
 		case 'refreshMemory':
 			return { type: value.type };
+		case 'configureProviderProfile': {
+			if (!isProviderName(value.providerId)
+				|| typeof value.profileLabel !== 'string'
+				|| value.profileLabel.trim().length < 1
+				|| value.profileLabel.trim().length > 80
+				|| value.profileLabel.trim() !== value.profileLabel
+				|| typeof value.baseUrl !== 'string'
+				|| value.baseUrl.length > 4_096
+				|| value.baseUrl.trim() !== value.baseUrl
+				|| typeof value.model !== 'string'
+				|| value.model.trim().length < 1
+				|| value.model.trim().length > 160
+				|| value.model.trim() !== value.model
+				|| (value.secret !== undefined && (typeof value.secret !== 'string' || value.secret.length < 1 || value.secret.length > 16_384 || value.secret.trim() !== value.secret))) {
+				return undefined;
+			}
+			return {
+				type: value.type,
+				providerId: value.providerId,
+				profileLabel: value.profileLabel,
+				baseUrl: value.baseUrl,
+				model: value.model,
+				...(value.secret === undefined ? {} : { secret: value.secret })
+			};
+		}
 		case 'copyText':
 			return typeof value.text === 'string' && Buffer.byteLength(value.text, 'utf8') <= maximumPromptBytes
 				? { type: value.type, text: value.text }
