@@ -11,6 +11,7 @@ import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscrip
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { renderSafeMarkdown } from './markdown';
+import { resolveFikeyaHostCapabilities } from './hostCapabilities';
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import { FikeyaMultiAgentProgress, FikeyaMultiAgentRunHandle, startFikeyaMultiAgentRun } from './multiAgent';
 import { captureCompletedFikeyaRun } from './sessionCapture';
@@ -107,7 +108,6 @@ interface PlanSurfaceState {
 type FikeyaWorkspaceMode = 'chat' | 'research' | 'plan' | 'context' | 'usage' | 'setup';
 
 interface DashboardState {
-	readonly isDesktop: boolean;
 	readonly activeMode: FikeyaWorkspaceMode;
 	readonly conversation: readonly FikeyaConversationMessage[];
 	readonly workspaceName: string;
@@ -127,8 +127,12 @@ interface DashboardState {
 
 export function activate(context: vscode.ExtensionContext): void {
 	const provider = new FikeyaWebviewViewProvider(context);
-	const isFikeyaDesktop = vscode.env.appName === 'Fikeya' || vscode.env.appName === 'Fikeya Dev';
-	void vscode.commands.executeCommand('setContext', 'fikeya.isDesktop', isFikeyaDesktop);
+	const hostCapabilities = resolveFikeyaHostCapabilities(
+		vscode.env.appName,
+		vscode.env.uiKind === vscode.UIKind.Desktop
+	);
+	void vscode.commands.executeCommand('setContext', 'fikeya.isFikeyaProduct', hostCapabilities.isFikeyaProduct);
+	void vscode.commands.executeCommand('setContext', 'fikeya.supportsDesktopWorkbench', hostCapabilities.supportsDesktopWorkbench);
 	context.subscriptions.push(provider);
 	context.subscriptions.push(vscode.window.registerWebviewViewProvider(FikeyaWebviewViewProvider.viewType, provider));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.open', () => provider.openWorkspacePanel('chat')));
@@ -163,9 +167,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.view.setup', () => provider.openWorkspacePanel('setup')));
 	const openAtStartup = vscode.workspace.getConfiguration('fikeya.chat').get<boolean>('openAtStartup', true);
 	const firstExtensionOpenKey = 'fikeya.chat.firstExtensionOpen.v1';
-	if (openAtStartup && (isFikeyaDesktop || !context.globalState.get<boolean>(firstExtensionOpenKey, false))) {
+	if (openAtStartup && (hostCapabilities.isFikeyaProduct || !context.globalState.get<boolean>(firstExtensionOpenKey, false))) {
 		provider.openWorkspacePanel('chat');
-		if (!isFikeyaDesktop) {
+		if (!hostCapabilities.isFikeyaProduct) {
 			void context.globalState.update(firstExtensionOpenKey, true);
 		}
 	}
@@ -201,7 +205,6 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}));
 		const persistConversation = this.conversationPersistenceEnabled();
 		this.state = {
-			isDesktop: vscode.env.appName === 'Fikeya' || vscode.env.appName === 'Fikeya Dev',
 			activeMode: 'chat',
 			conversation: persistConversation
 				? parseConversationState(context.workspaceState.get<string>(FikeyaWebviewViewProvider.conversationKey) ?? '')
