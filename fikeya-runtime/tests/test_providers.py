@@ -63,6 +63,7 @@ def test_registry_contains_all_first_party_provider_shapes() -> None:
         model="gemini-2.5-flash",
     )
     assert gemini.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert gemini.credential_type == "bearer"
     assert gemini.api_mode == "chat-completions"
 
     hugging_face = build_profile(

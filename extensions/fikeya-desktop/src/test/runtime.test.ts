@@ -280,10 +280,13 @@ describe('Fikeya runtime protocol', () => {
 			kind: 'google-gemini',
 			model: 'gemini-2.5-pro',
 			baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-			credentialType: 'api-key'
+			credentialType: 'bearer'
 		}, true);
 
 		assert.ok(args.includes('google-gemini'));
+		const credentialTypeIndex = args.indexOf('--credential-type');
+		assert.ok(credentialTypeIndex >= 0);
+		assert.equal(args[credentialTypeIndex + 1], 'bearer');
 		assert.ok(args.includes('--secret-stdin'));
 		assert.ok(!args.some(argument => argument.includes('AIza')));
 	});

@@ -3255,7 +3255,7 @@ function getProviderDefinitions(): readonly ProviderDefinition[] {
 			label: vscode.l10n.t('Google Gemini'),
 			detail: vscode.l10n.t('Use the Gemini API through its OpenAI-compatible endpoint.'),
 			runtimeKind: 'google-gemini',
-			credentialType: 'api-key',
+			credentialType: 'bearer',
 			defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
 			secretPrompt: vscode.l10n.t('Enter the Google Gemini API Key')
 		},
