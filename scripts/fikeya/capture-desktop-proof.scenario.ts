@@ -1142,6 +1142,44 @@ const scenario: Scenario = {
 				writeCompletedPlanProof(completed.planId);
 				return `${completed.badge}: ${completed.steps.length} safe steps retained consumed approvals, tool-call hashes, execution hashes, verification hashes, and passing checks in record ${completed.recordSha256}.`;
 			}
+		},
+		{
+			id: 'editor-terminal-layout',
+			title: 'Keep Editor UI Chat full-height beside the bottom terminal',
+			async run({ code, page, workbench }) {
+				await runWorkbenchCommand(workbench, page, 'fikeya.layout.editor');
+				await waitFor(
+					() => page.evaluate<boolean>(`(() => {
+						const auxiliary = document.querySelector('.part.auxiliarybar');
+						const rect = auxiliary?.getBoundingClientRect();
+						return Boolean(rect && rect.width > 0 && rect.height > 0);
+					})()`),
+					'The Editor UI did not move Fikeya Chat into the secondary sidebar.',
+					30_000
+				);
+				await waitForFikeya<boolean>(code, `Boolean(document.querySelector('[data-agent-form]'))`, 'The Editor UI Chat composer did not become ready.', 20_000);
+				await runWorkbenchCommand(workbench, page, 'workbench.action.terminal.toggleTerminal');
+				const layout = await waitFor(
+					() => page.evaluate<{ panelTop: number; panelRight: number; chatLeft: number; chatBottom: number } | false>(`(() => {
+						const panel = document.querySelector('.part.panel');
+						const auxiliary = document.querySelector('.part.auxiliarybar');
+						const panelRect = panel?.getBoundingClientRect();
+						const auxiliaryRect = auxiliary?.getBoundingClientRect();
+						if (!panelRect || !auxiliaryRect || panelRect.width <= 0 || panelRect.height <= 0 || auxiliaryRect.width <= 0 || auxiliaryRect.height <= 0) return false;
+						return panelRect.right <= auxiliaryRect.left + 1 && auxiliaryRect.bottom >= panelRect.bottom - 1
+							? { panelTop: panelRect.top, panelRight: panelRect.right, chatLeft: auxiliaryRect.left, chatBottom: auxiliaryRect.bottom }
+							: false;
+					})()`),
+					'The bottom terminal overlapped or shortened the Fikeya Chat sidebar.',
+					30_000
+				);
+				const composerAnchored = await waitForFikeya<boolean>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
+					const rect = form?.getBoundingClientRect();
+					return Boolean(rect && rect.width > 0 && rect.bottom <= window.innerHeight + 1 && rect.bottom >= window.innerHeight - 36);
+				})()`, 'The Fikeya Chat composer was not anchored after the terminal opened.', 20_000);
+				return `Terminal stopped at x=${Math.round(layout.panelRight)} before Chat began at x=${Math.round(layout.chatLeft)}; Chat retained its full-height bottom at y=${Math.round(layout.chatBottom)} with composer anchored=${composerAnchored}.`;
+			}
 		}
 	]
 };
