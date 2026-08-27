@@ -6,13 +6,13 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
 import { FikeyaAgentProfile, FikeyaAgentProfileStore, FikeyaAgentRole } from './agentProfiles';
-import { agentComposerConstraints, agentComposerDefaults, invokeAgentRunRequest } from './agentComposer';
+import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderPrompt, FikeyaAgentMode, invokeAgentRunRequest } from './agentComposer';
 import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscriptions } from './azureDiscovery';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { renderSafeMarkdown } from './markdown';
 import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
-import { FikeyaMultiAgentRunHandle, startFikeyaMultiAgentRun } from './multiAgent';
+import { FikeyaMultiAgentProgress, FikeyaMultiAgentRunHandle, startFikeyaMultiAgentRun } from './multiAgent';
 import { captureCompletedFikeyaRun } from './sessionCapture';
 import { buildChatPlanSummary, buildRecordedPlanTimeline, fikeyaNarrowPanelMaximumWidth, FikeyaPlanStageId, isChatInteractionBlocked, selectInitialPlanStepId } from './surface';
 import {
@@ -77,6 +77,13 @@ interface AgentSurfaceState {
 	readonly receipts: readonly FikeyaProviderReceipt[];
 	readonly failure?: string;
 	readonly progress?: FikeyaRunProgress;
+	readonly multiAgentProgress?: readonly {
+		readonly agentId: string;
+		readonly displayName: string;
+		readonly status: FikeyaMultiAgentProgress['status'];
+		readonly runtime?: FikeyaRunProgress;
+	}[];
+	readonly multiAgentMaxConcurrency?: number;
 }
 
 interface MemorySurfaceState {
@@ -141,7 +148,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		await provider.runRuntimeCommand('doctor');
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.editor', async () => {
-		await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+		await provider.focusEditor();
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.agent', () => provider.openWorkspacePanel('chat')));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.terminal', async () => {
@@ -154,8 +161,13 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.lab', () => provider.openWorkspacePanel('context')));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.view.usage', () => provider.openWorkspacePanel('usage')));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.view.setup', () => provider.openWorkspacePanel('setup')));
-	if (isFikeyaDesktop && vscode.workspace.getConfiguration('fikeya.chat').get<boolean>('openAtStartup', true)) {
+	const openAtStartup = vscode.workspace.getConfiguration('fikeya.chat').get<boolean>('openAtStartup', true);
+	const firstExtensionOpenKey = 'fikeya.chat.firstExtensionOpen.v1';
+	if (openAtStartup && (isFikeyaDesktop || !context.globalState.get<boolean>(firstExtensionOpenKey, false))) {
 		provider.openWorkspacePanel('chat');
+		if (!isFikeyaDesktop) {
+			void context.globalState.update(firstExtensionOpenKey, true);
+		}
 	}
 }
 
@@ -177,9 +189,16 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private planCancellationInProgress = false;
 	private previousConversation: readonly FikeyaConversationMessage[] | undefined;
 	private readonly agentProfileStore: FikeyaAgentProfileStore;
+	private lastSourceDocument: vscode.Uri | undefined;
 
 	public constructor(private readonly context: vscode.ExtensionContext) {
 		this.agentProfileStore = new FikeyaAgentProfileStore(context.workspaceState);
+		this.lastSourceDocument = vscode.window.activeTextEditor?.document.uri;
+		context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
+			if (editor) {
+				this.lastSourceDocument = editor.document.uri;
+			}
+		}));
 		const persistConversation = this.conversationPersistenceEnabled();
 		this.state = {
 			isDesktop: vscode.env.appName === 'Fikeya' || vscode.env.appName === 'Fikeya Dev',
@@ -232,6 +251,36 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		});
 		this.viewBinding = vscode.Disposable.from(messageSubscription, disposeSubscription);
 		this.initializeSurface();
+		// The Activity Bar is a Chat entry point, not a second dashboard. Reveal the
+		// real beside-editor conversation as soon as the contributed view resolves.
+		queueMicrotask(() => {
+			if (this.view === webviewView) {
+				this.openWorkspacePanel('chat');
+			}
+		});
+	}
+
+	public async focusEditor(): Promise<void> {
+		const visibleEditor = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
+		if (visibleEditor) {
+			this.lastSourceDocument = visibleEditor.document.uri;
+			await vscode.window.showTextDocument(visibleEditor.document, {
+				viewColumn: visibleEditor.viewColumn,
+				preserveFocus: false,
+				preview: false
+			});
+			return;
+		}
+		if (this.lastSourceDocument) {
+			const document = await vscode.workspace.openTextDocument(this.lastSourceDocument);
+			await vscode.window.showTextDocument(document, {
+				viewColumn: vscode.ViewColumn.One,
+				preserveFocus: false,
+				preview: false
+			});
+			return;
+		}
+		await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
 	}
 
 	public openWorkspacePanel(mode: FikeyaWorkspaceMode = 'chat'): void {
@@ -331,12 +380,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				await this.removeProvider(message.providerName);
 				break;
 			case 'runAgent':
-				await invokeAgentRunRequest(message, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode) => {
-					await this.runAgent(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode);
+				await invokeAgentRunRequest(message, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode) => {
+					await this.runAgent(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode);
 				});
 				break;
 			case 'runMultiAgent':
-				await this.runMultiAgent(message.selectedAgentIds, message.prompt);
+				await this.runMultiAgent(message.selectedAgentIds, message.prompt, message.maxConcurrency);
 				break;
 			case 'proposePlan':
 				await this.proposePlan(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode);
@@ -765,6 +814,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		maxOutputTokens: number,
 		contextMaxCharacters: number,
 		memoryMode: FikeyaMemoryMode,
+		mode: FikeyaAgentMode = 'agent',
 		attemptedProviderNames: ReadonlySet<string> = new Set(),
 		providerHistory = projectProviderHistory(this.state.conversation)
 	): Promise<void> {
@@ -796,7 +846,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 		const operation = startFikeyaAgentRun(
 			providerName,
-			prompt,
+			buildAgentProviderPrompt(mode, prompt),
 			maxOutputTokens,
 			contextMaxCharacters,
 			memoryMode,
@@ -840,7 +890,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			await this.persistConversation();
 			this.refresh();
 			if (result.failure === 'quota') {
-				await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, attempted, providerHistory);
+				await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, attempted, providerHistory);
 			}
 			return;
 		}
@@ -891,7 +941,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 	}
 
-	private async runMultiAgent(selectedAgentIds: readonly string[], prompt: string): Promise<void> {
+	private async runMultiAgent(selectedAgentIds: readonly string[], prompt: string, maxConcurrency: number): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const selectedProfiles = this.state.agentProfiles.filter(profile => selectedAgentIds.includes(profile.id));
 		const advisoryRoles = new Set<FikeyaAgentRole>(['planner', 'researcher', 'reviewer']);
@@ -914,7 +964,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				status: 'running',
 				providerName: vscode.l10n.t('{0} parallel agents', selectedProfiles.length),
 				receiptsStatus: 'idle',
-				receipts: []
+				receipts: [],
+				multiAgentProgress: selectedProfiles.map(profile => ({
+					agentId: profile.id,
+					displayName: profile.displayName,
+					status: 'queued'
+				})),
+				multiAgentMaxConcurrency: Math.min(maxConcurrency, selectedProfiles.length)
 			}
 		};
 		await this.persistConversation();
@@ -924,17 +980,23 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			selectedAgentIds,
 			prompt,
 			history,
-			maxConcurrency: Math.min(3, selectedProfiles.length),
+			maxConcurrency,
 			allowNetwork: true
 		}, this.state.agentProfiles, workspacePath, (_profile, request) => this.approveAgentTool(request));
 		this.activeMultiAgentRun = operation;
 		const disposeProgress = operation.onProgress(progress => {
-			if (this.activeMultiAgentRun !== operation || progress.status !== 'running') {
+			if (this.activeMultiAgentRun !== operation) {
 				return;
 			}
 			this.state = {
 				...this.state,
-				agent: { ...this.state.agent, progress: progress.runtime }
+				agent: {
+					...this.state.agent,
+					progress: progress.runtime ?? this.state.agent.progress,
+					multiAgentProgress: this.state.agent.multiAgentProgress?.map(item => item.agentId === progress.agentId
+						? { ...item, status: progress.status, runtime: progress.runtime }
+						: item)
+				}
 			};
 			this.refresh();
 		});
@@ -1095,6 +1157,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		maxOutputTokens: number,
 		contextMaxCharacters: number,
 		memoryMode: FikeyaMemoryMode,
+		mode: FikeyaAgentMode,
 		attemptedProviderNames: ReadonlySet<string>,
 		providerHistory: ReturnType<typeof projectProviderHistory>
 	): Promise<void> {
@@ -1146,7 +1209,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 		void vscode.window.showInformationMessage(vscode.l10n.t('Continuing with {0} ({1}).', target.name, target.model));
-		await this.runAgent(target.name, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, attemptedProviderNames, providerHistory);
+		await this.runAgent(target.name, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, attemptedProviderNames, providerHistory);
 	}
 
 	private async persistConversation(): Promise<void> {
@@ -1682,7 +1745,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.receipt { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0; }
 		.receipt dt { color: var(--vscode-descriptionForeground); }
 		.receipt dd { margin: 0; overflow-wrap: anywhere; }
-		.agent-surface { display: grid; width: 100%; min-width: 0; height: 100vh; min-height: 420px; grid-template-rows: minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; border: 0; background: var(--vscode-editor-background); }
+		.agent-surface { display: grid; width: 100%; min-width: 0; height: 100dvh; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; border: 0; background: var(--vscode-editor-background); }
 		.agent-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 		.agent-heading-actions { display: flex; align-items: center; gap: 6px; }
 		.agent-heading { padding: 12px 14px 0; }
@@ -1699,8 +1762,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.chat-plan-copy strong { font-size: 12px; }
 		.chat-plan-step strong { font-size: 11px; }
 		.chat-plan-status { display: inline-flex; width: fit-content; margin-top: 3px; color: var(--vscode-descriptionForeground); font-size: 10px; }
-		.chat-thread { display: flex; min-height: 280px; max-height: none; flex-direction: column; gap: 16px; overflow: auto; padding: 20px 16px 14px; background: var(--vscode-editor-background); scroll-behavior: smooth; }
-		.chat-empty { display: grid; place-content: center; max-width: 54ch; min-height: 290px; margin: auto; text-align: left; }
+		.chat-thread { display: flex; min-height: 0; max-height: none; flex-direction: column; gap: 16px; overflow: auto; padding: 20px 16px 14px; background: var(--vscode-editor-background); scroll-behavior: smooth; }
+		.chat-empty { display: grid; place-content: center; max-width: 54ch; min-height: min(290px, 42vh); margin: auto; text-align: left; }
 		.chat-empty strong { font-size: 18px; }
 		.chat-empty p { margin-top: 7px; }
 		.prompt-suggestions { display: grid; gap: 6px; margin-top: 18px; }
@@ -1727,6 +1790,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.message-code pre { max-height: 420px; margin: 0; overflow: auto; padding: 10px; white-space: pre; }
 		.message-actions { display: flex; justify-content: end; margin-top: 6px; }
 		.thinking-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-progressBar-background); animation: fikeya-pulse 1.2s ease-in-out infinite; }
+		.multi-agent-live { display: grid; width: min(100%, 560px); gap: 7px; padding: 9px 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
+		.multi-agent-live > strong { font-size: 12px; }
+		.multi-agent-live ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+		.multi-agent-live li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; color: var(--vscode-descriptionForeground); font-size: 11px; }
+		.multi-agent-live li strong { overflow: hidden; color: var(--vscode-foreground); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 		@keyframes fikeya-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 			.agent-form { position: relative; z-index: 10; display: grid; gap: 0; margin: 0 10px 10px; padding: 8px; border: 1px solid var(--vscode-focusBorder); background: var(--vscode-editor-background); box-shadow: 0 -6px 20px var(--vscode-widget-shadow); }
 			.agent-form .composer textarea { min-height: 78px; max-height: 260px; border: 0; background: transparent; resize: none; }
@@ -1873,7 +1941,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			@media (max-width: 780px) { .workspace-menu-popover { position: fixed; top: 52px; right: 12px; } }
 			@media (max-width: 720px) { .chat-plan-strip { grid-template-columns: minmax(0, 1fr) auto; } .chat-plan-copy { grid-column: 1 / -1; } .composer-bar { flex-wrap: wrap; } .inline-field { max-width: calc(100% - 108px); flex: 1 1 190px; } .inline-field select { max-width: none; } .control-grid { width: min(420px, calc(100vw - 32px)); grid-template-columns: 1fr; } .control-grid .field:first-child { grid-column: auto; } .composer-foot { flex-direction: column; } .network-confirmation { align-items: stretch; flex-direction: column; } .network-confirmation .actions button { flex: 1; } .plan-evidence { grid-template-columns: 1fr; } .plan-lifecycle { grid-template-columns: 1fr; } }
 			@media (max-width: 520px) { .graph-controls { grid-template-columns: 1fr 1fr; } .graph-controls .actions { grid-column: 1 / -1; } .statistics-status { grid-template-columns: 1fr; } }
-			@media (max-width: ${fikeyaNarrowPanelMaximumWidth}px) { body[data-surface="editor"] .shell { padding-inline: 8px; } .masthead { padding-inline: 9px; } .workspace-label { max-width: 42%; } .mode-switcher { min-width: 0; grid-template-columns: 1fr; } .mode-switcher button { min-width: 0; padding-inline: 8px; } .run-strip, .statistics-grid { grid-template-columns: 1fr; } .run-metric.provider { grid-column: auto; } .agent-heading, .plan-heading { align-items: stretch; flex-direction: column; } .agent-heading-actions { justify-content: space-between; } .chat-plan-strip { grid-template-columns: 1fr; margin-inline: 8px; } .chat-plan-copy { grid-column: auto; } .chat-plan-strip button { width: 100%; } .chat-thread { min-height: 260px; padding: 14px 10px; } .chat-message { max-width: 100%; } .message-meta { flex-wrap: wrap; } .message-meta time { margin-left: 0; } .agent-form { margin-inline: 8px; padding: 8px; } .control-grid { max-width: calc(100vw - 28px); padding: 8px; } .composer-actions { display: flex; } .composer-actions button { width: auto; } .agent-status, .run-details { margin-inline: 8px; } .receipt, .statistics-status dl { grid-template-columns: 1fr; } .table-scroll { overscroll-behavior-inline: contain; } .plan-step { grid-template-columns: 26px minmax(0, 1fr); } .plan-step-status { grid-column: 2; } .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } .graph-viewport, .graph-canvas { min-height: 340px; } .graph-details { padding: 8px; } }
+			@media (max-width: ${fikeyaNarrowPanelMaximumWidth}px) { body[data-surface="editor"] .shell { padding-inline: 8px; } .masthead { padding-inline: 9px; } .workspace-label { max-width: 42%; } .mode-switcher { min-width: 0; grid-template-columns: 1fr; } .mode-switcher button { min-width: 0; padding-inline: 8px; } .run-strip, .statistics-grid { grid-template-columns: 1fr; } .run-metric.provider { grid-column: auto; } .agent-heading, .plan-heading { align-items: stretch; flex-direction: column; } .agent-heading-actions { justify-content: space-between; } .chat-plan-strip { grid-template-columns: 1fr; margin-inline: 8px; } .chat-plan-copy { grid-column: auto; } .chat-plan-strip button { width: 100%; } .chat-thread { min-height: 0; padding: 14px 10px; } .chat-message { max-width: 100%; } .message-meta { flex-wrap: wrap; } .message-meta time { margin-left: 0; } .agent-form { margin-inline: 8px; padding: 8px; } .control-grid { max-width: calc(100vw - 28px); padding: 8px; } .composer-actions { display: flex; } .composer-actions button { width: auto; } .agent-status, .run-details { margin-inline: 8px; } .receipt, .statistics-status dl { grid-template-columns: 1fr; } .table-scroll { overscroll-behavior-inline: contain; } .plan-step { grid-template-columns: 26px minmax(0, 1fr); } .plan-step-status { grid-column: 2; } .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } .graph-viewport, .graph-canvas { min-height: 340px; } .graph-details { padding: 8px; } }
 		@media (max-width: 280px) { .provider-card { grid-template-columns: 1fr; } }
 		@media (prefers-reduced-motion: reduce) { .chat-thread { scroll-behavior: auto; } .thinking-dot { animation: none; opacity: 1; } }
 	</style>
@@ -2058,6 +2126,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const networkCancelButton = agentForm?.querySelector('[data-network-cancel]');
 		const agentPicker = agentForm?.querySelector('[data-agent-picker]');
 		const selectedAgentFields = Array.from(agentForm?.querySelectorAll('[name="selectedAgentId"]') ?? []);
+		const maxConcurrencyField = agentForm?.querySelector('[name="maxConcurrency"]');
 		const singleProviderField = agentForm?.querySelector('[data-single-provider]');
 		if (promptField && typeof persistedState.chatDraft === 'string') promptField.value = persistedState.chatDraft;
 		if (chatModeField && ['agent', 'plan', 'research', 'multitask'].includes(persistedState.chatMode)) chatModeField.value = persistedState.chatMode;
@@ -2067,6 +2136,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if (memoryModeField && ['auto', 'off', 'required'].includes(persistedState.chatMemoryMode)) memoryModeField.value = persistedState.chatMemoryMode;
 		if (contextBudgetField && Number.isSafeInteger(persistedState.chatContextBudget)) contextBudgetField.value = String(persistedState.chatContextBudget);
 		if (outputBudgetField && Number.isSafeInteger(persistedState.chatOutputBudget)) outputBudgetField.value = String(persistedState.chatOutputBudget);
+		if (maxConcurrencyField && Number.isSafeInteger(persistedState.chatAgentConcurrency) && persistedState.chatAgentConcurrency >= 1 && persistedState.chatAgentConcurrency <= 8) maxConcurrencyField.value = String(persistedState.chatAgentConcurrency);
 		if (networkConsent) networkConsent.checked = false;
 		const saveComposer = () => persistUiState({
 			chatDraft: promptField?.value || '',
@@ -2075,9 +2145,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			chatProvider: providerField?.value || '',
 			chatMemoryMode: memoryModeField?.value || 'auto',
 			chatContextBudget: Number(contextBudgetField?.value),
-			chatOutputBudget: Number(outputBudgetField?.value)
+			chatOutputBudget: Number(outputBudgetField?.value),
+			chatAgentConcurrency: Number(maxConcurrencyField?.value || 3)
 		});
-		for (const input of [promptField, chatModeField, providerField, memoryModeField, contextBudgetField, outputBudgetField, networkConsent, ...selectedAgentFields]) {
+		for (const input of [promptField, chatModeField, providerField, memoryModeField, contextBudgetField, outputBudgetField, maxConcurrencyField, networkConsent, ...selectedAgentFields]) {
 			input?.addEventListener(input === promptField ? 'input' : 'change', saveComposer);
 		}
 		const updateComposerMode = () => {
@@ -2115,7 +2186,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				const contextMaxCharacters = Number(agentForm.querySelector('[name="contextMaxCharacters"]')?.value);
 				const memoryMode = agentForm.querySelector('[name="memoryMode"]')?.value;
 				if (!providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return undefined;
-				return { providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true };
+				return { providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode: chatModeField?.value === 'research' ? 'research' : 'agent', allowNetwork: true };
 			};
 			const updateRunButton = () => {
 				runButton.disabled = runBlocked || !promptField?.value.trim();
@@ -2139,7 +2210,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 					return;
 				}
 				const request = multitask
-					? { selectedAgentIds, prompt: promptField?.value?.trim(), allowNetwork: true }
+					? { selectedAgentIds, prompt: promptField?.value?.trim(), maxConcurrency: Number(maxConcurrencyField?.value || 3), allowNetwork: true }
 					: readAgentRequest();
 				if (!request || !request.prompt) {
 					promptField?.focus();
@@ -2683,8 +2754,11 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 	const conversation = state.conversation.length === 0
 		? `<div class="chat-empty"><strong>${escapeHtml(vscode.l10n.t('What should Fikeya work on?'))}</strong><p>${escapeHtml(vscode.l10n.t('Ask, plan, research, or run a coding task. Choose the mode and model beside the composer.'))}</p>${emptyActions ? `<div class="actions">${emptyActions}</div>` : ''}<div class="prompt-suggestions"><button class="quiet" data-prompt-value="Explain this project and cite the files that matter." type="button">${escapeHtml(vscode.l10n.t('Explain this project'))}</button><button class="quiet" data-prompt-value="Inspect the current changes and identify the highest-risk issue." type="button">${escapeHtml(vscode.l10n.t('Review current changes'))}</button><button class="quiet" data-prompt-value="Run the relevant tests, diagnose any failure, and propose the smallest fix." type="button">${escapeHtml(vscode.l10n.t('Diagnose failing tests'))}</button></div></div>`
 		: state.conversation.map(renderConversationMessage).join('');
+	const multiAgentProgress = state.agent.multiAgentProgress?.length
+		? `<div class="multi-agent-live"><strong>${escapeHtml(vscode.l10n.t('Agent progress · {0} selected · up to {1} parallel', state.agent.multiAgentProgress.length, state.agent.multiAgentMaxConcurrency ?? 1))}</strong><ul>${state.agent.multiAgentProgress.map(item => `<li><strong>${escapeHtml(item.displayName)}</strong><span>${escapeHtml(item.runtime ? formatRunProgress(item.runtime) : item.status === 'queued' ? vscode.l10n.t('Queued') : item.status === 'running' ? vscode.l10n.t('Running') : item.status === 'completed' ? vscode.l10n.t('Completed') : item.status === 'cancelled' ? vscode.l10n.t('Cancelled') : vscode.l10n.t('Failed'))}</span></li>`).join('')}</ul></div>`
+		: '';
 	const progress = running
-		? `<article class="chat-message assistant-message" aria-label="${escapeHtml(vscode.l10n.t('Fikeya is working'))}"><div class="message-meta"><strong>${escapeHtml(vscode.l10n.t('Fikeya'))}</strong><span class="thinking-dot" aria-hidden="true"></span><span>${escapeHtml(state.agent.progress ? formatRunProgress(state.agent.progress) : vscode.l10n.t('Starting a bounded run'))}</span></div></article>`
+		? `<article class="chat-message assistant-message" aria-label="${escapeHtml(vscode.l10n.t('Fikeya is working'))}"><div class="message-meta"><strong>${escapeHtml(vscode.l10n.t('Fikeya'))}</strong><span class="thinking-dot" aria-hidden="true"></span><span>${escapeHtml(state.agent.progress ? formatRunProgress(state.agent.progress) : vscode.l10n.t('Starting a bounded run'))}</span></div>${multiAgentProgress}</article>`
 		: '';
 	const chatPlan = state.plan.record ? renderChatPlanStrip(state.plan.record, state.plan.status === 'running', planSurface) : '';
 	const status = state.providers.length === 0
@@ -2701,10 +2775,10 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 				<label class="field composer-mode"><span class="sr-only">${escapeHtml(vscode.l10n.t('Mode'))}</span><select name="chatMode" aria-label="${escapeHtml(vscode.l10n.t('Chat mode'))}"${controlsDisabled ? ' disabled' : ''}><option value="agent"${initialComposerMode === 'agent' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Agent'))}</option><option value="plan"${initialComposerMode === 'plan' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Plan'))}</option><option value="research"${initialComposerMode === 'research' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Research'))}</option><option value="multitask">${escapeHtml(vscode.l10n.t('Multitask'))}</option></select></label>
 				<label class="field inline-field" data-single-provider><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(vscode.l10n.t('Model provider'))}" title="${escapeHtml(vscode.l10n.t('Choose a model'))}"${providerControlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label>
 				<button class="quiet composer-add-model" data-command="fikeya.configureProvider" type="button" aria-label="${escapeHtml(vscode.l10n.t('Add or configure a model'))}" title="${escapeHtml(vscode.l10n.t('Add OpenRouter, Azure OpenAI, Gemini, or another model'))}"><span aria-hidden="true">⚙</span></button>
-				<details class="agent-picker" data-agent-picker hidden><summary>${escapeHtml(vscode.l10n.t('Agents'))}<span data-agent-count>0</span></summary><div class="agent-picker-menu"><strong>${escapeHtml(vscode.l10n.t('Parallel advisory agents'))}</strong><p class="muted">${escapeHtml(vscode.l10n.t('Select independent planning, research, or review agents. Approvals remain serialized.'))}</p>${agentProfileOptions}<button class="secondary" data-command="fikeya.configureAgents" type="button">${escapeHtml(vscode.l10n.t('Configure agents'))}</button></div></details>
+				<details class="agent-picker" data-agent-picker hidden><summary>${escapeHtml(vscode.l10n.t('Agents'))}<span data-agent-count>0</span></summary><div class="agent-picker-menu"><strong>${escapeHtml(vscode.l10n.t('Parallel advisory agents'))}</strong><p class="muted">${escapeHtml(vscode.l10n.t('Select independent planning, research, or review agents. Approvals remain serialized.'))}</p>${agentProfileOptions}<label class="field"><span>${escapeHtml(vscode.l10n.t('Maximum parallel agents'))}</span><select name="maxConcurrency"${controlsDisabled ? ' disabled' : ''}><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option></select></label><button class="secondary" data-command="fikeya.configureAgents" type="button">${escapeHtml(vscode.l10n.t('Configure agents'))}</button></div></details>
 				<details class="run-controls"><summary aria-label="${escapeHtml(vscode.l10n.t('Context and output settings'))}" title="${escapeHtml(vscode.l10n.t('Context and output settings'))}">${escapeHtml(vscode.l10n.t('Context'))}</summary><div class="control-grid"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label></div></details>
-				<details class="composer-route"><summary aria-label="${escapeHtml(vscode.l10n.t('More chat actions'))}" title="${escapeHtml(vscode.l10n.t('More'))}">•••</summary><nav class="composer-route-menu" aria-label="${escapeHtml(vscode.l10n.t('Chat actions'))}"><button data-modal-open="context" type="button">${escapeHtml(vscode.l10n.t('Context graph'))}</button><button data-modal-open="usage" type="button">${escapeHtml(vscode.l10n.t('Usage and receipts'))}</button><button data-modal-open="setup" type="button">${escapeHtml(vscode.l10n.t('Models and setup'))}</button><button data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button></nav></details>
-				<div class="actions composer-actions"><button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''} aria-label="${escapeHtml(state.providers.length === 0 ? vscode.l10n.t('Configure a model') : vscode.l10n.t('Send message'))}">${escapeHtml(state.providers.length === 0 ? vscode.l10n.t('Add model') : vscode.l10n.t('Send'))}</button>${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div>
+				<details class="composer-route"><summary aria-label="${escapeHtml(vscode.l10n.t('More chat actions'))}" title="${escapeHtml(vscode.l10n.t('More'))}">•••</summary><nav class="composer-route-menu" aria-label="${escapeHtml(vscode.l10n.t('Chat actions'))}"><button data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Editor'))}</button><button data-command="fikeya.mode.terminal" type="button">${escapeHtml(vscode.l10n.t('Terminal'))}</button><button data-command="fikeya.mode.review" type="button">${escapeHtml(vscode.l10n.t('Review changes'))}</button><button data-modal-open="context" type="button">${escapeHtml(vscode.l10n.t('Context graph'))}</button><button data-modal-open="usage" type="button">${escapeHtml(vscode.l10n.t('Usage and receipts'))}</button><button data-modal-open="setup" type="button">${escapeHtml(vscode.l10n.t('Models and setup'))}</button><button data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button></nav></details>
+				<div class="actions composer-actions">${state.providers.length === 0 ? `<button data-command="fikeya.configureProvider" type="button" aria-label="${escapeHtml(vscode.l10n.t('Configure a model'))}">${escapeHtml(vscode.l10n.t('Add model'))}</button>` : `<button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''} aria-label="${escapeHtml(vscode.l10n.t('Send message'))}">${escapeHtml(vscode.l10n.t('Send'))}</button>`}${running ? `<button class="secondary" data-agent-cancel type="button">${escapeHtml(strings.cancel)}</button>` : ''}</div>
 			</div>
 			<div class="network-confirmation" data-network-confirmation hidden role="alertdialog" aria-label="${escapeHtml(vscode.l10n.t('Confirm provider access'))}"><div class="network-confirmation-copy"><strong>${escapeHtml(vscode.l10n.t('Send this prompt to the selected model?'))}</strong><span>${escapeHtml(vscode.l10n.t('Fikeya will use provider network access for this message only. Tool calls still require their own approval.'))}</span></div><div class="actions"><button data-network-confirm type="button">${escapeHtml(vscode.l10n.t('Send once'))}</button><button class="secondary" data-network-cancel type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button></div></div>
 			<input data-network-consent type="checkbox" hidden aria-hidden="true" tabindex="-1">

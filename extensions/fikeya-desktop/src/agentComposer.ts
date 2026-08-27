@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 export type FikeyaAgentMemoryMode = 'auto' | 'off' | 'required';
+export type FikeyaAgentMode = 'agent' | 'research';
 
 export interface FikeyaAgentRequest {
 	readonly providerName: string;
@@ -11,6 +12,7 @@ export interface FikeyaAgentRequest {
 	readonly maxOutputTokens: number;
 	readonly contextMaxCharacters: number;
 	readonly memoryMode: FikeyaAgentMemoryMode;
+	readonly mode: FikeyaAgentMode;
 	readonly allowNetwork: true;
 }
 
@@ -47,8 +49,24 @@ export async function invokeAgentRunRequest(
 		prompt: string,
 		maxOutputTokens: number,
 		contextMaxCharacters: number,
-		memoryMode: FikeyaAgentMemoryMode
+		memoryMode: FikeyaAgentMemoryMode,
+		mode: FikeyaAgentMode
 	) => Promise<void>
 ): Promise<void> {
-	await invoke(request.providerName, request.prompt, request.maxOutputTokens, request.contextMaxCharacters, request.memoryMode);
+	await invoke(request.providerName, request.prompt, request.maxOutputTokens, request.contextMaxCharacters, request.memoryMode, request.mode);
+}
+
+/** Keeps the visible conversation human-readable while giving Research mode a real bounded contract. */
+export function buildAgentProviderPrompt(mode: FikeyaAgentMode, prompt: string): string {
+	if (mode !== 'research') {
+		return prompt;
+	}
+	return [
+		'Fikeya Research mode.',
+		'Investigate the question before proposing changes. Distinguish project evidence from inference, cite relevant project paths, and state what remains unverified.',
+		'Do not modify files or run mutating tools unless the user explicitly asks for an implementation and approves the exact tool call.',
+		'',
+		'Question:',
+		prompt
+	].join('\n');
 }

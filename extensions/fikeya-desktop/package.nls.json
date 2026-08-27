@@ -20,6 +20,6 @@
 	"command.mode.lab.title": "Open Context Graph",
 	"command.view.usage.title": "Open Local Usage",
 	"command.view.setup.title": "Open Setup",
-	"configuration.chat.openAtStartup.description": "Open the chat-first Fikeya workspace when Fikeya Desktop starts. This setting does not open Chat automatically in the VS Code extension.",
+	"configuration.chat.openAtStartup.description": "Open the chat-first Fikeya workspace when Fikeya Desktop starts and on the first VS Code extension activation.",
 	"configuration.chat.persistWorkspaceHistory.description": "Persist a bounded, credential-redacted copy of Fikeya Chat messages in this workspace. Disabled by default; when disabled, Chat remains process-local."
 }
