@@ -77,7 +77,7 @@ const captureProviderDecisions = [
 		content: captureProviderOutput
 	}
 ] as const;
-const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 3) + 1;
+const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 3) + 4;
 
 interface CaptureOptions {
 	compile: boolean;
@@ -198,6 +198,7 @@ interface PublishedEvidence {
 
 interface DeterministicProviderServer {
 	readonly baseUrl: string;
+	readonly imageRequestCount: () => number;
 	readonly requestCount: () => number;
 	readonly close: () => Promise<void>;
 }
@@ -271,13 +272,26 @@ function buildCaptureProviderArguments(baseUrl: string): string[] {
 	];
 }
 
+function providerMessageText(content: unknown): string {
+	if (typeof content === 'string') {
+		return content;
+	}
+	if (!Array.isArray(content)) {
+		return '';
+	}
+	return content
+		.map(item => isRecord(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : '')
+		.filter(Boolean)
+		.join('\n');
+}
+
 function requestedProviderStage(messages: readonly { readonly content?: unknown }[] | undefined): 'plan' | 'act' | 'review' | undefined {
 	if (!messages) {
 		return undefined;
 	}
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
-		const content = messages[index]?.content;
-		if (typeof content !== 'string') {
+		const content = providerMessageText(messages[index]?.content);
+		if (!content) {
 			continue;
 		}
 		const marker = 'Input:\n';
@@ -299,11 +313,21 @@ function requestedProviderStage(messages: readonly { readonly content?: unknown 
 
 function providerMessagesContain(messages: readonly { readonly content?: unknown }[] | undefined, needle: string): boolean {
 	const normalizedNeedle = needle.toLowerCase();
-	return messages?.some(message => typeof message.content === 'string' && message.content.toLowerCase().includes(normalizedNeedle)) ?? false;
+	return messages?.some(message => providerMessageText(message.content).toLowerCase().includes(normalizedNeedle)) ?? false;
+}
+
+function providerMessagesContainImage(messages: readonly { readonly content?: unknown }[] | undefined): boolean {
+	return messages?.some(message => Array.isArray(message.content) && message.content.some(item => {
+		if (!isRecord(item) || item.type !== 'image_url' || !isRecord(item.image_url)) {
+			return false;
+		}
+		return typeof item.image_url.url === 'string' && /^data:image\/(?:gif|jpeg|png|webp);base64,/u.test(item.image_url.url);
+	})) ?? false;
 }
 
 async function startDeterministicProvider(): Promise<DeterministicProviderServer> {
 	let requestCount = 0;
+	let imageRequestCount = 0;
 	const server = createServer(async (request, response) => {
 		try {
 			if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
@@ -331,6 +355,9 @@ async function startDeterministicProvider(): Promise<DeterministicProviderServer
 				return;
 			}
 			const stage = requestedProviderStage(payload.messages);
+			if (providerMessagesContainImage(payload.messages)) {
+				imageRequestCount += 1;
+			}
 			const planningProposal = providerMessagesContain(payload.messages, 'fikeya.plan-proposal.v1');
 			const multitaskProof = providerMessagesContain(payload.messages, 'inspect the proof workspace in parallel');
 			let providerContent: string;
@@ -399,6 +426,7 @@ async function startDeterministicProvider(): Promise<DeterministicProviderServer
 	}
 	return {
 		baseUrl: `http://127.0.0.1:${address.port}/v1`,
+		imageRequestCount: () => imageRequestCount,
 		requestCount: () => requestCount,
 		close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
 	};
@@ -781,6 +809,9 @@ async function captureDesktopProof(options: CaptureOptions) {
 		});
 		if (provider.requestCount() !== captureProviderExpectedRequestCount) {
 			throw new Error(`The Chat, Multitask, and Plan proof made ${provider.requestCount()} provider calls; expected ${captureProviderExpectedRequestCount}.`);
+		}
+		if (provider.imageRequestCount() !== 3) {
+			throw new Error(`The pasted-image proof delivered image input on ${provider.imageRequestCount()} provider calls; expected all 3 coding-agent stages.`);
 		}
 	} finally {
 		await provider.close();

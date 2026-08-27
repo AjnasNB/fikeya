@@ -247,7 +247,6 @@ test('Electron Chat proof validates a real 360px-class responsive panel', async 
 	assert.match(scenario, /\[data-agent-run\]/u);
 	assert.match(scenario, /\[data-network-confirmation\]/u);
 	assert.match(scenario, /\[data-network-confirm\]/u);
-	assert.match(scenario, /\.run-controls > summary/u);
 	assert.match(scenario, /\.composer-route > summary/u);
 	assert.match(scenario, /composerAnchored/u);
 	assert.match(scenario, /minimumPanelWidth = 340/u);
@@ -269,7 +268,17 @@ test('Electron proof executes and verifies a bounded two-agent Multitask batch',
 	assert.match(scenario, /\.multi-agent-live/u);
 	assert.match(scenario, /status\.toLowerCase\(\)\.includes\('completed'\)/u);
 	assert.match(scenario, /results\.every\(item => item\.content ===/u);
-	assert.equal(captureProviderExpectedRequestCount, 10);
+	assert.equal(captureProviderExpectedRequestCount, 13);
+});
+
+test('Electron Chat proof pastes an image and delivers it to the provider', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /id: 'pasted-image-chat'/u);
+	assert.match(scenario, /new DataTransfer\(\)/u);
+	assert.match(scenario, /new ClipboardEvent\('paste'/u);
+	assert.match(scenario, /proof-pixel\.png/u);
+	assert.match(scenario, /\.composer-attachment/u);
+	assert.match(scenario, /\.message-attachment/u);
 });
 
 test('Electron proof uses chat-first inline Plan and dialog overlays', async () => {

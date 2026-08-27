@@ -62,6 +62,12 @@ interface ChatState {
 	readonly modes: readonly string[];
 }
 
+interface ImageChatState {
+	readonly assistant: string;
+	readonly attachment: string;
+	readonly status: string;
+}
+
 interface MultitaskState {
 	readonly status: string;
 	readonly selectedAgents: number;
@@ -309,9 +315,54 @@ async function waitForQuickInput(page: ScenarioContext['page'], expectedTitle: s
 async function acceptQuickInput(page: ScenarioContext['page'], title: string, filterOrValue?: string): Promise<void> {
 	await waitForQuickInput(page, title);
 	if (filterOrValue) {
+		const focused = await page.evaluate<boolean>(`(() => {
+			const widget = document.querySelector('.quick-input-widget');
+			const input = widget?.querySelector('.quick-input-box input');
+			if (!input) return false;
+			input.focus();
+			return document.activeElement === input;
+		})()`);
+		if (!focused) {
+			throw new Error(`The '${title}' Quick Input could not receive keyboard focus.`);
+		}
+		await page.keyboard.press('Control+A');
 		await page.keyboard.type(filterOrValue);
+		await waitFor(
+			() => page.evaluate<boolean>(`document.querySelector('.quick-input-widget .quick-input-box input')?.value === ${JSON.stringify(filterOrValue)}`),
+			`The '${title}' Quick Input did not receive its exact value.`,
+			10_000
+		);
 	}
 	await page.keyboard.press('Enter');
+	await waitFor(
+		() => page.evaluate<boolean>(`(() => {
+			const widget = document.querySelector('.quick-input-widget');
+			const currentTitle = widget?.querySelector('.quick-input-title')?.textContent?.trim() ?? '';
+			const bounds = widget?.getBoundingClientRect();
+			return !bounds || bounds.width === 0 || bounds.height === 0 || currentTitle !== ${JSON.stringify(title)};
+		})()`),
+		`The '${title}' Quick Input did not accept its selection.`,
+		10_000
+	);
+}
+
+async function acceptQuickPickPosition(page: ScenarioContext['page'], title: string, position: number): Promise<void> {
+	await waitForQuickInput(page, title);
+	await page.keyboard.press('Home');
+	for (let index = 0; index < position; index += 1) {
+		await page.keyboard.press('ArrowDown');
+	}
+	await page.keyboard.press('Enter');
+	await waitFor(
+		() => page.evaluate<boolean>(`(() => {
+			const widget = document.querySelector('.quick-input-widget');
+			const currentTitle = widget?.querySelector('.quick-input-title')?.textContent?.trim() ?? '';
+			const bounds = widget?.getBoundingClientRect();
+			return !bounds || bounds.width === 0 || bounds.height === 0 || currentTitle !== ${JSON.stringify(title)};
+		})()`),
+		`The '${title}' Quick Pick did not accept row ${position + 1}.`,
+		10_000
+	);
 }
 
 async function configureProofAgent(
@@ -332,8 +383,8 @@ async function configureProofAgent(
 	}
 	await acceptQuickInput(page, 'Fikeya parallel agents');
 	await acceptQuickInput(page, 'Agent name', displayName);
-	await acceptQuickInput(page, 'Agent role', role);
-	await acceptQuickInput(page, 'Agent model', providerName);
+	await acceptQuickPickPosition(page, 'Agent role', role === 'Planner' ? 0 : role === 'Researcher' ? 1 : 2);
+	await acceptQuickPickPosition(page, 'Agent model', 0);
 	await acceptQuickInput(page, 'Agent instruction', instruction);
 	await waitForFikeya<boolean>(code, `(() => {
 		return Array.from(document.querySelectorAll('[data-agent-picker] .agent-choice strong'))
@@ -587,28 +638,67 @@ const scenario: Scenario = {
 						? value
 						: false;
 				})()`, 'Chat did not render the successful assistant response and exact provider-reported usage.', 90_000);
-				return `Completed a real three-call Chat turn through ${state.provider}; visible usage is ${state.usage['Input Tokens']} input, ${state.usage['Cached Input Tokens']} cached input, and ${state.usage['Output Tokens']} output tokens.`;
+				await configureProofAgent(code, page, 'Proof Planner', 'Planner', 'Return a bounded plan from cited project evidence.');
+				await configureProofAgent(code, page, 'Proof Reviewer', 'Reviewer', 'Return an independent review from cited project evidence.');
+				return `Completed a real three-call Chat turn through ${state.provider}; visible usage is ${state.usage['Input Tokens']} input, ${state.usage['Cached Input Tokens']} cached input, and ${state.usage['Output Tokens']} output tokens. Configured two advisory agents through the native UI.`;
+			}
+		},
+		{
+			id: 'pasted-image-chat',
+			title: 'Paste an image into Chat and deliver it to the selected model',
+			async run({ code }) {
+				const attached = await evaluateFikeya<boolean>(code, `(() => {
+					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
+					if (!prompt) return false;
+					const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlD8AAAAASUVORK5CYII=';
+					const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+					const transfer = new DataTransfer();
+					transfer.items.add(new File([bytes], 'proof-pixel.png', { type: 'image/png' }));
+					const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer });
+					prompt.dispatchEvent(event);
+					return true;
+				})()`);
+				if (!attached) {
+					throw new Error('The Chat textarea did not accept a pasted image event.');
+				}
+				await waitForFikeya<boolean>(code, `document.querySelectorAll('[data-composer-attachments] .composer-attachment').length === 1`, 'The pasted image preview did not render.', 15_000);
+				const submitted = await evaluateFikeya<boolean>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
+					const prompt = form?.querySelector('[name="prompt"]');
+					const provider = form?.querySelector('[name="providerName"]');
+					const mode = form?.querySelector('[name="chatMode"]');
+					if (!form || !prompt || !provider || !mode) return false;
+					mode.value = 'agent';
+					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					provider.value = ${JSON.stringify(providerName)};
+					provider.dispatchEvent(new Event('change', { bubbles: true }));
+					prompt.value = 'Inspect this attached image together with the bounded project evidence.';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					form.requestSubmit();
+					const confirmation = form.querySelector('[data-network-confirmation]');
+					const sendOnce = form.querySelector('[data-network-confirm]');
+					if (!confirmation || confirmation.hidden || !sendOnce) return false;
+					sendOnce.click();
+					return true;
+				})()`);
+				if (!submitted) {
+					throw new Error('The pasted-image Chat turn could not be submitted.');
+				}
+				const state = await waitForFikeya<ImageChatState>(code, `(() => {
+					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim() ?? '';
+					const attachment = Array.from(document.querySelectorAll('.user-message .message-attachment strong')).at(-1)?.textContent?.trim() ?? '';
+					const status = document.querySelector('.composer-status')?.textContent?.trim() ?? '';
+					return assistant === ${JSON.stringify(providerOutput)} && attachment === 'proof-pixel.png' && status.toLowerCase().includes('completed')
+						? { assistant, attachment, status }
+						: false;
+				})()`, 'The pasted image did not complete a visible multimodal Chat turn.', 90_000);
+				return `Pasted ${state.attachment}, rendered its bounded attachment receipt, and completed the real provider-backed Chat turn.`;
 			}
 		},
 		{
 			id: 'completed-multitask',
 			title: 'Complete a bounded two-agent Multitask batch through the real UI',
 			async run({ code, page }) {
-				await configureProofAgent(
-					code,
-					page,
-					'Proof Planner',
-					'Planner',
-					'Return one bounded planning perspective using only the cited proof workspace.'
-				);
-				await configureProofAgent(
-					code,
-					page,
-					'Proof Reviewer',
-					'Reviewer',
-					'Return one independent review perspective using only the cited proof workspace.'
-				);
-
 				const submitted = await evaluateFikeya<boolean>(code, `(() => {
 					const form = document.querySelector('[data-agent-form]');
 					const prompt = form?.querySelector('[name="prompt"]');
@@ -790,7 +880,6 @@ const scenario: Scenario = {
 					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
 					const send = document.querySelector('[data-agent-run]');
 					const mode = document.querySelector('[data-agent-form] [name="chatMode"]');
-					const contextOptions = document.querySelector('.run-controls > summary');
 					const moreActions = document.querySelector('.composer-route > summary');
 					const form = document.querySelector('[data-agent-form]');
 					const formRect = form?.getBoundingClientRect();
@@ -803,7 +892,6 @@ const scenario: Scenario = {
 						promptVisible: visible(prompt),
 						sendVisible: visible(send),
 						modeVisible: visible(mode),
-						contextOptionsVisible: visible(contextOptions),
 						moreActionsVisible: visible(moreActions),
 						multitaskAvailable: Array.from(mode?.options ?? []).some(option => option.value === 'multitask'),
 						composerAnchored: Boolean(formRect && formRect.bottom <= window.innerHeight + 1 && formRect.bottom >= window.innerHeight - 36)
@@ -830,7 +918,7 @@ const scenario: Scenario = {
 					throw new Error('The inline Plan did not expose the draft review control at the narrow panel width.');
 				}
 				const optionsReachable = await evaluateFikeya<boolean>(code, `(() => {
-					const options = document.querySelector('.run-controls');
+					const options = document.querySelector('.composer-route');
 					if (!options) return false;
 					options.open = true;
 					const contextBudget = options.querySelector('[name="contextMaxCharacters"]');
