@@ -222,8 +222,11 @@
 		}
 	},
 	"scripts": {
+		"build:protocol": "npm ci --ignore-scripts --prefix ../../packages/fikeya-protocol && npm run build --prefix ../../packages/fikeya-protocol",
+		"precompile": "npm run build:protocol",
 		"compile": "tsc --project ./tsconfig.json",
 		"watch": "tsc --project ./tsconfig.json --watch",
+		"pretypecheck": "npm run build:protocol",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
 		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/fileInputs.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
