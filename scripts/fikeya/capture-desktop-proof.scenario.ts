@@ -25,7 +25,10 @@ interface ScenarioContext {
 	readonly page: {
 		waitForSelector(selector: string, options: { readonly state: 'visible'; readonly timeout: number }): Promise<unknown>;
 		evaluate<T>(expression: string): Promise<T>;
-		readonly keyboard: { press(key: string): Promise<unknown> };
+		readonly keyboard: {
+			press(key: string): Promise<unknown>;
+			type(text: string): Promise<unknown>;
+		};
 	};
 	readonly workbench: {
 		readonly quickaccess: {
@@ -41,6 +44,7 @@ interface Scenario {
 	readonly source: string;
 	readonly workspacePath: string;
 	readonly userSettings: Readonly<Record<string, string | number | boolean>>;
+	readonly recordVideo?: boolean;
 	readonly stepPauseMs: number;
 	readonly steps: readonly {
 		readonly id: string;
@@ -55,7 +59,25 @@ interface ChatState {
 	readonly provider: string;
 	readonly usage: Readonly<Record<string, string>>;
 	readonly usageBasis: string;
-	readonly planTab?: string;
+	readonly modes: readonly string[];
+}
+
+interface MultitaskState {
+	readonly status: string;
+	readonly selectedAgents: number;
+	readonly messageCount: number;
+	readonly results: readonly {
+		readonly label: string;
+		readonly content: string;
+	}[];
+}
+
+interface MultitaskLiveState {
+	readonly heading: string;
+	readonly agents: readonly {
+		readonly name: string;
+		readonly status: string;
+	}[];
 }
 
 interface DraftState {
@@ -74,11 +96,24 @@ interface NarrowPanelState {
 	readonly documentWidth: number;
 	readonly bodyWidth: number;
 	readonly chatVisible: boolean;
-	readonly planTabVisible: boolean;
-	readonly openPlanVisible: boolean;
+	readonly currentPlanVisible: boolean;
 	readonly promptVisible: boolean;
 	readonly sendVisible: boolean;
-	readonly createPlanVisible: boolean;
+	readonly modeVisible: boolean;
+	readonly contextOptionsVisible: boolean;
+	readonly moreActionsVisible: boolean;
+	readonly multitaskAvailable: boolean;
+	readonly composerAnchored: boolean;
+}
+
+interface ShortComposerState {
+	readonly viewportHeight: number;
+	readonly confirmationTop: number;
+	readonly confirmationBottom: number;
+	readonly promptBottom: number;
+	readonly footerTop: number;
+	readonly sendOnceVisible: boolean;
+	readonly cancelVisible: boolean;
 }
 
 interface NarrowGraphState {
@@ -151,48 +186,10 @@ if (!runtimeExecutable || !path.isAbsolute(runtimeExecutable)) {
 	throw new Error('FIKEYA_CAPTURE_RUNTIME_EXECUTABLE must name the absolute packaged local runtime.');
 }
 
-const planSpecification = {
-	schemaVersion: 1,
-	title: 'Verify the real Fikeya proof workspace',
-	steps: [
-		{
-			stepId: 'inventory-project',
-			title: 'Inventory bounded project files',
-			toolCall: {
-				callId: 'proof-list-files',
-				name: 'workspace.list_files',
-				arguments: { path: '.' }
-			},
-			verify: { expectedStatus: 'ok' }
-		},
-		{
-			stepId: 'inspect-readme',
-			title: 'Inspect the proof workspace brief',
-			dependsOn: ['inventory-project'],
-			toolCall: {
-				callId: 'proof-read-readme',
-				name: 'workspace.read_file',
-				arguments: { path: 'README.md' }
-			},
-			verify: { expectedStatus: 'ok' }
-		},
-		{
-			stepId: 'find-review-boundary',
-			title: 'Find the explicit review boundary',
-			dependsOn: ['inspect-readme'],
-			toolCall: {
-				callId: 'proof-search-review',
-				name: 'workspace.search_text',
-				arguments: { path: '.', query: 'reviewable plan' }
-			},
-			verify: { expectedStatus: 'ok' }
-		}
-	]
-};
-
 const pause = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 let proofWindowBounds: DesktopWindowBounds | undefined;
+let proofPanelWidth: number | undefined;
 
 async function waitFor<T>(predicate: () => Promise<T | false | undefined> | T | false | undefined, message: string, timeoutMilliseconds = 45_000): Promise<T> {
 	const deadline = Date.now() + timeoutMilliseconds;
@@ -265,14 +262,16 @@ async function restoreProofWindow(code: ScenarioCode, page: ScenarioContext['pag
 	if (!proofWindowBounds) {
 		return;
 	}
+	const expectedPanelWidth = Math.max(421, (proofPanelWidth ?? 421) - 8);
 	await page.evaluate<void>(`window.resizeTo(${proofWindowBounds.width}, ${proofWindowBounds.height})`);
 	await waitForFikeya<number>(
 		code,
-		'window.innerWidth >= 700 ? window.innerWidth : false',
+		`window.innerWidth >= ${expectedPanelWidth} ? window.innerWidth : false`,
 		'The proof window did not return to its wide layout.',
 		15_000
 	);
 	proofWindowBounds = undefined;
+	proofPanelWidth = undefined;
 }
 
 async function runWorkbenchCommand(
@@ -294,12 +293,63 @@ async function runWorkbenchCommand(
 	throw lastError;
 }
 
+async function waitForQuickInput(page: ScenarioContext['page'], expectedTitle: string): Promise<string> {
+	return waitFor(
+		() => page.evaluate<string | false>(`(() => {
+			const widget = document.querySelector('.quick-input-widget');
+			const title = widget?.querySelector('.quick-input-title')?.textContent?.trim() ?? '';
+			const bounds = widget?.getBoundingClientRect();
+			return bounds && bounds.width > 0 && bounds.height > 0 && title === ${JSON.stringify(expectedTitle)} ? title : false;
+		})()`),
+		`The '${expectedTitle}' Quick Input did not appear.`,
+		20_000
+	);
+}
+
+async function acceptQuickInput(page: ScenarioContext['page'], title: string, filterOrValue?: string): Promise<void> {
+	await waitForQuickInput(page, title);
+	if (filterOrValue) {
+		await page.keyboard.type(filterOrValue);
+	}
+	await page.keyboard.press('Enter');
+}
+
+async function configureProofAgent(
+	code: ScenarioCode,
+	page: ScenarioContext['page'],
+	displayName: string,
+	role: 'Planner' | 'Researcher' | 'Reviewer',
+	instruction: string
+): Promise<void> {
+	const opened = await evaluateFikeya<boolean>(code, `(() => {
+		const button = document.querySelector('[data-agent-picker] [data-command="fikeya.configureAgents"]');
+		if (!button) return false;
+		button.click();
+		return true;
+	})()`);
+	if (!opened) {
+		throw new Error('The real Multitask agent configuration action was not available.');
+	}
+	await acceptQuickInput(page, 'Fikeya parallel agents');
+	await acceptQuickInput(page, 'Agent name', displayName);
+	await acceptQuickInput(page, 'Agent role', role);
+	await acceptQuickInput(page, 'Agent model', providerName);
+	await acceptQuickInput(page, 'Agent instruction', instruction);
+	await waitForFikeya<boolean>(code, `(() => {
+		return Array.from(document.querySelectorAll('[data-agent-picker] .agent-choice strong'))
+			.some(item => item.textContent?.trim() === ${JSON.stringify(displayName)});
+	})()`, `The '${displayName}' advisory profile was not rendered in the Multitask picker.`, 20_000);
+}
+
 async function approveExactStep(
 	code: ScenarioCode,
 	page: ScenarioContext['page'],
 	stepId: string
 ): Promise<IssuedApprovalState> {
 	const clicked = await evaluateFikeya<boolean>(code, `(() => {
+		const plan = document.querySelector('.chat-plan-details');
+		if (!plan) return false;
+		plan.open = true;
 		const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 		const step = surface?.querySelector('[data-plan-step="${stepId}"]');
 		if (!step) return false;
@@ -318,6 +368,8 @@ async function approveExactStep(
 	await pause(500);
 	await page.keyboard.press('Enter');
 	const state = await waitForFikeya<IssuedApprovalState>(code, `(() => {
+		const plan = document.querySelector('.chat-plan-details');
+		if (plan) plan.open = true;
 		const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 		const step = surface?.querySelector('[data-plan-step="${stepId}"]');
 		step?.click();
@@ -351,6 +403,8 @@ async function approveExactStep(
 
 async function resumeApprovedStep(code: ScenarioCode): Promise<void> {
 	const clicked = await evaluateFikeya<boolean>(code, `(() => {
+		const plan = document.querySelector('.chat-plan-details');
+		if (plan) plan.open = true;
 		const button = document.querySelector('[data-plan-action="resume"]');
 		if (!button || button.disabled) return false;
 		button.click();
@@ -367,6 +421,8 @@ async function waitForVerifiedStep(
 	nextStepId?: string
 ): Promise<VerifiedStepState> {
 	const state = await waitForFikeya<VerifiedStepState>(code, `(() => {
+		const plan = document.querySelector('.chat-plan-details');
+		if (plan) plan.open = true;
 		const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 		const step = surface?.querySelector('[data-plan-step="${stepId}"]');
 		step?.click();
@@ -432,6 +488,10 @@ const scenario: Scenario = {
 	title: 'Fikeya Chat to reviewable durable Plan',
 	source: 'https://github.com/AjnasNB/fikeya',
 	workspacePath,
+	// Playwright 1.61's Electron video recorder leaves the Electron 42 Windows
+	// page protocol-unresponsive before the workbench can be observed. The proof
+	// remains fully exercised and retains screenshots, trace, logs, and report.
+	recordVideo: process.platform !== 'win32',
 	userSettings: {
 		'workbench.colorTheme': 'Fikeya Dark',
 		'workbench.secondarySideBar.defaultVisibility': 'hidden',
@@ -461,11 +521,11 @@ const scenario: Scenario = {
 					code,
 					`(() => {
 						const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
-						const chatTab = document.querySelector('[data-surface-tab="chat"]');
+						const mode = document.querySelector('[data-agent-form] [name="chatMode"]');
 						const provider = document.querySelector('[data-agent-form] [name="providerName"]');
-						if (!prompt || !chatTab || !provider || !Array.from(provider.options).some(option => option.value === ${JSON.stringify(providerName)})) return false;
-						chatTab.click();
-						return !document.querySelector('[data-surface-panel="chat"]').hidden;
+						if (!prompt || !mode || !provider || !Array.from(provider.options).some(option => option.value === ${JSON.stringify(providerName)})) return false;
+						return !document.querySelector('[data-surface-panel="chat"]')?.hidden
+							&& Array.from(mode.options).map(option => option.value).join(',') === 'agent,plan,research,multitask';
 					})()`,
 					'The real Fikeya Chat composer did not become ready.',
 					60_000
@@ -497,22 +557,29 @@ const scenario: Scenario = {
 				}
 				const state = await waitForFikeya<ChatState>(code, `(() => {
 					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim();
-					const metrics = Object.fromEntries(Array.from(document.querySelectorAll('.run-metric')).map(item => [
+					const providerField = document.querySelector('[data-agent-form] [name="providerName"]');
+					const modeField = document.querySelector('[data-agent-form] [name="chatMode"]');
+					const selectedProvider = providerField?.options?.[providerField.selectedIndex]?.textContent?.trim();
+					document.querySelector('[data-modal-open="usage"]')?.click();
+					const usageDialog = document.querySelector('[data-workspace-modal="usage"]');
+					const metrics = Object.fromEntries(Array.from(usageDialog?.querySelectorAll('.statistics-metric') ?? []).map(item => [
 						item.querySelector('span')?.textContent?.trim(),
 						item.querySelector('strong')?.textContent?.trim()
 					]));
+					const usageBasis = usageDialog?.querySelector('.receipt')?.textContent?.trim() ?? '';
+					usageDialog?.querySelector('[data-modal-close]')?.click();
 					const value = {
 						assistant,
 						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden,
-						planTab: document.querySelector('[data-surface-tab="plan"]')?.textContent?.trim(),
-						provider: metrics['Provider / Model'],
+						modes: Array.from(modeField?.options ?? []).map(option => option.value),
+						provider: selectedProvider,
 						usage: metrics,
-						usageBasis: document.querySelector('.usage-basis')?.textContent?.trim()
+						usageBasis
 					};
 					return value.chatVisible
-						&& value.planTab === 'Plan'
+						&& value.modes.join(',') === 'agent,plan,research,multitask'
 						&& value.assistant === ${JSON.stringify(providerOutput)}
-						&& value.provider === ${JSON.stringify(`${providerName} / fikeya-proof-model`)}
+						&& value.provider === ${JSON.stringify(`${providerName} | fikeya-proof-model`)}
 						&& value.usage['Input Tokens'] === '60'
 						&& value.usage['Cached Input Tokens'] === '12'
 						&& value.usage['Output Tokens'] === '15'
@@ -524,25 +591,119 @@ const scenario: Scenario = {
 			}
 		},
 		{
-			id: 'draft-plan',
-			title: 'Create a durable draft through the Plan form',
-			async run({ code }) {
-				const specification = JSON.stringify(JSON.stringify(planSpecification, null, 2));
+			id: 'completed-multitask',
+			title: 'Complete a bounded two-agent Multitask batch through the real UI',
+			async run({ code, page }) {
+				await configureProofAgent(
+					code,
+					page,
+					'Proof Planner',
+					'Planner',
+					'Return one bounded planning perspective using only the cited proof workspace.'
+				);
+				await configureProofAgent(
+					code,
+					page,
+					'Proof Reviewer',
+					'Reviewer',
+					'Return one independent review perspective using only the cited proof workspace.'
+				);
+
 				const submitted = await evaluateFikeya<boolean>(code, `(() => {
-					const planTab = document.querySelector('[data-surface-tab="plan"]');
-					planTab?.click();
-					const form = document.querySelector('[data-plan-create-form]');
-					const textarea = form?.querySelector('[name="specification"]');
-					if (!form || !textarea) return false;
-					textarea.value = ${specification};
-					textarea.dispatchEvent(new Event('input', { bubbles: true }));
+					const form = document.querySelector('[data-agent-form]');
+					const prompt = form?.querySelector('[name="prompt"]');
+					const mode = form?.querySelector('[name="chatMode"]');
+					if (!form || !prompt || !mode) return false;
+					mode.value = 'multitask';
+					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					const choices = Array.from(form.querySelectorAll('[data-agent-picker] .agent-choice'));
+					const expected = new Set(['Proof Planner', 'Proof Reviewer']);
+					if (choices.length !== 2 || choices.some(choice => !expected.has(choice.querySelector('strong')?.textContent?.trim() ?? ''))) return false;
+					for (const choice of choices) {
+						const input = choice.querySelector('input[name="selectedAgentId"]');
+						if (!input) return false;
+						input.checked = true;
+						input.dispatchEvent(new Event('change', { bubbles: true }));
+					}
+					prompt.value = 'Inspect the proof workspace in parallel and return one bounded advisory result each.';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					if (!form.checkValidity()) return false;
 					form.requestSubmit();
+					const confirmation = form.querySelector('[data-network-confirmation]');
+					const sendOnce = form.querySelector('[data-network-confirm]');
+					if (!confirmation || confirmation.hidden || !sendOnce) return false;
+					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
-					throw new Error('The Plan form was not available after selecting the Plan tab.');
+					throw new Error('The real Multitask composer could not submit the selected two-agent batch.');
+				}
+				const live = await waitForFikeya<MultitaskLiveState>(code, `(() => {
+					const progress = document.querySelector('.multi-agent-live');
+					const heading = progress?.querySelector(':scope > strong')?.textContent?.trim() ?? '';
+					const agents = Array.from(progress?.querySelectorAll('li') ?? []).map(item => ({
+						name: item.querySelector('strong')?.textContent?.trim() ?? '',
+						status: item.querySelector('span')?.textContent?.trim() ?? ''
+					}));
+					const expected = new Set(['Proof Planner', 'Proof Reviewer']);
+					return progress && agents.length === 2
+						&& agents.every(item => expected.has(item.name) && /Queued|Running|Planning|Acting|Reviewing/.test(item.status))
+						? { heading, agents }
+						: false;
+				})()`, 'The real in-flight multi-agent progress surface was never visible.', 30_000);
+
+				const completed = await waitForFikeya<MultitaskState>(code, `(() => {
+					const expectedLabels = new Set([
+						${JSON.stringify(`Proof Planner · ${providerName}`)},
+						${JSON.stringify(`Proof Reviewer · ${providerName}`)}
+					]);
+					const results = Array.from(document.querySelectorAll('.assistant-message')).map(message => ({
+						label: message.querySelector('.message-meta span')?.textContent?.trim() ?? '',
+						content: message.querySelector('.message-content')?.textContent?.trim() ?? ''
+					})).filter(item => expectedLabels.has(item.label));
+					const status = document.querySelector('.composer-status')?.textContent?.trim() ?? '';
+					const selectedAgents = document.querySelectorAll('[data-agent-picker] input[name="selectedAgentId"]:checked').length;
+					const messageCount = Number(document.querySelector('[data-chat-thread]')?.getAttribute('data-message-count') ?? '0');
+					const complete = status.toLowerCase().includes('completed')
+						&& selectedAgents === 2
+						&& messageCount >= 5
+						&& results.length === 2
+						&& results.every(item => item.content === ${JSON.stringify(providerOutput)});
+					return complete ? { status, selectedAgents, messageCount, results } : false;
+				})()`, 'The bounded Multitask batch did not render two completed, provider-labelled advisory results.', 120_000);
+				return `Observed ${live.heading}, then completed a bounded ${completed.selectedAgents}-agent Multitask batch through the UI; ${completed.results.map(item => item.label).join(' and ')} each rendered the exact verified provider result.`;
+			}
+		},
+		{
+			id: 'draft-plan',
+			title: 'Create a durable draft through Plan mode',
+			async run({ code }) {
+				const submitted = await evaluateFikeya<boolean>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
+					const mode = document.querySelector('[data-agent-form] [name="chatMode"]');
+					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
+					const provider = document.querySelector('[data-agent-form] [name="providerName"]');
+					if (!form || !mode || !prompt || !provider || !Array.from(mode.options).some(option => option.value === 'plan')) return false;
+					mode.value = 'plan';
+					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					provider.value = ${JSON.stringify(providerName)};
+					provider.dispatchEvent(new Event('change', { bubbles: true }));
+					prompt.value = 'Create an exact three-step draft that inventories the project, reads README.md, and searches for the reviewable plan boundary.';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					if (!form.checkValidity()) return false;
+					form.requestSubmit();
+					const confirmation = form.querySelector('[data-network-confirmation]');
+					const sendOnce = form.querySelector('[data-network-confirm]');
+					if (!confirmation || confirmation.hidden || !sendOnce) return false;
+					sendOnce.click();
+					return true;
+				})()`);
+				if (!submitted) {
+					throw new Error('Plan mode was not available in the fixed Chat composer.');
 				}
 				const draft = await waitForFikeya<DraftState>(code, `(() => {
+					const inlinePlan = document.querySelector('.chat-plan-details');
+					if (inlinePlan) inlinePlan.open = true;
 					const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 					const title = surface?.querySelector('#plan-surface-title')?.textContent?.trim();
 					const badge = surface?.querySelector('.badge')?.textContent?.trim();
@@ -551,20 +712,73 @@ const scenario: Scenario = {
 						? { title, badge, steps }
 						: false;
 				})()`, 'The runtime did not persist and render the exact draft plan.', 60_000);
-				return `Rendered durable ${draft.badge.toLowerCase()} "${draft.title}" with ${draft.steps} exact steps.`;
+				return `Selected Plan in the fixed composer and rendered durable ${draft.badge.toLowerCase()} "${draft.title}" inline with ${draft.steps} exact steps.`;
+			}
+		},
+		{
+			id: 'short-composer-confirmation',
+			title: 'Confirm provider access from a short fixed composer without overlap',
+			async run({ code, page }) {
+				proofWindowBounds ??= await page.evaluate<DesktopWindowBounds>('({ width: window.outerWidth, height: window.outerHeight })');
+				proofPanelWidth ??= await evaluateFikeya<number>(code, 'window.innerWidth');
+				await page.evaluate<void>('window.resizeTo(window.outerWidth, 620)');
+				await waitForFikeya<number>(code, 'window.innerHeight <= 620 && window.innerHeight >= 320 ? window.innerHeight : false', 'The proof window did not reach the short composer layout.', 15_000);
+				const state = await waitForFikeya<ShortComposerState>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
+					const prompt = form?.querySelector('[name="prompt"]');
+					const mode = form?.querySelector('[name="chatMode"]');
+					const confirmation = form?.querySelector('[data-network-confirmation]');
+					const sendOnce = form?.querySelector('[data-network-confirm]');
+					const cancel = form?.querySelector('[data-network-cancel]');
+					const footer = form?.querySelector('.composer-foot');
+					if (!form || !prompt || !mode || !confirmation || !sendOnce || !cancel || !footer) return false;
+					mode.value = 'agent';
+					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					prompt.value = 'Verify the short composer confirmation without contacting the provider.';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					form.requestSubmit();
+					confirmation.scrollIntoView({ block: 'nearest' });
+					const confirmationRect = confirmation.getBoundingClientRect();
+					const promptRect = prompt.getBoundingClientRect();
+					const footerRect = footer.getBoundingClientRect();
+					const visible = element => {
+						const rect = element.getBoundingClientRect();
+						return rect.width > 0 && rect.height > 0 && rect.top >= -1 && rect.bottom <= window.innerHeight + 1;
+					};
+					const value = {
+						viewportHeight: window.innerHeight,
+						confirmationTop: confirmationRect.top,
+						confirmationBottom: confirmationRect.bottom,
+						promptBottom: promptRect.bottom,
+						footerTop: footerRect.top,
+						sendOnceVisible: visible(sendOnce),
+						cancelVisible: visible(cancel)
+					};
+					return !confirmation.hidden
+						&& confirmationRect.top >= promptRect.bottom - 1
+						&& confirmationRect.bottom <= footerRect.top + 1
+						&& value.sendOnceVisible && value.cancelVisible
+						? value
+						: false;
+				})()`, 'The short composer confirmation was hidden, clipped, or overlapped another composer control.', 20_000);
+				await evaluateFikeya<boolean>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
+					const prompt = form?.querySelector('[name="prompt"]');
+					const cancel = form?.querySelector('[data-network-cancel]');
+					if (!prompt || !cancel) return false;
+					cancel.click();
+					prompt.value = '';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					return true;
+				})()`);
+				return `At ${state.viewportHeight}px high, the one-message network confirmation remained fully visible between the prompt and footer with both confirmation actions usable.`;
 			}
 		},
 		{
 			id: 'narrow-chat-panel',
 			title: 'Use Chat and its current Plan at a 360px-class panel width',
 			async run({ code, page }) {
-				proofWindowBounds = await page.evaluate<DesktopWindowBounds>('({ width: window.outerWidth, height: window.outerHeight })');
-				await evaluateFikeya<boolean>(code, `(() => {
-					const chatTab = document.querySelector('[data-surface-tab="chat"]');
-					if (!chatTab) return false;
-					chatTab.click();
-					return true;
-				})()`);
+				proofWindowBounds ??= await page.evaluate<DesktopWindowBounds>('({ width: window.outerWidth, height: window.outerHeight })');
 				await resizeFikeyaPanel(code, page, 380);
 				const narrow = await waitForFikeya<NarrowPanelState>(code, `(() => {
 					const visible = element => {
@@ -572,57 +786,61 @@ const scenario: Scenario = {
 						const rect = element.getBoundingClientRect();
 						return rect.width > 0 && rect.height > 0 && rect.left >= -1 && rect.right <= window.innerWidth + 1;
 					};
-					const chatTab = document.querySelector('[data-surface-tab="chat"]');
-					const planTab = document.querySelector('[data-surface-tab="plan"]');
-					const openPlan = document.querySelector('[data-open-plan]');
+					const currentPlan = document.querySelector('.chat-plan-details > summary');
 					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
 					const send = document.querySelector('[data-agent-run]');
-					const moreOptions = document.querySelector('.run-controls > summary');
+					const mode = document.querySelector('[data-agent-form] [name="chatMode"]');
+					const contextOptions = document.querySelector('.run-controls > summary');
+					const moreActions = document.querySelector('.composer-route > summary');
+					const form = document.querySelector('[data-agent-form]');
+					const formRect = form?.getBoundingClientRect();
 					const value = {
 						viewportWidth: window.innerWidth,
 						documentWidth: document.documentElement.scrollWidth,
 						bodyWidth: document.body.scrollWidth,
-						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden && visible(chatTab),
-						planTabVisible: visible(planTab),
-						openPlanVisible: visible(openPlan),
+						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden,
+						currentPlanVisible: visible(currentPlan),
 						promptVisible: visible(prompt),
 						sendVisible: visible(send),
-						moreOptionsVisible: visible(moreOptions)
+						modeVisible: visible(mode),
+						contextOptionsVisible: visible(contextOptions),
+						moreActionsVisible: visible(moreActions),
+						multitaskAvailable: Array.from(mode?.options ?? []).some(option => option.value === 'multitask'),
+						composerAnchored: Boolean(formRect && formRect.bottom <= window.innerHeight + 1 && formRect.bottom >= window.innerHeight - 36)
 					};
 					return value.viewportWidth >= 340 && value.viewportWidth <= 420
 						&& value.documentWidth <= value.viewportWidth + 1
 						&& value.bodyWidth <= value.viewportWidth + 1
-						&& Object.entries(value).filter(([key]) => key.endsWith('Visible')).every(([, shown]) => shown === true)
+						&& Object.entries(value).filter(([key]) => key.endsWith('Visible') || key === 'multitaskAvailable' || key === 'composerAnchored').every(([, shown]) => shown === true)
 						? value
 						: false;
 				})()`, 'The real Chat panel overflowed or hid a primary control at its narrow width.', 20_000);
 				const planOpened = await evaluateFikeya<boolean>(code, `(() => {
-					const openPlan = document.querySelector('[data-open-plan]');
-					if (!openPlan) return false;
-					openPlan.click();
-					const panel = document.querySelector('[data-surface-panel="plan"]');
+					const plan = document.querySelector('.chat-plan-details');
+					if (!plan) return false;
+					plan.open = true;
 					const review = document.querySelector('[data-plan-action="review"]');
 					const rect = review?.getBoundingClientRect();
-					const usable = !panel?.hidden && rect && rect.width > 0 && rect.right <= window.innerWidth + 1;
-					document.querySelector('[data-surface-tab="chat"]')?.click();
+					const usable = plan.open && rect && rect.width > 0 && rect.right <= window.innerWidth + 1;
+					plan.open = false;
 					document.querySelector('[data-agent-form]')?.scrollIntoView({ block: 'end' });
 					return Boolean(usable);
 				})()`);
 				if (!planOpened) {
-					throw new Error('Open Plan did not expose the draft review control at the narrow panel width.');
+					throw new Error('The inline Plan did not expose the draft review control at the narrow panel width.');
 				}
 				const optionsReachable = await evaluateFikeya<boolean>(code, `(() => {
 					const options = document.querySelector('.run-controls');
 					if (!options) return false;
 					options.open = true;
-					const createPlan = document.querySelector('[data-agent-plan]');
-					const rect = createPlan?.getBoundingClientRect();
+					const contextBudget = options.querySelector('[name="contextMaxCharacters"]');
+					const rect = contextBudget?.getBoundingClientRect();
 					return Boolean(rect && rect.width > 0 && rect.right <= window.innerWidth + 1);
 				})()`);
 				if (!optionsReachable) {
-					throw new Error('More chat options did not expose Create plan at the narrow panel width.');
+					throw new Error('Context and output options were not reachable from the fixed composer at the narrow panel width.');
 				}
-				return `At ${narrow.viewportWidth}px, Chat, Plan, Open Plan, the composer, Send, and the compact More options menu remained usable with no horizontal document overflow.`;
+				return `At ${narrow.viewportWidth}px, Chat, the inline Plan, fixed composer, Send, Agent/Plan/Research/Multitask selector, and compact context/actions menus remained usable with no horizontal document overflow.`;
 			}
 		},
 		{
@@ -630,13 +848,13 @@ const scenario: Scenario = {
 			title: 'Select a real Qarinah memory node at the narrow panel width',
 			async run({ code }) {
 				const opened = await evaluateFikeya<boolean>(code, `(() => {
-					const contextTab = document.querySelector('[data-surface-tab="context"]');
-					if (!contextTab) return false;
-					contextTab.click();
-					return true;
+					const trigger = document.querySelector('[data-modal-open="context"]');
+					if (!trigger) return false;
+					trigger.click();
+					return Boolean(document.querySelector('[data-workspace-modal="context"]')?.open);
 				})()`);
 				if (!opened) {
-					throw new Error('The Context tab was not available at the narrow panel width.');
+					throw new Error('The Context graph overlay was not available from the compact chat actions.');
 				}
 				await waitForFikeya<number>(code, `(() => {
 					const nodes = document.querySelectorAll('.graph-node');
@@ -691,7 +909,10 @@ const scenario: Scenario = {
 			async run({ code, page }) {
 				await restoreProofWindow(code, page);
 				const clicked = await evaluateFikeya<boolean>(code, `(() => {
-					document.querySelector('[data-surface-tab="plan"]')?.click();
+					document.querySelector('[data-workspace-modal="context"]')?.querySelector('[data-modal-close]')?.click();
+					const plan = document.querySelector('.chat-plan-details');
+					if (!plan) return false;
+					plan.open = true;
 					const button = document.querySelector('[data-plan-action="review"]');
 					if (!button || button.disabled) return false;
 					button.click();
@@ -701,6 +922,8 @@ const scenario: Scenario = {
 					throw new Error('The immutable review action was not available on the draft.');
 				}
 				const reviewed = await waitForFikeya<ReviewedState>(code, `(() => {
+					const plan = document.querySelector('.chat-plan-details');
+					if (plan) plan.open = true;
 					const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 					const badge = surface?.querySelector('.badge')?.textContent?.trim();
 					const start = surface?.querySelector('[data-plan-action="run"]')?.textContent?.trim();
@@ -717,6 +940,8 @@ const scenario: Scenario = {
 			title: 'Stop at the first exact approval boundary',
 			async run({ code }) {
 				const clicked = await evaluateFikeya<boolean>(code, `(() => {
+					const plan = document.querySelector('.chat-plan-details');
+					if (plan) plan.open = true;
 					const button = document.querySelector('[data-plan-action="run"]');
 					if (!button || button.disabled) return false;
 					button.click();
@@ -726,6 +951,8 @@ const scenario: Scenario = {
 					throw new Error('The reviewed plan could not be started to its approval boundary.');
 				}
 				await waitForFikeya<boolean>(code, `(() => {
+					const plan = document.querySelector('.chat-plan-details');
+					if (plan) plan.open = true;
 					const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 					if (surface?.querySelector('.badge')?.textContent?.trim() !== 'Awaiting Approval') return false;
 					const step = Array.from(surface.querySelectorAll('[data-plan-step]')).find(candidate =>
@@ -736,6 +963,8 @@ const scenario: Scenario = {
 					return true;
 				})()`, 'The runtime did not expose the first exact step awaiting approval.', 60_000);
 				const proof = await waitForFikeya<ApprovalState>(code, `(() => {
+					const plan = document.querySelector('.chat-plan-details');
+					if (plan) plan.open = true;
 					const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 					const badge = surface?.querySelector('.badge')?.textContent?.trim();
 					const selected = surface?.querySelector('[data-plan-step][aria-selected="true"]');
@@ -780,6 +1009,8 @@ const scenario: Scenario = {
 				await resumeApprovedStep(code);
 				await waitForVerifiedStep(code, 'find-review-boundary');
 				const completed = await waitForFikeya<CompletedPlanState>(code, `(() => {
+					const plan = document.querySelector('.chat-plan-details');
+					if (plan) plan.open = true;
 					const surface = document.querySelector('[aria-labelledby="plan-surface-title"]');
 					const planMeta = surface?.querySelector('.plan-heading p')?.textContent?.trim() ?? '';
 					const planId = /Durable plan (pln_[a-z0-9]+) /.exec(planMeta)?.[1] ?? '';

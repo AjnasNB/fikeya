@@ -21,7 +21,7 @@ const processTerminationGraceMilliseconds = 2_000;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
-export type FikeyaRuntimeFailure = 'none' | 'not-found' | 'timeout' | 'output-limit' | 'runtime-error' | 'provider-error' | 'authentication' | 'quota' | 'invalid-json' | 'cancelled';
+export type FikeyaRuntimeFailure = 'none' | 'not-found' | 'timeout' | 'output-limit' | 'runtime-error' | 'provider-error' | 'provider-unreachable' | 'agent-no-progress' | 'authentication' | 'quota' | 'invalid-json' | 'cancelled';
 
 export type FikeyaRuntimeCommand = 'doctor' | 'init';
 
@@ -2163,8 +2163,20 @@ function startAgentProtocolCli(
 export function parseProtocolFailure(record: Record<string, unknown>): FikeyaRuntimeFailure | undefined {
 	if (record.type !== 'error'
 		|| !boundedString(record.message, 2_048)
-		|| !isBoundedInteger(record.statusCode, 100, 599)
 		|| typeof record.retryable !== 'boolean') {
+		return undefined;
+	}
+	if (record.kind === 'connectivity') {
+		return record.retryable === true && record.statusCode === undefined
+			? 'provider-unreachable'
+			: undefined;
+	}
+	if (record.kind === 'agent_no_progress') {
+		return record.retryable === false && record.statusCode === undefined
+			? 'agent-no-progress'
+			: undefined;
+	}
+	if (!isBoundedInteger(record.statusCode, 100, 599)) {
 		return undefined;
 	}
 	switch (record.kind) {

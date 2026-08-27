@@ -16,6 +16,7 @@ from typing import Protocol
 from .errors import (
     CancellationError,
     ConfigurationError,
+    ProviderConnectivityError,
     ProviderError,
     ProviderHttpError,
 )
@@ -188,9 +189,7 @@ class UrllibJsonTransport:
             error.close()
             raise ProviderHttpError(int(error.code)) from error
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
-            raise ProviderError(
-                "Provider request failed before a response was received."
-            ) from error
+            raise ProviderConnectivityError() from error
         cancellation.raise_if_cancelled()
         try:
             decoded = json.loads(raw_body)

@@ -89,21 +89,23 @@ export async function main(argv: string[]): Promise<void> {
 		}
 	}
 
+	const displayVersion = product.distributionVersion ?? product.version;
+
 	// Help (general)
 	if (args.help) {
 		const executable = `${product.applicationName}${isWindows ? '.exe' : ''}`;
-		console.log(buildHelpMessage(product.nameLong, executable, product.version, OPTIONS));
+		console.log(buildHelpMessage(product.nameLong, executable, displayVersion, OPTIONS));
 	}
 
 	// Help (chat)
 	else if (args.chat?.help) {
 		const executable = `${product.applicationName}${isWindows ? '.exe' : ''}`;
-		console.log(buildHelpMessage(product.nameLong, executable, product.version, OPTIONS.chat.options, { isChat: true }));
+		console.log(buildHelpMessage(product.nameLong, executable, displayVersion, OPTIONS.chat.options, { isChat: true }));
 	}
 
 	// Version Info
 	else if (args.version) {
-		console.log(buildVersionMessage(product.version, product.commit));
+		console.log(buildVersionMessage(displayVersion, product.commit));
 	}
 
 	// Shell integration

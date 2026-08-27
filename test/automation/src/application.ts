@@ -132,8 +132,14 @@ export class Application {
 
 	private async checkWindowReady(code: Code): Promise<void> {
 
-		// We need a rendered workbench
+		// Electron may expose an auxiliary or blank window before the actual
+		// workbench. Select the page that rendered the workbench before using the
+		// injected automation driver, otherwise readiness can wait on the wrong
+		// document indefinitely.
 		await measureAndLog(() => code.didFinishLoad(), 'Application#checkWindowReady: wait for navigation to be committed', this.logger);
+		await measureAndLog(() => code.driver.waitForWorkbenchWindow('.monaco-workbench', 60_000), 'Application#checkWindowReady: select rendered workbench window', this.logger);
+
+		// We need a rendered workbench and its automation driver.
 		await measureAndLog(() => code.waitForElement('.monaco-workbench'), 'Application#checkWindowReady: wait for .monaco-workbench element', this.logger);
 		await measureAndLog(() => code.whenWorkbenchRestored(), 'Application#checkWorkbenchRestored', this.logger);
 

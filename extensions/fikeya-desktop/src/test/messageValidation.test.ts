@@ -5,7 +5,7 @@
 
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { agentComposerConstraints, agentComposerDefaults, invokeAgentRunRequest, isAgentComposerNumberValid } from '../agentComposer';
+import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderPrompt, invokeAgentRunRequest, isAgentComposerNumberValid } from '../agentComposer';
 import { escapeHtml, parseWebviewMessage } from '../messageValidation';
 
 describe('Fikeya webview message validation', () => {
@@ -74,6 +74,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			mode: 'research',
 			allowNetwork: true
 		};
 		assert.deepStrictEqual(parseWebviewMessage(request), {
@@ -83,6 +84,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			mode: 'research',
 			allowNetwork: true
 		});
 		assert.deepStrictEqual(parseWebviewMessage({ ...request, type: 'proposePlan' }), {
@@ -117,21 +119,62 @@ describe('Fikeya webview message validation', () => {
 			providerName: 'local-default',
 			prompt: 'Inspect the current project.',
 			...agentComposerDefaults,
+			mode: 'agent',
 			allowNetwork: true
 		});
 		assert.ok(request && request.type === 'runAgent');
 
-		let invocation: readonly [string, string, number, number, string] | undefined;
-		await invokeAgentRunRequest(request, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode) => {
-			invocation = [providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode];
+		let invocation: readonly [string, string, number, number, string, string] | undefined;
+		await invokeAgentRunRequest(request, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode) => {
+			invocation = [providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode];
 		});
 		assert.deepStrictEqual(invocation, [
 			'local-default',
 			'Inspect the current project.',
 			agentComposerDefaults.maxOutputTokens,
 			agentComposerDefaults.contextMaxCharacters,
-			agentComposerDefaults.memoryMode
+			agentComposerDefaults.memoryMode,
+			'agent'
 		]);
+		assert.strictEqual(buildAgentProviderPrompt('agent', 'Inspect the current project.'), 'Inspect the current project.');
+		assert.match(buildAgentProviderPrompt('research', 'Where is the parser?'), /Distinguish project evidence from inference/u);
+	});
+
+	test('accepts only bounded consented parallel-agent selections', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			prompt: 'Review the same change independently.',
+			maxConcurrency: 2,
+			allowNetwork: true
+		}), {
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			prompt: 'Review the same change independently.',
+			maxConcurrency: 2,
+			allowNetwork: true
+		});
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer', 'security-reviewer'],
+			prompt: 'Duplicate selection.',
+			maxConcurrency: 2,
+			allowNetwork: true
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer'],
+			prompt: 'No consent.',
+			maxConcurrency: 1,
+			allowNetwork: false
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer'],
+			prompt: 'Too much parallelism.',
+			maxConcurrency: 9,
+			allowNetwork: true
+		}), undefined);
 	});
 
 	test('accepts an exact bounded plan specification and declared lifecycle actions', () => {

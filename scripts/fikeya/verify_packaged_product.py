@@ -23,14 +23,69 @@ def verify_built_in_ai_extensions(product: Any, source: str) -> None:
         )
 
 
-def verify_packaged_product(path: Path) -> None:
+def _read_json_object(path: Path, label: str) -> dict[str, Any]:
     try:
-        product = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
-        raise ValueError(f"Packaged product.json was not found: {path}") from error
+        raise ValueError(f"Packaged {label} was not found: {path}") from error
     except json.JSONDecodeError as error:
-        raise ValueError(f"Packaged product.json is invalid JSON: {path}: {error}") from error
+        raise ValueError(f"Packaged {label} is invalid JSON: {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"Packaged {label} must contain a JSON object: {path}")
+    return value
+
+
+def verify_runtime_version_identity(
+    product: Mapping[str, Any],
+    package_configuration: Mapping[str, Any],
+    *,
+    runtime_version: str,
+    public_version: str,
+) -> None:
+    """Keep extension API compatibility separate from Fikeya's public release version."""
+    for source, value in (
+        ("product.json version", product.get("version")),
+        ("package.json version", package_configuration.get("version")),
+    ):
+        if value != runtime_version:
+            raise ValueError(
+                f"Packaged {source} is {value!r}; expected Code OSS runtime version "
+                f"{runtime_version!r}. Public Fikeya versions must not replace the "
+                "extension API compatibility version."
+            )
+    for source, value in (
+        ("product.json distributionVersion", product.get("distributionVersion")),
+        ("package.json distributionVersion", package_configuration.get("distributionVersion")),
+    ):
+        if value != public_version:
+            raise ValueError(
+                f"Packaged {source} is {value!r}; expected public Fikeya version "
+                f"{public_version!r}."
+            )
+
+
+def verify_packaged_product(
+    path: Path,
+    *,
+    package_path: Path | None = None,
+    runtime_version: str | None = None,
+    public_version: str | None = None,
+) -> None:
+    product = _read_json_object(path, "product.json")
     verify_built_in_ai_extensions(product, str(path))
+    compatibility_arguments = (package_path, runtime_version, public_version)
+    if any(argument is not None for argument in compatibility_arguments):
+        if not all(argument is not None for argument in compatibility_arguments):
+            raise ValueError(
+                "package_path, runtime_version, and public_version must be provided together."
+            )
+        package_configuration = _read_json_object(package_path, "package.json")
+        verify_runtime_version_identity(
+            product,
+            package_configuration,
+            runtime_version=runtime_version,
+            public_version=public_version,
+        )
 
 
 def read_windows_executable_metadata(executable_path: Path) -> Mapping[str, Any]:
@@ -116,12 +171,19 @@ def main() -> int:
         description="Verify provider-neutral fields in a packaged Fikeya product.json."
     )
     parser.add_argument("product_json", type=Path, help="Path to the packaged resources/app/product.json")
+    parser.add_argument("--package-json", type=Path, help="Packaged resources/app/package.json")
+    parser.add_argument("--runtime-version", help="Code OSS extension API compatibility version")
     parser.add_argument("--executable", type=Path, help="Packaged Fikeya.exe to verify on Windows")
     parser.add_argument("--public-version", help="Human-facing prerelease version")
     parser.add_argument("--numeric-version", help="Four-part Windows PE version")
     arguments = parser.parse_args()
     try:
-        verify_packaged_product(arguments.product_json.resolve())
+        verify_packaged_product(
+            arguments.product_json.resolve(),
+            package_path=arguments.package_json.resolve() if arguments.package_json else None,
+            runtime_version=arguments.runtime_version,
+            public_version=arguments.public_version,
+        )
         executable_arguments = (
             arguments.executable,
             arguments.public_version,
@@ -142,6 +204,12 @@ def main() -> int:
         parser.exit(1, f"ERROR: {error}\n")
     print(f"Packaged Fikeya product verified: {arguments.product_json}")
     print("Verified builtInAiExtensions is exactly [].")
+    if arguments.package_json:
+        print(
+            "Verified Code OSS runtime compatibility version "
+            f"{arguments.runtime_version} and Fikeya distribution version "
+            f"{arguments.public_version}."
+        )
     if arguments.executable:
         print(f"Packaged Fikeya executable verified: {arguments.executable}")
     return 0

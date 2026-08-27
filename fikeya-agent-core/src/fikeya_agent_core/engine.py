@@ -15,6 +15,7 @@ from typing import TypeVar
 from .cancellation import CancellationToken
 from .checkpoints import CheckpointStore
 from .errors import (
+    AgentNoProgressError,
     BrokerOutcomeUncertainError,
     CancellationError,
     LimitExceededError,
@@ -158,6 +159,7 @@ class AgentOrchestrator:
                 for event in initial_events:
                     yield event
 
+            seen_provider_requests: set[str] = set()
             while not state.terminal:
                 token.raise_if_cancelled()
                 if state.step_count >= self.limits.max_steps:
@@ -167,7 +169,7 @@ class AgentOrchestrator:
                 yield event
 
                 if state.stage == Stage.PLAN:
-                    result, retries = await self._provider_call(state, token)
+                    result, retries = await self._provider_call(state, token, seen_provider_requests)
                     state, retry_events = self._retry_events(state, "provider", retries)
                     for event in retry_events:
                         yield event
@@ -186,7 +188,7 @@ class AgentOrchestrator:
                     continue
 
                 if state.stage == Stage.ACT:
-                    result, retries = await self._provider_call(state, token)
+                    result, retries = await self._provider_call(state, token, seen_provider_requests)
                     state, retry_events = self._retry_events(state, "provider", retries)
                     for event in retry_events:
                         yield event
@@ -268,7 +270,7 @@ class AgentOrchestrator:
                     continue
 
                 if state.stage == Stage.REVIEW:
-                    result, retries = await self._provider_call(state, token)
+                    result, retries = await self._provider_call(state, token, seen_provider_requests)
                     state, retry_events = self._retry_events(state, "provider", retries)
                     for event in retry_events:
                         yield event
@@ -320,6 +322,25 @@ class AgentOrchestrator:
                 {
                     "errorType": type(error.__cause__).__name__ if error.__cause__ else type(error).__name__,
                     "reconciliationRequired": True,
+                },
+            )
+            yield event
+            raise
+        except AgentNoProgressError as error:
+            state.stage = Stage.FAILED
+            state.failure_code = "agent_no_progress"
+            state.final_output = None
+            state.pending_call = None
+            state.pending_approval = None
+            state.approval_grant = None
+            state.execution_lease_id = None
+            state.execution_lease_expires_at_ms = None
+            state, event = self._record(
+                state,
+                EventKind.SESSION_FAILED,
+                {
+                    "errorType": type(error).__name__,
+                    "reason": "agent_no_progress",
                 },
             )
             yield event
@@ -550,9 +571,16 @@ class AgentOrchestrator:
         self,
         state: SessionState,
         token: CancellationToken,
+        seen_requests: set[str],
     ) -> tuple[ProviderResult, int]:
         tools = await self._tools(token)
         request = self._provider_request(state, tools)
+        request_fingerprint = _provider_request_fingerprint(request)
+        if request_fingerprint in seen_requests:
+            raise AgentNoProgressError(
+                "agent produced no new state and would repeat an identical provider request"
+            )
+        seen_requests.add(request_fingerprint)
         return await self._bounded_retry(
             lambda: self.provider.complete(request, token),
             RetryableProviderError,
@@ -805,6 +833,32 @@ class AgentOrchestrator:
             )
         ):
             raise ProtocolError(f"stage {state.stage.value} contains unauthorized execution state")
+
+
+def _provider_request_fingerprint(request: ProviderRequest) -> str:
+    """Hash one exact provider state without retaining any request content."""
+
+    return sha256_value(
+        {
+            "candidateAnswer": request.candidate_answer,
+            "maxOutputBytes": request.max_output_bytes,
+            "observations": [
+                {
+                    "callId": item.call_id,
+                    "contentType": item.content_type,
+                    "output": item.output,
+                    "status": item.status,
+                }
+                for item in request.observations
+            ],
+            "plan": request.plan,
+            "prompt": request.prompt,
+            "reviewNotes": request.review_notes,
+            "stage": request.stage.value,
+            "system": request.system,
+            "tools": [_tool_value(item) for item in request.tools],
+        }
+    )
 
 
 def _tool_value(tool: ToolDefinition) -> dict[str, JsonValue]:

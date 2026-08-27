@@ -4,15 +4,19 @@ Fikeya Desktop is the focused coding-agent workspace for the local Fikeya runtim
 
 ## Chat beside the editor
 
-Use **Fikeya: Open Fikeya Chat** (`Ctrl+Alt+I` or `Ctrl+Alt+L`, `Cmd` on macOS) to open a conversation in the editor group beside the active code. The compact activity-bar view is a launcher with direct routes to Chat, Plan, the Qarinah context graph, and local usage. The full panel separates **Chat**, **Plan**, **Context**, **Usage**, and **Setup**; Code, Terminal, and Review route to the existing native workbench surfaces instead of recreating them inside a dashboard.
+Use **Fikeya: Open Fikeya Chat** (`Ctrl+Alt+I` or `Ctrl+Alt+L`, `Cmd` on macOS) to open a conversation in the editor group beside the active code. Chat keeps the thread and bottom composer in focus. Compact controls beside the prompt select Agent, Plan, Research, or Multitask mode, choose the model, configure context, and open the Qarinah graph, usage receipts, or provider setup in temporary overlays. Code, Terminal, and Review continue to use the native workbench instead of being duplicated inside Chat.
 
 Chat keeps a bounded conversation visible beside the editor. When workspace conversation history is enabled, a redacted bounded snapshot is stored in VS Code workspace state so the latest thread can survive an extension-host restart; users can disable retention or clear the conversation from Chat. Conversation bodies are not written to analytics. Each submitted turn executes through the same reviewed Fikeya Runtime protocol, recompiles task-relevant Qarinah evidence, pauses for exact tool approvals, and attaches receipts to the latest run. Durable project evidence belongs to Qarinah, while Fikeya Runtime stores only its documented session and receipt records. Reopening the command reveals the existing panel rather than creating duplicate sessions or message listeners. A webview message cannot invoke arbitrary workbench commands: every command and action is validated against a fixed allowlist.
 
-**Send** and **Create plan** are different operations. Send starts the interactive `fikeya agent execute` loop, which may request tools and pauses at every exact approval. Create plan calls `fikeya plan propose` with a versioned request over stdin. The provider receives trusted planning-only instructions and must return exactly one `fikeya.plan-proposal.v1` JSON envelope. That provider turn exposes no tool channel, writes no project files, and can persist only a validated `draft` plan. Narrative, fenced JSON, duplicate keys, non-finite values, unsupported tools, invalid dependencies, or an oversized response fail closed without creating a plan.
+Fikeya Desktop opens the chat-first workspace at startup by default. Compatible VS Code and Code OSS desktop hosts open it once on first activation so the setup path is visible without repeatedly interrupting the editor. Set `fikeya.chat.openAtStartup` to `false` to opt out.
+
+**Agent** and **Plan** are different composer modes. Agent starts the interactive `fikeya agent execute` loop, which may request tools and pauses at every exact approval. Plan calls `fikeya plan propose` with a versioned request over stdin. The provider receives trusted planning-only instructions and must return exactly one `fikeya.plan-proposal.v1` JSON envelope. That provider turn exposes no tool channel, writes no project files, and can persist only a validated `draft` plan. Narrative, fenced JSON, duplicate keys, non-finite values, unsupported tools, invalid dependencies, or an oversized response fail closed without creating a plan.
+
+**Multitask** runs selected advisory profiles in parallel against the same bounded prompt and workspace evidence. A workspace may retain up to 32 profiles, a run may select up to 16, and the local scheduler executes at most three by default. Each profile chooses its own configured provider and planner, researcher, or reviewer instruction. Tool approvals stay serialized, every completed run keeps a separate provider and Qarinah receipt, and shared-workspace write roles are intentionally excluded until isolated worktree execution is available.
 
 ## Plan-to-proof workspace
 
-The **Plan** destination renders the durable plan record separately from the conversation. It shows the plan status, ordered steps, dependencies, canonical tool name and arguments, exact tool-call digest, approval reference, execution status, verification checks, and record or proof hashes when present.
+The current durable plan is rendered inside Chat as an expandable record. It shows the plan status, ordered steps, dependencies, canonical tool name and arguments, exact tool-call digest, approval reference, execution status, verification checks, and record or proof hashes when present.
 
 The current lifecycle is explicit:
 
@@ -27,10 +31,10 @@ The UI does not describe a draft, reviewed plan, or approved step as completed. 
 
 ## Surface boundaries
 
-- **Chat** is the bounded conversation and interactive agent entry point.
-- **Plan** is the durable proposed/reviewed/approved/executed state machine and its verification evidence.
-- **Context** is the local Qarinah graph and cited context-receipt inspection surface.
-- **Usage** is content-free workspace statistics and provider-reported token accounting when the provider supplies it.
+- **Chat** is the default bounded conversation, planning, research, and agent entry point.
+- **Plan mode** creates the durable proposed/reviewed/approved/executed state machine; the current record and verification evidence remain inside Chat.
+- **Context** opens the local Qarinah graph and cited context-receipt inspector as a temporary overlay.
+- **Usage** opens content-free workspace statistics and provider-reported token accounting as a temporary overlay when the provider supplies it.
 
 Context and Usage are evidence surfaces, not authority to execute. Plan review is not tool approval, and a provider never receives the ability to approve its own proposal.
 

@@ -25,6 +25,7 @@ from .credentials import CredentialResolver
 from .errors import (
     CancellationError,
     FikeyaError,
+    ProviderConnectivityError,
     ProviderError,
     ProviderHttpError,
     SecretStoreUnavailable,
@@ -796,6 +797,7 @@ def _run_coding_agent(
     try:
         from fikeya_agent_core import (
             AgentCoreError,
+            AgentNoProgressError,
             ApprovalDecision,
         )
         from fikeya_agent_core import (
@@ -847,6 +849,16 @@ def _run_coding_agent(
                     history=history,
                 )
             )
+    except ProviderConnectivityError as error:
+        _emit_protocol_message(
+            {
+                "kind": error.kind,
+                "message": str(error),
+                "retryable": error.retryable,
+                "type": "error",
+            }
+        )
+        return 2
     except ProviderHttpError as error:
         _emit_protocol_message(
             {
@@ -854,6 +866,18 @@ def _run_coding_agent(
                 "message": str(error),
                 "retryable": error.retryable,
                 "statusCode": error.status_code,
+                "type": "error",
+            }
+        )
+        return 2
+    except AgentNoProgressError:
+        _emit_protocol_message(
+            {
+                "kind": "agent_no_progress",
+                "message": (
+                    "Fikeya stopped before repeating an unchanged provider request."
+                ),
+                "retryable": False,
                 "type": "error",
             }
         )

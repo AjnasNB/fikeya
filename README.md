@@ -1,6 +1,6 @@
 # Fikeya
 
-Fikeya is an open, provider-neutral AI code editor and coding-agent runtime with two interfaces: a desktop editor for visual work and a CLI for headless automation. It is designed to plan, edit, run, and review software work while compiling only the bounded project context a turn needs.
+Fikeya is an open, provider-neutral AI code editor and coding-agent runtime with two interfaces: a desktop editor for visual work and a CLI for headless automation. Bring your model and spend fewer tokens while Fikeya plans, edits, runs, and reviews software work using only the bounded project context a turn needs.
 
 Its optimization goal is **verified work per dollar**: preserve task quality and external verification while reducing unnecessary context, recording exact provider usage when available, and avoiding lock-in to one model or agent. That is a product target measured by matched evaluations, not a claim that every Fikeya run is already cheaper than another system.
 
@@ -60,7 +60,7 @@ See [the security model](docs/fikeya/SECURITY.md) and [architecture](docs/fikeya
 
 ## Release status
 
-Fikeya 0.1.0-beta.2 is the current public-beta source candidate. This milestone adds provider-generated draft plans through a planning-only turn with no tool channel, a separate durable Plan surface, explicit developer review, exact one-use approvals for canonical calls, bounded execution, and terminal verification receipts. It also retains the branded Code OSS desktop, focused VS Code extension, secure Python runtime and CLI, provider profiles, local usage statistics, Qarinah initialization and graph inspection, ACP and MCP interoperability packages, and opt-in browser and crawler presets. Stable release gates remain: signed Windows, macOS, and Linux artifacts, clean-install verification on all three platforms, and a verified Desktop update feed.
+Fikeya 0.1.0-beta.2 is the current public-beta source candidate. This milestone adds a chat-first composer, provider-generated draft plans through a planning-only turn with no tool channel, expandable durable plan evidence inside Chat, bounded parallel advisory agents, explicit developer review, exact one-use approvals for canonical calls, bounded execution, and terminal verification receipts. It also retains the branded Code OSS desktop, focused VS Code extension, secure Python runtime and CLI, provider profiles, local usage statistics, Qarinah initialization and graph inspection, ACP and MCP interoperability packages, and opt-in browser and crawler presets. Stable release gates remain: signed Windows, macOS, and Linux artifacts, clean-install verification on all three platforms, and a verified Desktop update feed.
 
 The VS Code extension follows the host's extension update channel. Fikeya Desktop does not silently download or force an unsigned executable. A future mandatory-update policy must verify a signed release manifest before it can block an unsupported build. See the public [code-signing policy](docs/fikeya/CODE_SIGNING_POLICY.md) and [privacy policy](https://fikeya.com/privacy/) for release roles, provider transfers, retention, and deletion.
 

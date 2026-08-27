@@ -82,8 +82,28 @@ export class Editor {
 		const line = `${editor} .view-lines > .view-line:nth-child(${lineNumber})`;
 		const editContext = `${editor} ${this._editContextSelector()}`;
 
-		await this.code.waitAndClick(line, 1, 1);
-		await this.code.waitForActiveElement(editContext);
+		let lastFocusError: unknown;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const actionWidget = this.code.driver.currentPage.locator('.action-widget:visible').first();
+			if (await actionWidget.isVisible().catch(() => false)) {
+				// A transient Monaco action widget can regain focus after settings opens.
+				// Dismiss it before each user-level click instead of forcing DOM focus.
+				await this.code.driver.currentPage.keyboard.press('Escape');
+				await actionWidget.waitFor({ state: 'hidden', timeout: 5_000 });
+			}
+
+			await this.code.waitAndClick(line, 1, 1);
+			try {
+				// Two short recovery probes keep the final normal timeout available for
+				// useful diagnostics when the editor genuinely cannot receive focus.
+				await this.code.waitForActiveElement(editContext, attempt === 2 ? 200 : 50);
+				return;
+			} catch (error) {
+				lastFocusError = error;
+			}
+		}
+
+		throw lastFocusError;
 	}
 
 	async waitForTypeInEditor(filename: string, text: string, selectorPrefix = ''): Promise<any> {

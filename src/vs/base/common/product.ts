@@ -98,6 +98,8 @@ export interface IDictationRuntimeProductConfig {
 
 export interface IProductConfiguration {
 	readonly version: string;
+	/** Human-facing Fikeya release version, independent of the Code OSS extension API version. */
+	readonly distributionVersion?: string;
 	readonly date?: string;
 	readonly quality?: string;
 	readonly commit?: string;

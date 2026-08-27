@@ -134,10 +134,16 @@ if (-not $SkipDesktop) {
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "compile-build-without-mangling")
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64")
 	$packagedProduct = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\resources\app\product.json"
+	$packagedPackage = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\resources\app\package.json"
 	$packagedExecutable = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\Fikeya.exe"
+	$runtimeCompatibilityVersion = [string](Get-Content -LiteralPath (Join-Path $repositoryRoot "package.json") -Raw | ConvertFrom-Json).version
 	Invoke-Checked $repositoryRoot "python" @(
 		"scripts\fikeya\verify_packaged_product.py",
 		$packagedProduct,
+		"--package-json",
+		$packagedPackage,
+		"--runtime-version",
+		$runtimeCompatibilityVersion,
 		"--executable",
 		$packagedExecutable,
 		"--public-version",

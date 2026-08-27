@@ -45,6 +45,9 @@ const rcedit = promisify(rceditCallback);
 const root = path.dirname(import.meta.dirname);
 const commit = getVersion(root);
 const includeCopilot = product.builtInAiExtensions.length > 0;
+const packageConfiguration = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as {
+	readonly version: string;
+};
 const packageLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8')) as {
 	readonly packages?: Readonly<Record<string, { readonly version?: string }>>;
 };
@@ -311,11 +314,19 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		const sources = es.merge(src, extensions)
 			.pipe(filter(sourceFilterPattern, { dot: true }));
 
-		const version = fikeyaDistribution.version;
+		// Extension compatibility is evaluated against product.version and the
+		// packaged package.json version. Keep those on the Code OSS API version;
+		// Fikeya's independently released product version is stamped separately.
+		const runtimeCompatibilityVersion = packageConfiguration.version;
+		const distributionVersion = fikeyaDistribution.version;
 		const quality = (product as { quality?: string }).quality;
 
 		const name = product.nameShort;
-		const packageJsonUpdates: Record<string, unknown> = { name, version };
+		const packageJsonUpdates: Record<string, unknown> = {
+			name,
+			version: runtimeCompatibilityVersion,
+			distributionVersion
+		};
 
 		if (platform === 'linux') {
 			packageJsonUpdates.desktopName = `${product.applicationName}.desktop`;
@@ -335,7 +346,8 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				json.commit = commit;
 				json.date = readISODate(out);
 				json.checksums = checksums;
-				json.version = version;
+				json.version = runtimeCompatibilityVersion;
+				json.distributionVersion = distributionVersion;
 				json.copilotVersions = {
 					runtime: getLockedPackageVersion('@github/copilot'),
 					sdk: getLockedPackageVersion('@github/copilot-sdk'),
@@ -546,7 +558,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				result = es.merge(result, gulp.src('resources/win32/versioned/bin/code.sh', { base: 'resources/win32/versioned' })
 					.pipe(replace('@@NAME@@', product.nameShort))
 					.pipe(replace('@@PRODNAME@@', product.nameLong))
-					.pipe(replace('@@VERSION@@', version))
+					.pipe(replace('@@VERSION@@', runtimeCompatibilityVersion))
 					.pipe(replace('@@COMMIT@@', String(commit)))
 					.pipe(replace('@@APPNAME@@', product.applicationName))
 					.pipe(replace('@@VERSIONFOLDER@@', versionedResourcesFolder))
@@ -561,7 +573,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 				result = es.merge(result, gulp.src('resources/win32/bin/code.sh', { base: 'resources/win32' })
 					.pipe(replace('@@NAME@@', product.nameShort))
 					.pipe(replace('@@PRODNAME@@', product.nameLong))
-					.pipe(replace('@@VERSION@@', version))
+					.pipe(replace('@@VERSION@@', runtimeCompatibilityVersion))
 					.pipe(replace('@@COMMIT@@', String(commit)))
 					.pipe(replace('@@APPNAME@@', product.applicationName))
 					.pipe(replace('@@SERVERDATAFOLDER@@', product.serverDataFolderName || '.vscode-remote'))
@@ -578,7 +590,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 
 			if (quality === 'stable' || quality === 'insider') {
 				result = es.merge(result, gulp.src('.build/win32/appx/**', { base: '.build/win32' }));
-				const rawVersion = version.replace(/-\w+$/, '').split('.');
+				const rawVersion = runtimeCompatibilityVersion.replace(/-\w+$/, '').split('.');
 				const appxVersion = `${rawVersion[0]}.0.${rawVersion[1]}.${rawVersion[2]}`;
 				result = es.merge(result, gulp.src('resources/win32/appx/AppxManifest.xml', { base: '.' })
 					.pipe(replace('@@AppxPackageName@@', product.win32AppUserModelId))

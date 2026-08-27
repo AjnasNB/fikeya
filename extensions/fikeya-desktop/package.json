@@ -24,9 +24,11 @@
 		}
 	},
 	"activationEvents": [
+		"onStartupFinished",
 		"onView:fikeya.dashboard",
 		"onCommand:fikeya.open",
 		"onCommand:fikeya.configureProvider",
+		"onCommand:fikeya.configureAgents",
 		"onCommand:fikeya.initializeWorkspace",
 		"onCommand:fikeya.runDoctor",
 		"onCommand:fikeya.mode.research",
@@ -68,6 +70,12 @@
 				"icon": "$(key)"
 			},
 			{
+				"command": "fikeya.configureAgents",
+				"title": "%command.configureAgents.title%",
+				"category": "%command.category%",
+				"icon": "$(organization)"
+			},
+			{
 				"command": "fikeya.chat.deleteSavedHistory",
 				"title": "%command.chat.deleteSavedHistory.title%",
 				"category": "%command.category%",
@@ -89,31 +97,31 @@
 				"command": "fikeya.mode.editor",
 				"title": "%command.mode.editor.title%",
 				"category": "%command.category%",
-				"enablement": "fikeya.isDesktop"
+				"enablement": "fikeya.supportsDesktopWorkbench"
 			},
 			{
 				"command": "fikeya.mode.agent",
 				"title": "%command.mode.agent.title%",
 				"category": "%command.category%",
-				"enablement": "fikeya.isDesktop"
+				"enablement": "fikeya.supportsDesktopWorkbench"
 			},
 			{
 				"command": "fikeya.mode.terminal",
 				"title": "%command.mode.terminal.title%",
 				"category": "%command.category%",
-				"enablement": "fikeya.isDesktop"
+				"enablement": "fikeya.supportsDesktopWorkbench"
 			},
 			{
 				"command": "fikeya.mode.review",
 				"title": "%command.mode.review.title%",
 				"category": "%command.category%",
-				"enablement": "fikeya.isDesktop"
+				"enablement": "fikeya.supportsDesktopWorkbench"
 			},
 			{
 				"command": "fikeya.mode.lab",
 				"title": "%command.mode.lab.title%",
 				"category": "%command.category%",
-				"enablement": "fikeya.isDesktop"
+				"enablement": "fikeya.supportsDesktopWorkbench"
 			},
 			{
 				"command": "fikeya.view.usage",
@@ -129,12 +137,18 @@
 				"command": "fikeya.mode.research",
 				"title": "%command.mode.research.title%",
 				"category": "%command.category%",
-				"enablement": "fikeya.isDesktop"
+				"enablement": "fikeya.supportsDesktopWorkbench"
 			}
 		],
 		"configuration": {
 			"title": "Fikeya",
 			"properties": {
+				"fikeya.chat.openAtStartup": {
+					"type": "boolean",
+					"default": true,
+					"scope": "window",
+					"description": "%configuration.chat.openAtStartup.description%"
+				},
 				"fikeya.chat.persistWorkspaceHistory": {
 					"type": "boolean",
 					"default": false,
@@ -184,10 +198,10 @@
 		}
 	},
 	"scripts": {
-		"compile": "npx gulp compile-extension:fikeya-desktop",
-		"watch": "npx gulp watch-extension:fikeya-desktop",
+		"compile": "tsc --project ./tsconfig.json",
+		"watch": "tsc --project ./tsconfig.json --watch",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",

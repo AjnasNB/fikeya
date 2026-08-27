@@ -99,13 +99,14 @@ function planProposalResultRecord(): Readonly<Record<string, unknown>> {
 async function writeProtocolFixture(
 	workspacePath: string,
 	command: 'agent' | 'plan',
-	records: readonly Readonly<Record<string, unknown>>[]
+	records: readonly Readonly<Record<string, unknown>>[],
+	exitCode = 0
 ): Promise<void> {
 	const output = records.map(record => `${JSON.stringify(record)}\n`).join('');
 	await writeFile(path.join(workspacePath, `${command}.stdout`), output, 'utf8');
 	const source = command === 'agent'
-		? "const fs = require('node:fs'); const output = fs.readFileSync(`${process.argv[1]}.stdout`, 'utf8'); process.stdin.once('data', () => { process.stdin.pause(); process.stdout.end(output, () => process.exit(0)); });\n"
-		: "const fs = require('node:fs'); const output = fs.readFileSync(`${process.argv[1]}.stdout`, 'utf8'); process.stdout.end(output);\n";
+		? `const fs = require('node:fs'); const output = fs.readFileSync(process.argv[1] + '.stdout', 'utf8'); process.stdin.once('data', () => { process.stdin.pause(); process.stdout.end(output, () => process.exit(${exitCode})); });\n`
+		: `const fs = require('node:fs'); const output = fs.readFileSync(process.argv[1] + '.stdout', 'utf8'); process.stdout.end(output, () => process.exit(${exitCode}));\n`;
 	await writeFile(path.join(workspacePath, command), source, 'utf8');
 }
 
@@ -125,7 +126,7 @@ async function writeCapturingProtocolFixture(
 }
 
 describe('Fikeya runtime protocol', () => {
-	test('classifies quota handoff messages without accepting unbounded data', () => {
+	test('classifies bounded provider handoff messages without inventing an HTTP response', () => {
 		assert.strictEqual(parseProtocolFailure({
 			kind: 'quota',
 			message: 'Provider returned HTTP 429; response body was not retained.',
@@ -140,6 +141,49 @@ describe('Fikeya runtime protocol', () => {
 			statusCode: 429,
 			type: 'error'
 		}), undefined);
+		assert.strictEqual(parseProtocolFailure({
+			kind: 'connectivity',
+			message: 'Provider endpoint could not be reached before a response was received.',
+			retryable: true,
+			type: 'error'
+		}), 'provider-unreachable');
+		assert.strictEqual(parseProtocolFailure({
+			kind: 'connectivity',
+			message: 'Provider endpoint could not be reached before a response was received.',
+			retryable: true,
+			statusCode: 503,
+			type: 'error'
+		}), undefined, 'connectivity failures must not imply that an HTTP response existed');
+		assert.strictEqual(parseProtocolFailure({
+			kind: 'agent_no_progress',
+			message: 'Fikeya stopped before repeating an unchanged provider request.',
+			retryable: false,
+			type: 'error'
+		}), 'agent-no-progress');
+	});
+
+	test('returns a specific failure when the agent protocol cannot reach its provider', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-connectivity-'));
+		try {
+			await writeProtocolFixture(workspacePath, 'agent', [{
+				kind: 'connectivity',
+				message: 'Provider endpoint could not be reached before a response was received.',
+				retryable: true,
+				type: 'error'
+			}], 2);
+			const operation = startFikeyaAgentRun(
+				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
+				async () => 'deny_once', [], protocolInvocation, process.env
+			);
+
+			assert.deepStrictEqual(await operation.result, {
+				exitCode: 2,
+				failure: 'provider-unreachable',
+				ok: false
+			});
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
 	});
 
 	test('prefers the absolute extension-owned runtime over PATH', async () => {
@@ -236,10 +280,13 @@ describe('Fikeya runtime protocol', () => {
 			kind: 'google-gemini',
 			model: 'gemini-2.5-pro',
 			baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-			credentialType: 'api-key'
+			credentialType: 'bearer'
 		}, true);
 
 		assert.ok(args.includes('google-gemini'));
+		const credentialTypeIndex = args.indexOf('--credential-type');
+		assert.ok(credentialTypeIndex >= 0);
+		assert.equal(args[credentialTypeIndex + 1], 'bearer');
 		assert.ok(args.includes('--secret-stdin'));
 		assert.ok(!args.some(argument => argument.includes('AIza')));
 	});

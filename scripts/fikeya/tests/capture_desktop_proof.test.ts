@@ -11,7 +11,10 @@ const test: typeof import('node:test') = require('node:test');
 const {
 	buildCaptureProviderArguments,
 	captureProviderDecisions,
+	captureProviderExpectedRequestCount,
 	captureProviderModel,
+	captureProviderPlanEnvelope,
+	captureProviderPlanSpecification,
 	captureHelp,
 	createProofWorkspace,
 	parseCaptureArguments,
@@ -23,6 +26,7 @@ const {
 
 const evidenceStepIds = [
 	'successful-chat',
+	'completed-multitask',
 	'draft-plan',
 	'narrow-chat-panel',
 	'narrow-memory-graph',
@@ -168,6 +172,59 @@ test('deterministic loopback provider returns strict Chat decisions and measured
 	}
 });
 
+test('deterministic provider routes concurrent agent calls by requested runtime stage', async () => {
+	const provider = await startDeterministicProvider();
+	try {
+		const stages = ['review', 'plan', 'act'] as const;
+		const payloads = await Promise.all(stages.map(async stage => {
+			const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: captureProviderModel,
+					messages: [{ role: 'user', content: `Input:\n{"stage":"${stage}"}` }]
+				})
+			});
+			assert.equal(response.status, 200);
+			return response.json() as Promise<{ readonly choices: readonly { readonly message: { readonly content: string } }[] }>;
+		}));
+		assert.deepEqual(
+			payloads.map(payload => JSON.parse(payload.choices[0].message.content).kind),
+			['review', 'plan', 'answer']
+		);
+		assert.equal(provider.requestCount(), 3);
+	} finally {
+		await provider.close();
+	}
+});
+
+test('deterministic provider returns the strict raw plan envelope for planning-only execution', async () => {
+	const provider = await startDeterministicProvider();
+	try {
+		const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: captureProviderModel,
+				messages: [
+					{ role: 'system', content: 'Return the fikeya.plan-proposal.v1 envelope only.' },
+					{ role: 'user', content: 'Create a bounded plan.' }
+				]
+			})
+		});
+		assert.equal(response.status, 200);
+		const payload = await response.json() as { readonly choices: readonly { readonly message: { readonly content: string } }[] };
+		assert.equal(payload.choices[0].message.content, captureProviderPlanEnvelope);
+		assert.deepEqual(JSON.parse(payload.choices[0].message.content), {
+			protocol: 'fikeya.plan-proposal.v1',
+			plan: captureProviderPlanSpecification
+		});
+		assert.equal(provider.requestCount(), 1);
+	} finally {
+		await provider.close();
+	}
+});
+
 test('Electron Chat proof submits a natively valid bounded context budget', async () => {
 	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
 	const match = /contextBudget\.value = '(\d+)'/u.exec(scenario);
@@ -183,15 +240,67 @@ test('Electron Chat proof validates a real 360px-class responsive panel', async 
 	assert.match(scenario, /resizeFikeyaPanel\(code, page, 380\)/u);
 	assert.match(scenario, /document\.documentElement\.scrollWidth/u);
 	assert.match(scenario, /document\.body\.scrollWidth/u);
-	assert.match(scenario, /\[data-open-plan\]/u);
+	assert.match(scenario, /\.chat-plan-details/u);
 	assert.match(scenario, /\[data-agent-form\] \[name="prompt"\]/u);
+	assert.match(scenario, /\[data-agent-form\] \[name="chatMode"\]/u);
+	assert.match(scenario, /option\.value === 'multitask'/u);
 	assert.match(scenario, /\[data-agent-run\]/u);
-	assert.match(scenario, /\[data-agent-plan\]/u);
 	assert.match(scenario, /\[data-network-confirmation\]/u);
 	assert.match(scenario, /\[data-network-confirm\]/u);
 	assert.match(scenario, /\.run-controls > summary/u);
+	assert.match(scenario, /\.composer-route > summary/u);
+	assert.match(scenario, /composerAnchored/u);
 	assert.match(scenario, /minimumPanelWidth = 340/u);
 	assert.match(scenario, /maximumPanelWidth = 420/u);
+});
+
+test('Electron proof executes and verifies a bounded two-agent Multitask batch', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /id: 'completed-multitask'/u);
+	assert.match(scenario, /mode\.value = 'multitask'/u);
+	assert.match(scenario, /input\.checked = true/u);
+	assert.match(scenario, /form\.requestSubmit\(\)/u);
+	assert.match(scenario, /\[data-network-confirm\]/u);
+	assert.match(scenario, /Proof Planner/u);
+	assert.match(scenario, /Proof Reviewer/u);
+	assert.match(scenario, /\.assistant-message/u);
+	assert.match(scenario, /\.message-meta span/u);
+	assert.match(scenario, /\.message-content/u);
+	assert.match(scenario, /\.multi-agent-live/u);
+	assert.match(scenario, /status\.toLowerCase\(\)\.includes\('completed'\)/u);
+	assert.match(scenario, /results\.every\(item => item\.content ===/u);
+	assert.equal(captureProviderExpectedRequestCount, 10);
+});
+
+test('Electron proof uses chat-first inline Plan and dialog overlays', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /mode\.value = 'plan'/u);
+	assert.match(scenario, /form\.requestSubmit\(\)/u);
+	assert.match(scenario, /\[data-network-confirmation\]/u);
+	assert.match(scenario, /\[data-network-confirm\]/u);
+	assert.doesNotMatch(scenario, /type: 'createPlan'/u);
+	assert.match(scenario, /\.chat-plan-details/u);
+	assert.match(scenario, /\[data-modal-open="context"\]/u);
+	assert.match(scenario, /\[data-workspace-modal="context"\]/u);
+	assert.match(scenario, /\[data-modal-open="usage"\]/u);
+	assert.match(scenario, /\[data-workspace-modal="usage"\]/u);
+	assert.doesNotMatch(scenario, /data-surface-tab/u);
+	assert.doesNotMatch(scenario, /data-open-plan/u);
+	assert.doesNotMatch(scenario, /data-agent-plan/u);
+});
+
+test('Electron proof uses a Windows-safe evidence path and verifies the short composer confirmation', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /recordVideo: process\.platform !== 'win32'/u);
+	assert.match(scenario, /id: 'short-composer-confirmation'/u);
+	assert.match(scenario, /window\.resizeTo\(window\.outerWidth, 620\)/u);
+	assert.match(scenario, /confirmationRect\.top >= promptRect\.bottom/u);
+	assert.match(scenario, /confirmationRect\.bottom <= footerRect\.top/u);
+	assert.match(scenario, /sendOnceVisible/u);
+	assert.match(scenario, /cancelVisible/u);
+	assert.match(scenario, /proofPanelWidth \?\?= await evaluateFikeya<number>\(code, 'window\.innerWidth'\)/u);
+	assert.match(scenario, /Math\.max\(421, \(proofPanelWidth \?\? 421\) - 8\)/u);
+	assert.doesNotMatch(scenario, /window\.innerWidth >= 700/u);
 });
 
 test('Electron proof selects an evidence-linked Qarinah node at the narrow width', async () => {
@@ -208,10 +317,9 @@ test('Desktop Plan proof grants exact approvals and verifies only safe workspace
 	assert.match(scenario, /approveExactStep\(code, page, 'inspect-readme'\)/u);
 	assert.match(scenario, /approveExactStep\(code, page, 'find-review-boundary'\)/u);
 	assert.doesNotMatch(scenario, /data-plan-action="approve-all"/u);
-	assert.match(scenario, /workspace\.list_files/u);
-	assert.match(scenario, /workspace\.read_file/u);
-	assert.match(scenario, /workspace\.search_text/u);
-	assert.doesNotMatch(scenario, /process\.run|workspace\.write_file|workspace\.apply_patch/u);
+	const toolNames = captureProviderPlanSpecification.steps.map((step: { readonly toolCall: { readonly name: string } }) => step.toolCall.name);
+	assert.deepEqual(toolNames, ['workspace.list_files', 'workspace.read_file', 'workspace.search_text']);
+	assert.ok(toolNames.every((toolName: string) => !['process.run', 'workspace.write_file', 'workspace.apply_patch'].includes(toolName)));
 });
 
 test('completed Plan proof validates linked approvals, executions, results, and verifications', async () => {
@@ -278,7 +386,8 @@ test('stable evidence copies only passed real-run screenshots and hashes them', 
 	const completedProof = await readCompletedPlanProof(completedProofWorkspace);
 	const published = await publishStableEvidence(summary, output, completedProof);
 	assert.equal(published.proofManifest.outcome, 'passed');
-	assert.equal(published.proofManifest.screenshots.length, 9);
+	assert.equal(published.proofManifest.screenshots.length, 10);
+	assert.ok(published.proofManifest.screenshots.some((item: { readonly name: string }) => item.name === 'fikeya-multitask-real.png'));
 	assert.ok(published.proofManifest.screenshots.some((item: { readonly name: string }) => item.name === 'fikeya-chat-narrow-real.png'));
 	assert.ok(published.proofManifest.screenshots.some((item: { readonly name: string }) => item.name === 'fikeya-context-graph-narrow-real.png'));
 	assert.ok(published.proofManifest.screenshots.every((item: { readonly sha256: string }) => /^sha256:[0-9a-f]{64}$/u.test(item.sha256)));

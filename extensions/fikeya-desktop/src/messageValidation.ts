@@ -4,14 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { FikeyaPlanSpecification } from './runtime';
-import { agentComposerConstraints, FikeyaAgentMemoryMode, isAgentComposerNumberValid } from './agentComposer';
+import { agentComposerConstraints, FikeyaAgentMemoryMode, FikeyaAgentMode, isAgentComposerNumberValid } from './agentComposer';
 
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly allowNetwork: true }
+	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly prompt: string; readonly maxConcurrency: number; readonly allowNetwork: true }
 	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
@@ -32,6 +33,7 @@ export type FikeyaWebviewMessage =
 
 export type FikeyaCommand =
 	| 'fikeya.configureProvider'
+	| 'fikeya.configureAgents'
 	| 'fikeya.initializeWorkspace'
 	| 'fikeya.runDoctor'
 	| 'fikeya.mode.editor'
@@ -46,6 +48,7 @@ export type FikeyaCommand =
 
 const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.configureProvider',
+	'fikeya.configureAgents',
 	'fikeya.initializeWorkspace',
 	'fikeya.runDoctor',
 	'fikeya.mode.editor',
@@ -130,16 +133,43 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| !isAgentComposerNumberValid(value.maxOutputTokens, agentComposerConstraints.maxOutputTokens)
 				|| typeof value.contextMaxCharacters !== 'number'
 				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
-				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')) {
+				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
+				|| (value.type === 'runAgent' && value.mode !== 'agent' && value.mode !== 'research')) {
 				return undefined;
 			}
-			return {
-				type: value.type,
+			const request = {
 				providerName: value.providerName,
 				prompt: value.prompt,
 				maxOutputTokens: value.maxOutputTokens,
 				contextMaxCharacters: value.contextMaxCharacters,
-				memoryMode: value.memoryMode,
+				memoryMode: value.memoryMode as FikeyaAgentMemoryMode,
+				allowNetwork: true as const
+			};
+			return value.type === 'runAgent'
+				? { type: 'runAgent', ...request, mode: value.mode as FikeyaAgentMode }
+				: { type: 'proposePlan', ...request };
+		}
+		case 'runMultiAgent': {
+			if (typeof value.prompt !== 'string'
+				|| value.prompt.trim().length === 0
+				|| Buffer.byteLength(value.prompt, 'utf8') > maximumPromptBytes
+				|| value.allowNetwork !== true
+				|| typeof value.maxConcurrency !== 'number'
+				|| !Number.isSafeInteger(value.maxConcurrency)
+				|| value.maxConcurrency < 1
+				|| value.maxConcurrency > 8
+				|| !Array.isArray(value.selectedAgentIds)
+				|| value.selectedAgentIds.length < 1
+				|| value.selectedAgentIds.length > 16
+				|| new Set(value.selectedAgentIds).size !== value.selectedAgentIds.length
+				|| value.selectedAgentIds.some(agentId => !isProviderName(agentId))) {
+				return undefined;
+			}
+			return {
+				type: value.type,
+				selectedAgentIds: value.selectedAgentIds as string[],
+				prompt: value.prompt,
+				maxConcurrency: value.maxConcurrency,
 				allowNetwork: true
 			};
 		}

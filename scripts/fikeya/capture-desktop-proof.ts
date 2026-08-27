@@ -20,6 +20,48 @@ const defaultOutputDirectory = path.join(repositoryRoot, '.build', 'fikeya-deskt
 const captureProviderName = 'fikeya-desktop-proof';
 const captureProviderModel = 'fikeya-proof-model';
 const captureProviderOutput = 'Verified the disposable proof workspace: README.md documents the durable reviewable plan, src/calculator.js exports add, and test/calculator.test.js checks add(2, 3).';
+const captureProviderPlanSpecification = {
+	schemaVersion: 1,
+	title: 'Verify the real Fikeya proof workspace',
+	steps: [
+		{
+			stepId: 'inventory-project',
+			title: 'Inventory bounded project files',
+			toolCall: {
+				callId: 'proof-list-files',
+				name: 'workspace.list_files',
+				arguments: { path: '.' }
+			},
+			verify: { expectedStatus: 'ok' }
+		},
+		{
+			stepId: 'inspect-readme',
+			title: 'Inspect the proof workspace brief',
+			dependsOn: ['inventory-project'],
+			toolCall: {
+				callId: 'proof-read-readme',
+				name: 'workspace.read_file',
+				arguments: { path: 'README.md' }
+			},
+			verify: { expectedStatus: 'ok' }
+		},
+		{
+			stepId: 'find-review-boundary',
+			title: 'Find the explicit review boundary',
+			dependsOn: ['inspect-readme'],
+			toolCall: {
+				callId: 'proof-search-review',
+				name: 'workspace.search_text',
+				arguments: { path: '.', query: 'reviewable plan' }
+			},
+			verify: { expectedStatus: 'ok' }
+		}
+	]
+} as const;
+const captureProviderPlanEnvelope = JSON.stringify({
+	protocol: 'fikeya.plan-proposal.v1',
+	plan: captureProviderPlanSpecification
+});
 const captureProviderDecisions = [
 	{
 		kind: 'plan',
@@ -35,6 +77,7 @@ const captureProviderDecisions = [
 		content: captureProviderOutput
 	}
 ] as const;
+const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 3) + 1;
 
 interface CaptureOptions {
 	compile: boolean;
@@ -81,6 +124,7 @@ interface EvidenceSummary {
 	readonly manifest: EvidenceManifest;
 	readonly manifestPath: string;
 	readonly chatScreenshot: string;
+	readonly multitaskScreenshot: string;
 	readonly draftScreenshot: string;
 	readonly narrowChatScreenshot: string;
 	readonly narrowGraphScreenshot: string;
@@ -191,7 +235,8 @@ function captureHelp(): string {
 		'Usage: node scripts/fikeya/capture-desktop-proof.ts [options]',
 		'',
 		'Launch the real Fikeya dev Electron build with the local extension, complete',
-		'one Chat turn through an isolated deterministic loopback provider, create a',
+		'one Chat turn and a bounded two-agent Multitask batch through an isolated',
+		'deterministic loopback provider, create a',
 		'durable draft through the actual Plan UI, review it, grant each exact approval,',
 		'execute three read-only workspace tools, verify their receipts, and save the',
 		'successful Chat/Plan screenshots plus the report, video, trace, and proof JSON.',
@@ -226,6 +271,37 @@ function buildCaptureProviderArguments(baseUrl: string): string[] {
 	];
 }
 
+function requestedProviderStage(messages: readonly { readonly content?: unknown }[] | undefined): 'plan' | 'act' | 'review' | undefined {
+	if (!messages) {
+		return undefined;
+	}
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const content = messages[index]?.content;
+		if (typeof content !== 'string') {
+			continue;
+		}
+		const marker = 'Input:\n';
+		const markerIndex = content.lastIndexOf(marker);
+		if (markerIndex < 0) {
+			continue;
+		}
+		try {
+			const input = JSON.parse(content.slice(markerIndex + marker.length)) as { readonly stage?: unknown };
+			if (input.stage === 'plan' || input.stage === 'act' || input.stage === 'review') {
+				return input.stage;
+			}
+		} catch {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
+function providerMessagesContain(messages: readonly { readonly content?: unknown }[] | undefined, needle: string): boolean {
+	const normalizedNeedle = needle.toLowerCase();
+	return messages?.some(message => typeof message.content === 'string' && message.content.toLowerCase().includes(normalizedNeedle)) ?? false;
+}
+
 async function startDeterministicProvider(): Promise<DeterministicProviderServer> {
 	let requestCount = 0;
 	const server = createServer(async (request, response) => {
@@ -245,21 +321,45 @@ async function startDeterministicProvider(): Promise<DeterministicProviderServer
 				}
 				chunks.push(bytes);
 			}
-			const payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { readonly model?: unknown };
+			const payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+				readonly model?: unknown;
+				readonly messages?: readonly { readonly content?: unknown }[];
+			};
 			if (payload.model !== captureProviderModel) {
 				response.writeHead(400, { 'Content-Type': 'application/json' });
 				response.end('{"error":"unexpected model"}');
 				return;
 			}
-			const decision = captureProviderDecisions[requestCount];
-			if (!decision) {
-				response.writeHead(409, { 'Content-Type': 'application/json' });
-				response.end('{"error":"unexpected provider call"}');
-				return;
+			const stage = requestedProviderStage(payload.messages);
+			const planningProposal = providerMessagesContain(payload.messages, 'fikeya.plan-proposal.v1');
+			const multitaskProof = providerMessagesContain(payload.messages, 'inspect the proof workspace in parallel');
+			let providerContent: string;
+			if (planningProposal) {
+				// Planning-only execution validates the provider text itself as the
+				// versioned envelope; it does not use the reviewed-agent decision schema.
+				providerContent = captureProviderPlanEnvelope;
+			} else {
+				const decisionIndex = stage === 'plan' ? 0 : stage === 'act' ? 1 : stage === 'review' ? 2 : undefined;
+				const decision = decisionIndex === undefined && payload.messages?.length === 0
+					? captureProviderDecisions[requestCount]
+					: decisionIndex === undefined
+						? undefined
+						: captureProviderDecisions[decisionIndex];
+				if (!decision) {
+					response.writeHead(409, { 'Content-Type': 'application/json' });
+					response.end('{"error":"unexpected provider call"}');
+					return;
+				}
+				providerContent = JSON.stringify(decision);
+			}
+			if (multitaskProof) {
+				// Keep the bounded run observable long enough for the UI proof to witness
+				// the real in-flight progress surface rather than only its final state.
+				await new Promise(resolve => setTimeout(resolve, 250));
 			}
 			requestCount += 1;
 			const body = JSON.stringify({
-				choices: [{ message: { content: JSON.stringify(decision) } }],
+				choices: [{ message: { content: providerContent } }],
 				usage: {
 					completion_tokens: 5,
 					prompt_tokens: 20,
@@ -432,6 +532,7 @@ async function readEvidenceSummary(runDirectory: string): Promise<EvidenceSummar
 		manifest,
 		manifestPath,
 		chatScreenshot: screenshotFor('successful-chat'),
+		multitaskScreenshot: screenshotFor('completed-multitask'),
 		draftScreenshot: screenshotFor('draft-plan'),
 		narrowChatScreenshot: screenshotFor('narrow-chat-panel'),
 		narrowGraphScreenshot: screenshotFor('narrow-memory-graph'),
@@ -552,6 +653,7 @@ async function publishStableEvidence(summary: EvidenceSummary, outputDirectory: 
 	await mkdir(outputDirectory, { recursive: true });
 	const copies: readonly (readonly [string, string])[] = [
 		['fikeya-chat-real.png', summary.chatScreenshot],
+		['fikeya-multitask-real.png', summary.multitaskScreenshot],
 		['fikeya-plan-draft-real.png', summary.draftScreenshot],
 		['fikeya-chat-narrow-real.png', summary.narrowChatScreenshot],
 		['fikeya-context-graph-narrow-real.png', summary.narrowGraphScreenshot],
@@ -677,8 +779,8 @@ async function captureDesktopProof(options: CaptureOptions) {
 				FIKEYA_HOME: runtimeHome
 			}
 		});
-		if (provider.requestCount() !== captureProviderDecisions.length) {
-			throw new Error(`The successful Chat proof made ${provider.requestCount()} provider calls; expected ${captureProviderDecisions.length}.`);
+		if (provider.requestCount() !== captureProviderExpectedRequestCount) {
+			throw new Error(`The Chat, Multitask, and Plan proof made ${provider.requestCount()} provider calls; expected ${captureProviderExpectedRequestCount}.`);
 		}
 	} finally {
 		await provider.close();
@@ -722,9 +824,12 @@ if (require.main === module) {
 module.exports = {
 	buildCaptureProviderArguments,
 	captureProviderDecisions,
+	captureProviderExpectedRequestCount,
 	captureProviderModel,
 	captureProviderName,
 	captureProviderOutput,
+	captureProviderPlanEnvelope,
+	captureProviderPlanSpecification,
 	captureDesktopProof,
 	captureHelp,
 	compiledScenarioPath,

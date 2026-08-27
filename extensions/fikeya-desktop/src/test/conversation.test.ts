@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import * as path from 'node:path';
 import { describe, test } from 'node:test';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from '../conversation';
 import { buildChatPlanSummary, buildPlanTimeline, buildRecordedPlanTimeline, extractPlanSteps, fikeyaNarrowPanelMaximumWidth, isChatInteractionBlocked, selectInitialPlanStepId } from '../surface';
@@ -119,6 +121,33 @@ describe('Fikeya live conversation state', () => {
 			withinCharacters: true,
 			containsTruncationMarker: true
 		});
+	});
+});
+
+describe('Fikeya chat webview refresh state', () => {
+	test('restores composer focus against the rendered Chat surface', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /focusSurface: initialSurface/u);
+		assert.match(source, /persistedState\.focusSurface === initialSurface/u);
+		assert.match(source, /focusTarget\?\.focus\(\{ preventScroll: true \}\)/u);
+		assert.doesNotMatch(source, /focusSurface: \(vscode\.getState\(\) \|\| \{\}\)\.surface/u);
+	});
+
+	test('retains both expanded and collapsed inline Plan state for the same durable plan', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /data-chat-plan-details/u);
+		assert.match(source, /persistedState\.chatPlanId === activePlanId/u);
+		assert.match(source, /typeof persistedState\.chatPlanOpen === 'boolean'/u);
+		assert.match(source, /chatPlanDetails\.open = persistedState\.chatPlanOpen/u);
+		assert.match(source, /chatPlanDetails\.addEventListener\('toggle', saveChatPlanState\)/u);
+	});
+
+	test('continues to merge prompt, scroll, and graph state instead of replacing it', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /vscode\.setState\(\{ \.\.\.\(vscode\.getState\(\) \|\| \{\}\), \.\.\.patch \}\)/u);
+		assert.match(source, /chatDraft: promptField\?\.value \|\| ''/u);
+		assert.match(source, /chatScrollTop: chatThread\.scrollTop/u);
+		assert.match(source, /persistedState\.graphState/u);
 	});
 });
 

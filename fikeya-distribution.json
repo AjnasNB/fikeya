@@ -4,7 +4,7 @@
 	"version": "0.1.0-beta.2",
 	"desktopNumericVersion": "0.1.0.2",
 	"status": "beta",
-	"description": "Open, provider-neutral AI code editor and coding-agent runtime for verified work with less context.",
+	"description": "Open, provider-neutral AI code editor and coding-agent runtime. Bring your model and spend fewer tokens.",
 	"homepage": "https://fikeya.com",
 	"repository": "https://github.com/AjnasNB/fikeya",
 	"upstream": {

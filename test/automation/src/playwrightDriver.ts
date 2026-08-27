@@ -156,6 +156,76 @@ export class PlaywrightDriver {
 		}));
 	}
 
+	/**
+	 * Wait for the Electron window that owns the rendered workbench and make it
+	 * the current automation page.
+	 *
+	 * Electron can briefly expose auxiliary or blank windows before the real
+	 * workbench. Keeping the first page in that case makes every driver-backed
+	 * readiness probe target the wrong document. Probe every open window through
+	 * Playwright first, then switch the driver only after the workbench exists.
+	 */
+	async waitForWorkbenchWindow(selector: string = '.monaco-workbench', timeoutMs: number = 60_000): Promise<playwright.Page> {
+		if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+			throw new Error(`Workbench window timeout must be a positive finite number, received ${timeoutMs}.`);
+		}
+
+		const deadline = Date.now() + timeoutMs;
+		const lastProbeErrors = new Map<playwright.Page, string>();
+
+		while (Date.now() < deadline) {
+			const openWindows = this.getAllWindows().filter(page => !page.isClosed());
+			const orderedWindows = openWindows.includes(this._currentPage)
+				? [this._currentPage, ...openWindows.filter(page => page !== this._currentPage)]
+				: openWindows;
+			const probeTimeout = Math.max(1, Math.min(500, deadline - Date.now()));
+			const probes = await Promise.all(orderedWindows.map(async page => {
+				try {
+					await page.locator(selector).first().waitFor({ state: 'attached', timeout: probeTimeout });
+					return page;
+				} catch (error) {
+					lastProbeErrors.set(page, firstErrorLine(error));
+					return undefined;
+				}
+			}));
+			const workbenchWindow = probes.find((page): page is playwright.Page => !!page && !page.isClosed());
+			if (workbenchWindow) {
+				const previousWindow = this._currentPage;
+				this._currentPage = workbenchWindow;
+				this._cdpSession = undefined;
+				const windowIndex = this.getAllWindows().indexOf(workbenchWindow);
+				const title = await pageValueOr(workbenchWindow.title(), 500, '<title unavailable>');
+				this.options.logger.log(
+					`Playwright: selected workbench window ${windowIndex} ` +
+					`(switched=${previousWindow !== workbenchWindow}, url=${JSON.stringify(workbenchWindow.url())}, title=${JSON.stringify(title)})`
+				);
+				return workbenchWindow;
+			}
+
+			await wait(50);
+		}
+
+		const windows = this.getAllWindows();
+		const diagnostics = await Promise.all(windows.map(async (page, index) => {
+			const title = page.isClosed() ? '<closed>' : await pageValueOr(page.title(), 500, '<title unavailable>');
+			const readyState = page.isClosed()
+				? '<closed>'
+				: await pageValueOr(page.evaluate(() => document.readyState), 500, '<readyState unavailable>');
+			return {
+				index,
+				current: page === this._currentPage,
+				closed: page.isClosed(),
+				url: page.url(),
+				title,
+				readyState,
+				lastProbeError: lastProbeErrors.get(page) ?? '<not probed>'
+			};
+		}));
+		const message = `Timed out after ${timeoutMs}ms waiting for an Electron workbench window matching '${selector}'. Windows: ${JSON.stringify(diagnostics)}`;
+		this.options.logger.log(`Playwright (Electron) ERROR: ${message}`);
+		throw new Error(message);
+	}
+
 	async getCDPTargets(): Promise<Protocol.Target.TargetInfo[]> {
 		const session = await this.context.newCDPSession(this.page);
 		try {
@@ -999,6 +1069,27 @@ export class PlaywrightDriver {
 				`Accessibility violations found:\n\n${violationMessages}\n\n` +
 				`Total: ${filteredViolations.length} violation(s) affecting ${filteredViolations.reduce((sum: number, v: AxeResults['violations'][number]) => sum + v.nodes.length, 0)} element(s)`
 			);
+		}
+	}
+}
+
+function firstErrorLine(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.split(/\r?\n/u, 1)[0];
+}
+
+async function pageValueOr<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+	let timeout: NodeJS.Timeout | undefined;
+	try {
+		return await Promise.race([
+			promise.catch(() => fallback),
+			new Promise<T>(resolve => {
+				timeout = setTimeout(() => resolve(fallback), timeoutMs);
+			})
+		]);
+	} finally {
+		if (timeout) {
+			clearTimeout(timeout);
 		}
 	}
 }

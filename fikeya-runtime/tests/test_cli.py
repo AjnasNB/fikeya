@@ -9,8 +9,9 @@ import socket
 from pathlib import Path
 
 import pytest
+from fikeya_agent_core import AgentNoProgressError
 from fikeya_runtime.cli import main
-from fikeya_runtime.errors import SecretStoreUnavailable
+from fikeya_runtime.errors import ProviderConnectivityError, SecretStoreUnavailable
 
 _ORIGINAL_SOCKET_CONNECT = socket.socket.connect
 
@@ -449,6 +450,105 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
     ]
     assert messages[1]["argumentsSha256"] == "a" * 64
     assert messages[2]["outcome"]["summary"] == "The reviewed result."
+
+
+@pytest.mark.parametrize(
+    ("raised", "expected"),
+    [
+        pytest.param(
+            ProviderConnectivityError(),
+            {
+                "kind": "connectivity",
+                "message": (
+                    "Provider endpoint could not be reached before a response was received."
+                ),
+                "retryable": True,
+                "type": "error",
+            },
+            id="provider-connectivity",
+        ),
+        pytest.param(
+            AgentNoProgressError("unchanged state"),
+            {
+                "kind": "agent_no_progress",
+                "message": (
+                    "Fikeya stopped before repeating an unchanged provider request."
+                ),
+                "retryable": False,
+                "type": "error",
+            },
+            id="agent-no-progress",
+        ),
+    ],
+)
+def test_cli_coding_protocol_emits_typed_pre_provider_failure(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: pytest.MonkeyPatch,
+    raised: Exception,
+    expected: dict[str, object],
+) -> None:
+    from fikeya_runtime import coding
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["--home", str(home), "init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "provider",
+                "configure",
+                "local",
+                "--kind",
+                "ollama",
+                "--model",
+                "qwen",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    class FailingCodingRunner:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def run(self, **_kwargs: object) -> object:
+            raise raised
+
+    monkeypatch.setattr(coding, "CodingAgentRunner", FailingCodingRunner)
+    # Windows asyncio creates a loopback self-pipe; the fake runner makes no provider call.
+    monkeypatch.setattr(socket.socket, "connect", _ORIGINAL_SOCKET_CONNECT)
+    monkeypatch.setattr(
+        "sys.stdin",
+        _ProtocolInput([{"type": "start", "prompt": "Inspect the project."}]),
+    )
+
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "agent",
+                "execute",
+                str(workspace),
+                "--provider",
+                "local",
+                "--protocol-stdin",
+                "--allow-network",
+                "--memory",
+                "off",
+                "--json-lines",
+            ]
+        )
+        == 2
+    )
+    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [expected]
 
 
 def test_cli_doctor_reports_headless_keyring_without_blocking_runtime(

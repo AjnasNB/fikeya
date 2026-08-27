@@ -24,6 +24,18 @@ class ProviderError(FikeyaError):
     """Raised for invalid provider configuration or connectivity."""
 
 
+class ProviderConnectivityError(ProviderError):
+    """Raised when a provider cannot be reached before returning a response."""
+
+    kind = "connectivity"
+    retryable = True
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Provider endpoint could not be reached before a response was received."
+        )
+
+
 class ProviderHttpError(ProviderError):
     """Raised for an HTTP response without retaining provider body content."""
 
