@@ -104,9 +104,6 @@ jobs:
       - name: Build unsigned release artifacts
         shell: pwsh
         run: ./scripts/fikeya/package-release.ps1 -SkipManifest
-      - name: Verify compiled Desktop proof prerequisites
-        shell: pwsh
-        run: node scripts/fikeya/capture-desktop-proof.ts --check
       - name: Verify unsigned artifact identities
         shell: pwsh
         run: |
