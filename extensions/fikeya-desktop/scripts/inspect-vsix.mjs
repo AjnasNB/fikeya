@@ -25,6 +25,7 @@ const requiredEntries = [
 	'extension/LICENSE.txt',
 	'extension/media/fikeya.svg',
 	'extension/out/extension.js',
+	'extension/out/imageInputs.js',
 	'extension/out/memory.js',
 	'extension/out/messageValidation.js',
 	'extension/out/runtime.js',
