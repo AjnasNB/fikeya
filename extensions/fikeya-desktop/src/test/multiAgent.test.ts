@@ -8,6 +8,7 @@ import { describe, test } from 'node:test';
 import type { FikeyaAgentProfile } from '../agentProfiles';
 import {
 	FikeyaMultiAgentDependencies,
+	isFikeyaAdvisoryToolAllowed,
 	startFikeyaMultiAgentRun
 } from '../multiAgent';
 import type {
@@ -102,6 +103,15 @@ function dependencies(
 }
 
 describe('Fikeya multi-agent orchestration', () => {
+	test('allows only read-only workspace tools for advisory agents', () => {
+		assert.strictEqual(isFikeyaAdvisoryToolAllowed('workspace.list_files'), true);
+		assert.strictEqual(isFikeyaAdvisoryToolAllowed('workspace.read_file'), true);
+		assert.strictEqual(isFikeyaAdvisoryToolAllowed('workspace.search_text'), true);
+		assert.strictEqual(isFikeyaAdvisoryToolAllowed('workspace.replace_text'), false);
+		assert.strictEqual(isFikeyaAdvisoryToolAllowed('workspace.write_file'), false);
+		assert.strictEqual(isFikeyaAdvisoryToolAllowed('process.run'), false);
+	});
+
 	test('runs independent agents through a bounded worker pool and retains per-agent receipts', async () => {
 		const gates = new Map(['a', 'b', 'c'].map(id => [id, deferred<FikeyaCliResult<FikeyaAgentTurn>>()]));
 		const started: string[] = [];
@@ -175,6 +185,34 @@ describe('Fikeya multi-agent orchestration', () => {
 		assert.deepStrictEqual(approvalCalls, ['a', 'b']);
 		approvalGates.get('b')!.resolve('deny_once');
 		assert.strictEqual((await operation.result).status, 'completed');
+	});
+
+	test('denies mutating advisory tools without presenting an approval prompt', async () => {
+		const approvalCalls: string[] = [];
+		const decisions: FikeyaAgentApprovalDecision[] = [];
+		const operation = startFikeyaMultiAgentRun(
+			{ selectedAgentIds: ['a'], prompt: 'Inspect safely.', maxConcurrency: 1, allowNetwork: true },
+			[profile('a')],
+			'D:\\workspace',
+			async agent => {
+				approvalCalls.push(agent.id);
+				return 'allow_once';
+			},
+			dependencies((agent, _prompt, _history, _workspacePath, requestApproval) => handle((async () => {
+				for (const toolName of ['workspace.write_file', 'workspace.replace_text', 'process.run']) {
+					decisions.push(await requestApproval({
+						type: 'approval', requestId: `request-${toolName}`, sessionId: `session-${agent.id}`,
+						callId: `call-${agent.id}`, toolName, argumentsSha256: 'sha256:fixture',
+						expectedRevision: 1, summary: 'Attempt a mutation', arguments: { path: 'README.md' }
+					}));
+				}
+				return successfulResult(agent.id);
+			})()))
+		);
+
+		assert.strictEqual((await operation.result).status, 'completed');
+		assert.deepStrictEqual(decisions, ['deny_once', 'deny_once', 'deny_once']);
+		assert.deepStrictEqual(approvalCalls, []);
 	});
 
 	test('cancels active provider processes and never starts queued agents', async () => {

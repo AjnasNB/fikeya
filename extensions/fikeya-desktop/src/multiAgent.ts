@@ -23,6 +23,20 @@ const defaultMaximumConcurrency = 3;
 const absoluteMaximumConcurrency = 8;
 const maximumSelectedAgents = 16;
 const maximumSharedPromptBytes = 240_000;
+const advisoryToolAllowlist = new Set([
+	'workspace.list_files',
+	'workspace.read_file',
+	'workspace.search_text'
+]);
+
+/**
+ * Multi-agent runs in the current beta are advisory and share one checkout. Keep the capability
+ * boundary mechanical: a prompt, profile, or approval click cannot turn an advisory worker into a
+ * writer or process runner until isolated Git worktrees are available.
+ */
+export function isFikeyaAdvisoryToolAllowed(toolName: string): boolean {
+	return advisoryToolAllowlist.has(toolName);
+}
 
 export interface FikeyaMultiAgentRequest {
 	readonly selectedAgentIds: readonly string[];
@@ -160,6 +174,9 @@ export function startFikeyaMultiAgentRun(
 		const decision = approvalQueue.then(async () => {
 			if (cancelled || cancelledAgents.has(profile.id)) {
 				return 'cancel' as const;
+			}
+			if (!isFikeyaAdvisoryToolAllowed(approval.toolName)) {
+				return 'deny_once' as const;
 			}
 			try {
 				return await approvalHandler(profile, approval);
