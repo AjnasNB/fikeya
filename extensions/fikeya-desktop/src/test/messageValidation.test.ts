@@ -45,6 +45,8 @@ describe('Fikeya webview message validation', () => {
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.mode.research' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.usage' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.setup' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.layout.project' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.layout.editor' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.files.openFolder' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.terminal.sendSequence' }),
 			parseWebviewMessage({ type: 'selectMode', mode: 'review' }),
@@ -55,6 +57,8 @@ describe('Fikeya webview message validation', () => {
 			{ type: 'openCommand', command: 'fikeya.mode.research' },
 			{ type: 'openCommand', command: 'fikeya.view.usage' },
 			{ type: 'openCommand', command: 'fikeya.view.setup' },
+			{ type: 'openCommand', command: 'fikeya.layout.project' },
+			{ type: 'openCommand', command: 'fikeya.layout.editor' },
 			{ type: 'openCommand', command: 'workbench.action.files.openFolder' },
 			undefined,
 			undefined,
@@ -224,35 +228,55 @@ describe('Fikeya webview message validation', () => {
 		assert.deepStrictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Review the same change independently.',
 			maxConcurrency: 2,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), {
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Review the same change independently.',
 			maxConcurrency: 2,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		});
 		assert.strictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer', 'security-reviewer'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Duplicate selection.',
 			maxConcurrency: 2,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), undefined);
 		assert.strictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'No consent.',
 			maxConcurrency: 1,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: false
 		}), undefined);
 		assert.strictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Too much parallelism.',
 			maxConcurrency: 9,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), undefined);
 	});

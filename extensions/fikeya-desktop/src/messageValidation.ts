@@ -16,7 +16,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
 	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
-	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly prompt: string; readonly maxConcurrency: number; readonly allowNetwork: true }
+	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly leadProviderName: string; readonly prompt: string; readonly maxConcurrency: number; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
 	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
@@ -48,6 +48,8 @@ export type FikeyaCommand =
 	| 'fikeya.mode.lab'
 	| 'fikeya.view.usage'
 	| 'fikeya.view.setup'
+	| 'fikeya.layout.project'
+	| 'fikeya.layout.editor'
 	| 'workbench.action.files.openFolder';
 
 const allowedCommands: readonly FikeyaCommand[] = [
@@ -63,6 +65,8 @@ const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.mode.lab',
 	'fikeya.view.usage',
 	'fikeya.view.setup',
+	'fikeya.layout.project',
+	'fikeya.layout.editor',
 	'workbench.action.files.openFolder'
 ];
 
@@ -186,7 +190,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				: { type: 'proposePlan', ...request };
 		}
 		case 'runMultiAgent': {
-			if (typeof value.prompt !== 'string'
+			if (!isProviderName(value.leadProviderName)
+				|| typeof value.prompt !== 'string'
 				|| value.prompt.trim().length === 0
 				|| Buffer.byteLength(value.prompt, 'utf8') > maximumPromptBytes
 				|| value.allowNetwork !== true
@@ -194,6 +199,11 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| !Number.isSafeInteger(value.maxConcurrency)
 				|| value.maxConcurrency < 1
 				|| value.maxConcurrency > 8
+				|| typeof value.maxOutputTokens !== 'number'
+				|| !isAgentComposerNumberValid(value.maxOutputTokens, agentComposerConstraints.maxOutputTokens)
+				|| typeof value.contextMaxCharacters !== 'number'
+				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
+				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
 				|| !Array.isArray(value.selectedAgentIds)
 				|| value.selectedAgentIds.length < 1
 				|| value.selectedAgentIds.length > 16
@@ -204,8 +214,12 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 			return {
 				type: value.type,
 				selectedAgentIds: value.selectedAgentIds as string[],
+				leadProviderName: value.leadProviderName,
 				prompt: value.prompt,
 				maxConcurrency: value.maxConcurrency,
+				maxOutputTokens: value.maxOutputTokens,
+				contextMaxCharacters: value.contextMaxCharacters,
+				memoryMode: value.memoryMode as FikeyaAgentMemoryMode,
 				allowNetwork: true
 			};
 		}
