@@ -95,6 +95,11 @@ export interface Scenario {
 	readonly userSettings?: Record<string, JSONValue>;
 	readonly extraArgs?: string[];
 	/**
+	 * Records a Playwright video when supported. Screenshots, the Playwright trace,
+	 * logs, and the report are still captured when this is false.
+	 */
+	readonly recordVideo?: boolean;
+	/**
 	 * How long to hold on each completed step, in milliseconds.
 	 *
 	 * The recording is watched by a person, and a caption is only readable for as
@@ -154,7 +159,9 @@ export interface ScenarioBlocker {
 }
 
 export async function runScenario(scenario: Scenario): Promise<{ runPath: string; outcome: 'passed' | 'failed' | 'aborted'; blockers: ScenarioBlocker[] }> {
-	checkVideoTooling();
+	if (scenario.recordVideo !== false) {
+		checkVideoTooling();
+	}
 	const pauseMs = Math.max(0, scenario.stepPauseMs ?? DEFAULT_STEP_PAUSE_MS);
 	const blockers: ScenarioBlocker[] = [];
 	const appService = new ApplicationService();
@@ -166,7 +173,8 @@ export async function runScenario(scenario: Scenario): Promise<{ runPath: string
 		scenario.scenarioPath,
 		scenario.workspacePath,
 		scenario.userSettings,
-		scenario.extraArgs
+		scenario.extraArgs,
+		scenario.recordVideo
 	);
 	console.log(`Evidence run: ${runPath}`);
 
@@ -224,7 +232,9 @@ export async function runScenario(scenario: Scenario): Promise<{ runPath: string
 
 	const reportPath = await evidence.finish(outcome, notes);
 	console.log(`Report: ${reportPath}`);
-	tryRenderChapters(runPath);
+	if (scenario.recordVideo !== false) {
+		tryRenderChapters(runPath);
+	}
 	for (const blocker of blockers) {
 		const reason = blocker.reason.replace(/\s*\.\s*$/u, '');
 		console.log(blocker.needs === 'human'

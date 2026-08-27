@@ -86,12 +86,12 @@ export class EvidenceService {
 
 	constructor(private readonly appService: ApplicationService) { }
 
-	async start(scenarioId: string, title: string, source?: string, scenarioPath?: string, workspacePath?: string, userSettings?: Record<string, JSONValue>, extraArgs?: string[]): Promise<string> {
+	async start(scenarioId: string, title: string, source?: string, scenarioPath?: string, workspacePath?: string, userSettings?: Record<string, JSONValue>, extraArgs?: string[], recordVideo = true): Promise<string> {
 		if (this.currentRun) {
 			throw new Error(`Evidence run '${this.currentRun.id}' is already active.`);
 		}
 		if (this.appService.application) {
-			throw new Error('Stop the existing VS Code instance before starting evidence capture so video recording can be enabled at launch.');
+			throw new Error('Stop the existing VS Code instance before starting a new evidence capture.');
 		}
 		if (source && !isHttpUrl(source)) {
 			throw new Error(`Evidence source must use HTTP or HTTPS: '${source}'.`);
@@ -136,7 +136,7 @@ export class EvidenceService {
 		this.currentRun = run;
 		let app: Awaited<ReturnType<ApplicationService['getOrCreateApplication']>>;
 		try {
-			app = await this.appService.getOrCreateApplication({ recordVideo: true, workspacePath, userSettings, extraArgs });
+			app = await this.appService.getOrCreateApplication({ recordVideo, workspacePath, userSettings, extraArgs });
 		} catch (error) {
 			if (this.currentRun === run) {
 				this.currentRun = undefined;
