@@ -11,6 +11,8 @@ import { escapeHtml, parseWebviewMessage } from '../messageValidation';
 describe('Fikeya webview message validation', () => {
 	test('accepts the bounded local conversation reset action', () => {
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'clearConversation' }), { type: 'clearConversation' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'setComposerAttachmentState', hasAttachments: true }), { type: 'setComposerAttachmentState', hasAttachments: true });
+		assert.strictEqual(parseWebviewMessage({ type: 'setComposerAttachmentState', hasAttachments: 'yes' }), undefined);
 	});
 
 	test('validates message actions without accepting paths or schemes outside the workspace boundary', () => {

@@ -12,6 +12,7 @@ import { FikeyaImageInput, parseImageInputs } from './imageInputs';
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
+	| { readonly type: 'setComposerAttachmentState'; readonly hasAttachments: boolean }
 	| { readonly type: 'configureProviderProfile'; readonly providerId: string; readonly profileLabel: string; readonly baseUrl: string; readonly model: string; readonly secret?: string }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
@@ -126,6 +127,10 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				...(value.secret === undefined ? {} : { secret: value.secret })
 			};
 		}
+		case 'setComposerAttachmentState':
+			return typeof value.hasAttachments === 'boolean'
+				? { type: value.type, hasAttachments: value.hasAttachments }
+				: undefined;
 		case 'copyText':
 			return typeof value.text === 'string' && Buffer.byteLength(value.text, 'utf8') <= maximumPromptBytes
 				? { type: value.type, text: value.text }
