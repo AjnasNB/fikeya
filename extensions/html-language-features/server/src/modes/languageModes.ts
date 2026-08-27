@@ -106,7 +106,9 @@ export interface LanguageModes {
 	dispose(): void;
 }
 
-export interface LanguageModeRange extends Range {
+export interface LanguageModeRange {
+	start: Position;
+	end: Position;
 	mode: LanguageMode | undefined;
 	attributeValue?: boolean;
 }
