@@ -38,7 +38,7 @@
 	"main": "./out/extension",
 	"contributes": {
 		"viewsContainers": {
-			"activitybar": [
+			"secondarySidebar": [
 				{
 					"id": "fikeya",
 					"icon": "media/fikeya.svg",
@@ -62,6 +62,18 @@
 				"title": "%command.open.title%",
 				"category": "%command.category%",
 				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "fikeya.layout.project",
+				"title": "%command.layout.project.title%",
+				"category": "%command.category%",
+				"icon": "$(layout-centered)"
+			},
+			{
+				"command": "fikeya.layout.editor",
+				"title": "%command.layout.editor.title%",
+				"category": "%command.category%",
+				"icon": "$(layout-sidebar-right)"
 			},
 			{
 				"command": "fikeya.configureProvider",
@@ -154,6 +166,12 @@
 					"default": false,
 					"scope": "resource",
 					"description": "%configuration.chat.persistWorkspaceHistory.description%"
+				},
+				"fikeya.agent.autoSaveWorkspaceEdits": {
+					"type": "boolean",
+					"default": true,
+					"scope": "resource",
+					"description": "%configuration.agent.autoSaveWorkspaceEdits.description%"
 				}
 			}
 		},
@@ -184,15 +202,21 @@
 		"menus": {
 			"editor/title": [
 				{
-					"command": "fikeya.open",
+					"command": "fikeya.layout.editor",
+					"when": "activeWebviewPanelId == fikeya.workspace",
 					"group": "navigation@20"
 				}
 			],
 			"view/title": [
 				{
-					"command": "fikeya.runDoctor",
+					"command": "fikeya.layout.project",
 					"when": "view == fikeya.dashboard",
 					"group": "navigation@1"
+				},
+				{
+					"command": "fikeya.runDoctor",
+					"when": "view == fikeya.dashboard",
+					"group": "navigation@2"
 				}
 			]
 		}
