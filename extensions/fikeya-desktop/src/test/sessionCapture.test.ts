@@ -64,7 +64,10 @@ function completedRun(): FikeyaCompletedRunCaptureInput {
 					exitCode: 0,
 					test: true
 				}],
-				changedFiles: [{ path: 'src/checkout.ts', beforeSha256: hashA, afterSha256: hashB }]
+				changedFiles: [
+					{ path: 'src/checkout.ts', beforeSha256: hashA, afterSha256: hashB },
+					{ path: 'src/obsolete.ts', beforeSha256: hashA, afterSha256: null }
+				]
 			}
 		},
 		receipts: [{
@@ -100,6 +103,7 @@ describe('Fikeya completed-run Qarinah capture', () => {
 		assert.strictEqual(request.providerReceipts[0]?.responseSha256, hashB);
 		assert.strictEqual(request.outcome.toolOutcomes[0]?.outputSha256, hashA);
 		assert.strictEqual(request.outcome.changedFiles[0]?.afterSha256, hashB);
+		assert.strictEqual(request.outcome.changedFiles[1]?.afterSha256, null);
 		assert.ok(!JSON.stringify(request.providerReceipts).includes('The fixture was stale.'));
 		assert.ok(!JSON.stringify(request.outcome).includes('The fixture was stale.'));
 		assert.ok(!Object.hasOwn(request, 'output'));

@@ -446,10 +446,15 @@ function normalizeChangedFile(value, index) {
 	if (filePath.includes('\\') || filePath.startsWith('/') || filePath.split('/').includes('..')) {
 		throw new TypeError(`${name}.path must be a workspace-relative POSIX path.`);
 	}
+	const beforeSha256 = nullableHash(file.beforeSha256, `${name}.beforeSha256`);
+	const afterSha256 = nullableHash(file.afterSha256, `${name}.afterSha256`);
+	if (beforeSha256 === null && afterSha256 === null) {
+		throw new TypeError(`${name} must describe a created, updated, or deleted file.`);
+	}
 	return {
 		path: filePath,
-		beforeSha256: nullableHash(file.beforeSha256, `${name}.beforeSha256`),
-		afterSha256: requiredHash(file.afterSha256, `${name}.afterSha256`)
+		beforeSha256,
+		afterSha256
 	};
 }
 

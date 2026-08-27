@@ -444,3 +444,55 @@ def test_broker_rejects_stale_edits_and_workspace_escape(
     assert metadata_case_bypass.status == "error"
     assert not (root / ".FIKEYA" / "unsafe.txt").exists()
     assert file.read_text(encoding="utf-8") == "current"
+
+
+def test_broker_records_files_created_and_deleted_by_an_approved_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    removed = root / "removed.txt"
+    removed.write_text("remove me", encoding="utf-8")
+    executable = Path(sys.executable).name
+    broker = WorkspaceExecutionBroker(
+        workspace, allowed_executables=frozenset({executable})
+    )
+
+    result = _run(
+        broker.execute(
+            ToolCall(
+                "process:mutations",
+                "process.run",
+                {
+                    "arguments": [
+                        "-c",
+                        (
+                            "from pathlib import Path; "
+                            "Path('created.txt').write_text('created', encoding='utf-8'); "
+                            "Path('removed.txt').unlink()"
+                        ),
+                    ],
+                    "cwd": ".",
+                    "executable": executable,
+                    "timeoutSeconds": 15,
+                },
+            ),
+            CancellationToken(),
+            idempotency_key="4" * 64,
+        ),
+        monkeypatch,
+    )
+    assert hasattr(result, "status") and result.status == "ok"
+    output = json.loads(result.output)
+    assert output["workspaceMutations"] == {
+        "complete": True,
+        "paths": ["created.txt", "removed.txt"],
+        "truncated": False,
+    }
+    changed = {item.path: item for item in broker.state.changed_files.values()}
+    assert changed["created.txt"].before_sha256 is None
+    assert changed["created.txt"].after_sha256 is not None
+    assert changed["removed.txt"].before_sha256 is not None
+    assert changed["removed.txt"].after_sha256 is None

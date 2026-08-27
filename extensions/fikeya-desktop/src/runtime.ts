@@ -110,7 +110,7 @@ export interface FikeyaToolOutcome {
 export interface FikeyaChangedFileOutcome {
 	readonly path: string;
 	readonly beforeSha256: string | null;
-	readonly afterSha256: string;
+	readonly afterSha256: string | null;
 }
 
 export interface FikeyaCodingOutcome {
@@ -895,12 +895,14 @@ function parseChangedFileOutcome(value: unknown): FikeyaChangedFileOutcome | und
 	const record = asRecord(value);
 	const filePath = strictBoundedString(record?.path, 4_096);
 	const beforeSha256 = nullableBoundedString(record?.beforeSha256, 71);
-	const afterSha256 = boundedString(record?.afterSha256, 71);
+	const afterSha256 = nullableBoundedString(record?.afterSha256, 71);
 	if (!record || !filePath || filePath.includes('\\') || filePath.startsWith('/')
 		|| filePath.split('/').includes('..')
 		|| beforeSha256 === undefined
 		|| (beforeSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(beforeSha256))
-		|| !afterSha256 || !/^sha256:[0-9a-f]{64}$/.test(afterSha256)) {
+		|| afterSha256 === undefined
+		|| (afterSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(afterSha256))
+		|| (beforeSha256 === null && afterSha256 === null)) {
 		return undefined;
 	}
 	return { path: filePath, beforeSha256, afterSha256 };

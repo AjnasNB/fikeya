@@ -725,6 +725,10 @@ describe('Fikeya runtime protocol', () => {
 				afterSha256: `sha256:${'d'.repeat(64)}`,
 				beforeSha256: `sha256:${'b'.repeat(64)}`,
 				path: 'src/payment.ts'
+			}, {
+				afterSha256: null,
+				beforeSha256: `sha256:${'a'.repeat(64)}`,
+				path: 'src/removed.ts'
 			}],
 			plan: 'Inspect, edit, and verify the focused behavior.',
 			steps: 3,

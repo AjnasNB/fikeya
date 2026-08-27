@@ -132,7 +132,7 @@ export interface FikeyaMemoryRunCaptureRequest {
 		readonly changedFiles: readonly {
 			readonly path: string;
 			readonly beforeSha256: string | null;
-			readonly afterSha256: string;
+			readonly afterSha256: string | null;
 		}[];
 	};
 }
