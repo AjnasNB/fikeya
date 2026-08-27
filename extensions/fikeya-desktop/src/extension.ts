@@ -10,6 +10,7 @@ import { FikeyaAgentProfile, FikeyaAgentProfileStore, FikeyaAgentRole } from './
 import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderPrompt, FikeyaAgentMode, invokeAgentRunRequest } from './agentComposer';
 import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscriptions } from './azureDiscovery';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
+import { appendTextFilesToPrompt, FikeyaTextFileInput } from './fileInputs';
 import { escapeHtml, parseWebviewMessage } from './messageValidation';
 import { FikeyaImageInput } from './imageInputs';
 import { renderSafeMarkdown } from './markdown';
@@ -408,15 +409,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				await this.removeProvider(message.providerName);
 				break;
 			case 'runAgent':
-				await invokeAgentRunRequest(message, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images) => {
-					await this.runAgent(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images);
+				await invokeAgentRunRequest(message, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images, files) => {
+					await this.runAgent(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images, files);
 				});
 				break;
 			case 'runMultiAgent':
 				await this.runMultiAgent(message.selectedAgentIds, message.prompt, message.maxConcurrency);
 				break;
 			case 'proposePlan':
-				await this.proposePlan(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode, message.images);
+				await this.proposePlan(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode, message.images, message.files);
 				break;
 			case 'cancelAgent':
 				this.cancelAgent();
@@ -844,6 +845,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		memoryMode: FikeyaMemoryMode,
 		mode: FikeyaAgentMode = 'agent',
 		images: readonly FikeyaImageInput[] = [],
+		files: readonly FikeyaTextFileInput[] = [],
 		attemptedProviderNames: ReadonlySet<string> = new Set(),
 		providerHistory = projectProviderHistory(this.state.conversation)
 	): Promise<void> {
@@ -862,7 +864,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 
 		const conversation = attemptedProviderNames.size === 0
-			? appendConversationMessage(this.state.conversation, createConversationMessage('user', prompt, undefined, 'normal', images))
+			? appendConversationMessage(this.state.conversation, createConversationMessage('user', prompt, undefined, 'normal', images, files))
 			: this.state.conversation;
 		this.state = {
 			...this.state,
@@ -878,7 +880,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 		const operation = startFikeyaAgentRun(
 			providerName,
-			buildAgentProviderPrompt(mode, prompt),
+			appendTextFilesToPrompt(buildAgentProviderPrompt(mode, prompt), files),
 			maxOutputTokens,
 			contextMaxCharacters,
 			memoryMode,
@@ -923,7 +925,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			await this.persistConversation();
 			this.refresh();
 			if (result.failure === 'quota') {
-				await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images, attempted, providerHistory);
+				await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images, files, attempted, providerHistory);
 			}
 			return;
 		}
@@ -1119,7 +1121,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		maxOutputTokens: number,
 		contextMaxCharacters: number,
 		memoryMode: FikeyaMemoryMode,
-		images: readonly FikeyaImageInput[] = []
+		images: readonly FikeyaImageInput[] = [],
+		files: readonly FikeyaTextFileInput[] = []
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
@@ -1130,7 +1133,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const providerHistory = projectProviderHistory(this.state.conversation);
 		this.state = {
 			...this.state,
-			conversation: appendConversationMessage(this.state.conversation, createConversationMessage('user', prompt, undefined, 'normal', images)),
+			conversation: appendConversationMessage(this.state.conversation, createConversationMessage('user', prompt, undefined, 'normal', images, files)),
 			agent: {
 				status: 'running',
 				providerName,
@@ -1142,7 +1145,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 		const operation = startFikeyaPlanProposal(
 			providerName,
-			prompt,
+			appendTextFilesToPrompt(prompt, files),
 			maxOutputTokens,
 			contextMaxCharacters,
 			memoryMode,
@@ -1219,6 +1222,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		memoryMode: FikeyaMemoryMode,
 		mode: FikeyaAgentMode,
 		images: readonly FikeyaImageInput[],
+		files: readonly FikeyaTextFileInput[],
 		attemptedProviderNames: ReadonlySet<string>,
 		providerHistory: ReturnType<typeof projectProviderHistory>
 	): Promise<void> {
@@ -1270,7 +1274,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 		void vscode.window.showInformationMessage(vscode.l10n.t('Continuing with {0} ({1}).', target.name, target.model));
-		await this.runAgent(target.name, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images, attemptedProviderNames, providerHistory);
+		await this.runAgent(target.name, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images, files, attemptedProviderNames, providerHistory);
 	}
 
 	private async persistConversation(): Promise<void> {
@@ -1843,7 +1847,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.message-code pre { max-height: 420px; margin: 0; overflow: auto; padding: 10px; white-space: pre; }
 		.message-attachments { display: flex; flex-wrap: wrap; gap: 6px; }
 		.message-attachment { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 4px 7px; border: 1px solid var(--vscode-widget-border); border-radius: 7px; color: var(--vscode-descriptionForeground); background: var(--vscode-editorWidget-background); font-size: 10px; }
-		.message-attachment strong { max-width: 180px; overflow: hidden; color: var(--vscode-foreground); text-overflow: ellipsis; white-space: nowrap; }
+		.message-attachment strong { max-width: 220px; overflow: hidden; color: var(--vscode-foreground); text-overflow: ellipsis; white-space: nowrap; }
+		.message-attachment-path { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.message-actions { display: flex; justify-content: end; min-height: 24px; margin-top: 2px; }
 		.copy-message { display: grid; width: 26px; min-width: 26px; min-height: 24px; place-items: center; padding: 0; border-color: transparent; border-radius: 6px; opacity: .62; }
 		.copy-message:hover, .copy-message:focus-visible { opacity: 1; }
@@ -1854,7 +1859,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.multi-agent-live li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.multi-agent-live li strong { overflow: hidden; color: var(--vscode-foreground); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 		@keyframes fikeya-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
-			.agent-form { position: relative; z-index: 10; display: grid; width: calc(100% - 20px); max-width: 900px; gap: 0; margin: 0 auto 10px; padding: 8px; border: 1px solid var(--vscode-focusBorder); border-radius: 12px; background: var(--vscode-editor-background); }
+			.agent-form { position: relative; z-index: 10; display: grid; width: calc(100% - 20px); max-width: 900px; gap: 0; margin: 0 auto 10px; padding: 8px; border: 1px solid var(--vscode-focusBorder); border-radius: 16px; background: var(--vscode-editor-background); box-shadow: 0 8px 26px color-mix(in srgb, var(--vscode-widget-shadow) 52%, transparent); transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
+			.agent-form.is-dropping { border-color: var(--vscode-button-background); box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-focusBorder) 38%, transparent), 0 12px 34px var(--vscode-widget-shadow); transform: translateY(-1px); }
 			.agent-form .composer textarea { min-height: 78px; max-height: 260px; border: 0; background: transparent; resize: none; }
 			.composer-attachments { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 2px 7px; }
 			.composer-attachments[hidden] { display: none; }
@@ -1862,6 +1868,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			.composer-attachment img { width: 66px; height: 52px; border: 1px solid var(--vscode-widget-border); border-radius: 8px; object-fit: cover; }
 			.composer-attachment figcaption { overflow: hidden; color: var(--vscode-descriptionForeground); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 			.composer-attachment button { position: absolute; top: 3px; right: 3px; display: grid; width: 20px; min-width: 20px; min-height: 20px; place-items: center; padding: 0; border-radius: 999px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); line-height: 1; }
+			.composer-attachment.file { width: 150px; min-height: 52px; grid-template-columns: 30px minmax(0, 1fr); align-items: center; padding: 7px 28px 7px 7px; border: 1px solid var(--vscode-widget-border); border-radius: 9px; background: var(--vscode-editorWidget-background); }
+			.composer-file-icon { display: grid; width: 30px; height: 34px; place-items: center; border-radius: 6px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); font-family: var(--vscode-editor-font-family); font-size: 10px; font-weight: 700; }
+			.composer-file-copy { display: grid; min-width: 0; gap: 2px; }
+			.composer-file-copy strong, .composer-file-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 			.composer-bar { display: flex; min-width: 0; align-items: center; gap: 5px; padding-top: 6px; border-top: 1px solid var(--vscode-widget-border); }
 			.inline-field { min-width: 0; max-width: none; flex: 1 1 auto; }
 			.inline-field select { max-width: 100%; border: 0; background: var(--vscode-dropdown-background); overflow: hidden; text-overflow: ellipsis; }
@@ -1879,6 +1889,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			.composer-actions { margin-left: auto; flex-wrap: nowrap; justify-content: end; }
 			.composer-actions button { display: grid; width: 32px; min-width: 32px; min-height: 30px; place-items: center; padding: 0; border-radius: 999px; font-size: 17px; line-height: 1; }
 			.composer-icon { display: grid; width: 30px; min-width: 30px; min-height: 30px; place-items: center; padding: 0; border-color: transparent; }
+			.composer-attach { position: relative; }
+			.composer-attach > summary { display: grid; width: 30px; min-width: 30px; min-height: 30px; place-items: center; border: 1px solid transparent; border-radius: 999px; cursor: pointer; font-size: 17px; list-style: none; }
+			.composer-attach > summary::-webkit-details-marker { display: none; }
+			.composer-attach[open] > summary { border-color: var(--vscode-focusBorder); background: var(--vscode-toolbar-hoverBackground); }
+			.composer-attach-menu { position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 34; display: grid; width: 190px; gap: 1px; padding: 5px; border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border)); border-radius: 9px; background: var(--vscode-menu-background); box-shadow: 0 8px 24px var(--vscode-widget-shadow); }
+			.composer-attach-menu button { min-height: 30px; border: 0; color: var(--vscode-menu-foreground); background: transparent; text-align: left; }
+			.composer-attach-menu button:hover { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
 			.composer-route { position: relative; }
 			.composer-route > summary { display: grid; width: 30px; min-width: 30px; min-height: 30px; place-items: center; padding: 0; border: 1px solid transparent; color: var(--vscode-foreground); cursor: pointer; font-size: 12px; list-style: none; }
 			.composer-route > summary::-webkit-details-marker { display: none; }
@@ -2028,6 +2045,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		const persistedState = vscode.getState() || {};
+		const postUi = (type, payload = {}) => vscode.postMessage({
+			jsonrpc: '2.0',
+			method: 'ui.' + type,
+			params: { type, ...payload }
+		});
 		const persistUiState = patch => vscode.setState({ ...(vscode.getState() || {}), ...patch });
 		const surfaceRoot = document.querySelector('[data-initial-modal]');
 		const activePlanId = surfaceRoot?.dataset.planId || '';
@@ -2106,7 +2128,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				const specification = JSON.parse(source || '');
 				if (!specification || typeof specification !== 'object' || Array.isArray(specification)) throw new Error('Plan must be a JSON object.');
 				if (planClientError) planClientError.hidden = true;
-				vscode.postMessage({ type: 'createPlan', specification });
+				postUi('createPlan', { specification });
 			} catch (error) {
 				if (planClientError) {
 					planClientError.textContent = error instanceof Error ? error.message : 'Plan JSON is invalid.';
@@ -2151,36 +2173,36 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				if (!planNetworkConsent.checked || !providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return;
 				planProposalButton.disabled = true;
 				persistUiState({ planDraft: '', planNetworkConsent: false });
-				vscode.postMessage({ type: 'proposePlan', providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true });
+				postUi('proposePlan', { providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, allowNetwork: true });
 			});
 		}
-		document.querySelector('[data-plan-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshPlan' }));
-		document.querySelector('[data-plan-new]')?.addEventListener('click', () => vscode.postMessage({ type: 'newPlan' }));
-		document.querySelector('[data-plan-restore]')?.addEventListener('click', () => vscode.postMessage({ type: 'restorePlan' }));
-		document.querySelectorAll('[data-plan-action]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'planAction', action: button.dataset.planAction, stepId: button.dataset.planActionStep })));
-		document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openCommand', command: button.dataset.command })));
-		document.querySelector('[data-action="refresh-providers"]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshProviders' }));
-		document.querySelectorAll('[data-provider-test]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'testProvider', providerName: button.dataset.providerTest })));
-		document.querySelectorAll('[data-provider-remove]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'removeProvider', providerName: button.dataset.providerRemove })));
-		document.querySelector('[data-agent-cancel]')?.addEventListener('click', () => vscode.postMessage({ type: 'cancelAgent' }));
-		document.querySelector('[data-conversation-clear]')?.addEventListener('click', () => vscode.postMessage({ type: 'clearConversation' }));
-		document.querySelector('[data-conversation-restore]')?.addEventListener('click', () => vscode.postMessage({ type: 'restoreConversation' }));
+		document.querySelector('[data-plan-refresh]')?.addEventListener('click', () => postUi('refreshPlan'));
+		document.querySelector('[data-plan-new]')?.addEventListener('click', () => postUi('newPlan'));
+		document.querySelector('[data-plan-restore]')?.addEventListener('click', () => postUi('restorePlan'));
+		document.querySelectorAll('[data-plan-action]').forEach(button => button.addEventListener('click', () => postUi('planAction', { action: button.dataset.planAction, stepId: button.dataset.planActionStep })));
+		document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => postUi('openCommand', { command: button.dataset.command })));
+		document.querySelector('[data-action="refresh-providers"]')?.addEventListener('click', () => postUi('refreshProviders'));
+		document.querySelectorAll('[data-provider-test]').forEach(button => button.addEventListener('click', () => postUi('testProvider', { providerName: button.dataset.providerTest })));
+		document.querySelectorAll('[data-provider-remove]').forEach(button => button.addEventListener('click', () => postUi('removeProvider', { providerName: button.dataset.providerRemove })));
+		document.querySelector('[data-agent-cancel]')?.addEventListener('click', () => postUi('cancelAgent'));
+		document.querySelector('[data-conversation-clear]')?.addEventListener('click', () => postUi('clearConversation'));
+		document.querySelector('[data-conversation-restore]')?.addEventListener('click', () => postUi('restoreConversation'));
 		document.querySelectorAll('[data-copy-message]').forEach(button => button.addEventListener('click', () => {
 			const content = button.closest('.chat-message')?.querySelector('.message-content')?.textContent || '';
-			if (content) vscode.postMessage({ type: 'copyText', text: content });
+			if (content) postUi('copyText', { text: content });
 		}));
 		document.querySelectorAll('[data-copy-code]').forEach(button => button.addEventListener('click', () => {
 			const content = button.closest('.message-code')?.querySelector('code')?.textContent || '';
-			if (content) vscode.postMessage({ type: 'copyText', text: content });
+			if (content) postUi('copyText', { text: content });
 		}));
 		document.querySelectorAll('[data-review-diff]').forEach(button => button.addEventListener('click', () => {
 			const content = button.closest('.message-code')?.querySelector('code')?.textContent || '';
-			if (content) vscode.postMessage({ type: 'reviewDiff', content });
+			if (content) postUi('reviewDiff', { content });
 		}));
-		document.querySelectorAll('[data-open-file]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openFile', path: button.dataset.openFile })));
-		document.querySelectorAll('[data-open-external]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openExternal', url: button.dataset.openExternal })));
-			document.querySelector('[data-receipts-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshReceipts' }));
-			document.querySelector('[data-statistics-refresh]')?.addEventListener('click', () => vscode.postMessage({ type: 'refreshStatistics' }));
+		document.querySelectorAll('[data-open-file]').forEach(button => button.addEventListener('click', () => postUi('openFile', { path: button.dataset.openFile })));
+		document.querySelectorAll('[data-open-external]').forEach(button => button.addEventListener('click', () => postUi('openExternal', { url: button.dataset.openExternal })));
+			document.querySelector('[data-receipts-refresh]')?.addEventListener('click', () => postUi('refreshReceipts'));
+			document.querySelector('[data-statistics-refresh]')?.addEventListener('click', () => postUi('refreshStatistics'));
 		const agentForm = document.querySelector('[data-agent-form]');
 		const networkConsent = document.querySelector('[data-network-consent]');
 		const runButton = document.querySelector('[data-agent-run]');
@@ -2198,12 +2220,24 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const selectedAgentFields = Array.from(agentForm?.querySelectorAll('[name="selectedAgentId"]') ?? []);
 		const maxConcurrencyField = agentForm?.querySelector('[name="maxConcurrency"]');
 		const singleProviderField = agentForm?.querySelector('[data-single-provider]');
-		const imageInput = agentForm?.querySelector('[data-image-input]');
-		const attachImageButton = agentForm?.querySelector('[data-attach-image]');
+		const attachmentInput = agentForm?.querySelector('[data-attachment-input]');
+		const folderInput = agentForm?.querySelector('[data-folder-input]');
+		const attachFilesButton = agentForm?.querySelector('[data-attach-files]');
+		const attachFolderButton = agentForm?.querySelector('[data-attach-folder]');
 		const attachmentTray = agentForm?.querySelector('[data-composer-attachments]');
 		const composerStatus = agentForm?.querySelector('.composer-status');
 		let imageAttachments = [];
+		let textFileAttachments = [];
 		const imageLimits = { count: 4, each: 393216, total: 524288 };
+		const textFileLimits = { count: 8, each: 98304, total: 393216 };
+		const textFileExtensions = new Set([
+			'.bash', '.bat', '.c', '.cc', '.cfg', '.cjs', '.cmd', '.conf', '.cpp', '.cs', '.css', '.cts', '.dart',
+			'.fish', '.fs', '.fsx', '.go', '.h', '.hpp', '.htm', '.html', '.ini', '.java', '.js', '.json', '.jsonc',
+			'.jsx', '.kt', '.kts', '.less', '.md', '.mdx', '.mjs', '.mts', '.php', '.ps1', '.psm1', '.py', '.pyi',
+			'.rb', '.rs', '.sass', '.scss', '.sh', '.sql', '.swift', '.toml', '.ts', '.tsx', '.txt', '.xml', '.yaml',
+			'.yml', '.zsh'
+		]);
+		const extensionlessTextFiles = new Set(['containerfile', 'dockerfile', 'gemfile', 'makefile', 'procfile', 'readme']);
 		const setComposerStatus = message => {
 			if (composerStatus) composerStatus.textContent = message;
 		};
@@ -2225,11 +2259,43 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				remove.textContent = '×';
 				remove.addEventListener('click', () => {
 					imageAttachments = imageAttachments.filter((_, candidateIndex) => candidateIndex !== index);
-					renderImageAttachments();
+					renderAttachments();
 				});
 				figure.append(image, caption, remove);
 				return figure;
 			}));
+		};
+		const renderAttachments = () => {
+			renderImageAttachments();
+			if (!attachmentTray) return;
+			for (const [index, attachment] of textFileAttachments.entries()) {
+				const item = document.createElement('article');
+				item.className = 'composer-attachment file';
+				const icon = document.createElement('span');
+				icon.className = 'composer-file-icon';
+				const extension = attachment.name.includes('.') ? attachment.name.split('.').at(-1) : 'FILE';
+				icon.textContent = String(extension || 'FILE').slice(0, 4).toUpperCase();
+				const copy = document.createElement('span');
+				copy.className = 'composer-file-copy';
+				const name = document.createElement('strong');
+				name.textContent = attachment.relativePath;
+				name.title = attachment.relativePath;
+				const size = document.createElement('span');
+				size.textContent = Math.max(1, Math.round(attachment.sizeBytes / 1024)) + ' KB';
+				copy.append(name, size);
+				const remove = document.createElement('button');
+				remove.type = 'button';
+				remove.setAttribute('aria-label', 'Remove ' + attachment.relativePath);
+				remove.title = 'Remove file';
+				remove.textContent = '×';
+				remove.addEventListener('click', () => {
+					textFileAttachments = textFileAttachments.filter((_, candidateIndex) => candidateIndex !== index);
+					renderAttachments();
+				});
+				item.append(icon, copy, remove);
+				attachmentTray.append(item);
+			}
+			attachmentTray.hidden = imageAttachments.length === 0 && textFileAttachments.length === 0;
 		};
 		const readAsDataUrl = blob => new Promise((resolve, reject) => {
 			const reader = new FileReader();
@@ -2273,28 +2339,113 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		};
 		const addImageFiles = async files => {
 			const candidates = Array.from(files ?? []);
-			if (imageAttachments.length + candidates.length > imageLimits.count) {
-				setComposerStatus('Attach up to four images per message.');
+			if (imageAttachments.length + candidates.length > imageLimits.count) throw new Error('Attach up to four images per message.');
+			const normalized = [];
+			for (const file of candidates) normalized.push(await normalizeImage(file));
+			const total = [...imageAttachments, ...normalized].reduce((sum, item) => sum + item.sizeBytes, 0);
+			if (total > imageLimits.total) throw new Error('Images must use 512 KB or less in total.');
+			imageAttachments = [...imageAttachments, ...normalized];
+			renderAttachments();
+			promptField?.focus();
+		};
+		const safeRelativePath = (file, suppliedPath) => {
+			const value = String(suppliedPath || file.name || '').replaceAll('\\', '/');
+			const parts = value.split('/');
+			if (!value || value.length > 512 || value.startsWith('/') || value.endsWith('/') || parts.at(-1) !== file.name || parts.some(part => !part || part === '.' || part === '..')) {
+				throw new Error('A selected file has an unsafe relative path.');
+			}
+			return value;
+		};
+		const isAllowedTextFile = file => {
+			const name = String(file.name || '').toLowerCase();
+			if (!name || /^\.env(?:\.|$)/u.test(name) || /^\.(?:netrc|npmrc|pypirc)$/u.test(name) || /^credentials(?:\.|$)/u.test(name) || /^id_(?:dsa|ecdsa|ed25519|rsa)(?:\.|$)/u.test(name) || /\.(?:jks|key|p12|pem|pfx)$/u.test(name)) return false;
+			const extensionIndex = name.lastIndexOf('.');
+			return extensionlessTextFiles.has(name) || (extensionIndex >= 0 && textFileExtensions.has(name.slice(extensionIndex)));
+		};
+		const normalizeTextFile = async item => {
+			const file = item.file;
+			if (!isAllowedTextFile(file)) throw new Error('Use a supported text or code file. Credential and key files are blocked.');
+			if (file.size < 1 || file.size > textFileLimits.each) throw new Error('Each text file must be between 1 byte and 96 KB.');
+			const relativePath = safeRelativePath(file, item.relativePath);
+			const text = await file.text();
+			if (text.includes('\u0000') || new TextEncoder().encode(text).byteLength !== file.size) throw new Error('The selected file is not canonical UTF-8 text.');
+			return { name: file.name, relativePath, mimeType: 'text/plain', text, sizeBytes: file.size };
+		};
+		const addTextFiles = async items => {
+			if (textFileAttachments.length + items.length > textFileLimits.count) throw new Error('Attach up to eight text files per message.');
+			const normalized = [];
+			for (const item of items) normalized.push(await normalizeTextFile(item));
+			const total = [...textFileAttachments, ...normalized].reduce((sum, candidate) => sum + candidate.sizeBytes, 0);
+			if (total > textFileLimits.total) throw new Error('Text files must use 384 KB or less in total.');
+			textFileAttachments = [...textFileAttachments, ...normalized];
+		};
+		const addAttachmentItems = async items => {
+			if (promptField?.disabled) return;
+			const candidates = Array.from(items ?? []).filter(item => item?.file instanceof File);
+			const imageItems = candidates.filter(item => item.file.type.startsWith('image/'));
+			const textItems = candidates.filter(item => !item.file.type.startsWith('image/') && isAllowedTextFile(item.file));
+			const unsupported = candidates.length - imageItems.length - textItems.length;
+			if (imageItems.length === 0 && textItems.length === 0) {
+				setComposerStatus('No supported image, text, or code files were found.');
 				return;
 			}
 			try {
-				for (const file of candidates) {
-					const attachment = await normalizeImage(file);
-					const total = imageAttachments.reduce((sum, item) => sum + item.sizeBytes, 0) + attachment.sizeBytes;
-					if (total > imageLimits.total) throw new Error('Images must use 512 KB or less in total.');
-					imageAttachments = [...imageAttachments, attachment];
-				}
-				renderImageAttachments();
-				setComposerStatus(imageAttachments.length === 1 ? '1 image ready to send.' : imageAttachments.length + ' images ready to send.');
+				if (imageItems.length > 0) await addImageFiles(imageItems.map(item => item.file));
+				if (textItems.length > 0) await addTextFiles(textItems);
+				renderAttachments();
+				const count = imageAttachments.length + textFileAttachments.length;
+				setComposerStatus(count + (count === 1 ? ' attachment ready.' : ' attachments ready.') + (unsupported > 0 ? ' ' + unsupported + ' unsupported item(s) skipped.' : ''));
 				promptField?.focus();
 			} catch (error) {
-				setComposerStatus(error instanceof Error ? error.message : 'Image attachment failed.');
+				setComposerStatus(error instanceof Error ? error.message : 'File attachment failed.');
 			}
 		};
-		attachImageButton?.addEventListener('click', () => imageInput?.click());
-		imageInput?.addEventListener('change', async () => {
-			await addImageFiles(imageInput.files);
-			imageInput.value = '';
+		const selectedItems = files => Array.from(files ?? []).map(file => ({ file, relativePath: file.webkitRelativePath || file.name }));
+		const readEntryFile = entry => new Promise((resolve, reject) => entry.file(resolve, reject));
+		const readDirectoryBatch = reader => new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+		const collectEntryFiles = async (entry, results) => {
+			if (!entry || results.length >= 64) return;
+			if (entry.isFile) {
+				const file = await readEntryFile(entry);
+				results.push({ file, relativePath: String(entry.fullPath || file.name).replace(/^\/+/, '') });
+				return;
+			}
+			if (!entry.isDirectory) return;
+			const reader = entry.createReader();
+			for (;;) {
+				const batch = await readDirectoryBatch(reader);
+				if (batch.length === 0) break;
+				for (const child of batch) {
+					await collectEntryFiles(child, results);
+					if (results.length >= 64) return;
+				}
+			}
+		};
+		const droppedItems = async transfer => {
+			const results = [];
+			const entries = Array.from(transfer?.items ?? []).map(item => typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : undefined).filter(Boolean);
+			if (entries.length > 0) {
+				for (const entry of entries) await collectEntryFiles(entry, results);
+				return results;
+			}
+			return selectedItems(transfer?.files);
+		};
+		const attachmentDetails = agentForm?.querySelector('.composer-attach');
+		attachFilesButton?.addEventListener('click', () => {
+			attachmentDetails?.removeAttribute('open');
+			attachmentInput?.click();
+		});
+		attachFolderButton?.addEventListener('click', () => {
+			attachmentDetails?.removeAttribute('open');
+			folderInput?.click();
+		});
+		attachmentInput?.addEventListener('change', async () => {
+			await addAttachmentItems(selectedItems(attachmentInput.files));
+			attachmentInput.value = '';
+		});
+		folderInput?.addEventListener('change', async () => {
+			await addAttachmentItems(selectedItems(folderInput.files));
+			folderInput.value = '';
 		});
 		promptField?.addEventListener('paste', event => {
 			const imageFiles = Array.from(event.clipboardData?.items ?? [])
@@ -2303,7 +2454,31 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				.filter(Boolean);
 			if (imageFiles.length === 0) return;
 			event.preventDefault();
-			void addImageFiles(imageFiles);
+			void addAttachmentItems(imageFiles.map(file => ({ file, relativePath: file.name })));
+		});
+		let dragDepth = 0;
+		agentForm?.addEventListener('dragenter', event => {
+			if (!Array.from(event.dataTransfer?.types ?? []).includes('Files')) return;
+			event.preventDefault();
+			dragDepth += 1;
+			agentForm.classList.add('is-dropping');
+		});
+		agentForm?.addEventListener('dragover', event => {
+			if (!Array.from(event.dataTransfer?.types ?? []).includes('Files')) return;
+			event.preventDefault();
+			if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+		});
+		agentForm?.addEventListener('dragleave', () => {
+			dragDepth = Math.max(0, dragDepth - 1);
+			if (dragDepth === 0) agentForm.classList.remove('is-dropping');
+		});
+		agentForm?.addEventListener('drop', event => {
+			event.preventDefault();
+			dragDepth = 0;
+			agentForm.classList.remove('is-dropping');
+			void droppedItems(event.dataTransfer)
+				.then(addAttachmentItems)
+				.catch(error => setComposerStatus(error instanceof Error ? error.message : 'Dropped files could not be read.'));
 		});
 		if (promptField && typeof persistedState.chatDraft === 'string') promptField.value = persistedState.chatDraft;
 		if (chatModeField && ['agent', 'plan', 'research', 'multitask'].includes(persistedState.chatMode)) chatModeField.value = persistedState.chatMode;
@@ -2363,7 +2538,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				const contextMaxCharacters = Number(agentForm.querySelector('[name="contextMaxCharacters"]')?.value);
 				const memoryMode = agentForm.querySelector('[name="memoryMode"]')?.value;
 				if (!providerName || !prompt?.trim() || !Number.isSafeInteger(maxOutputTokens) || !Number.isSafeInteger(contextMaxCharacters) || !['auto', 'off', 'required'].includes(memoryMode)) return undefined;
-				return { providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode: chatModeField?.value === 'research' ? 'research' : 'agent', images: imageAttachments, allowNetwork: true };
+				return { providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode: chatModeField?.value === 'research' ? 'research' : 'agent', images: imageAttachments, files: textFileAttachments, allowNetwork: true };
 			};
 			const updateRunButton = () => {
 				runButton.disabled = runBlocked || !promptField?.value.trim();
@@ -2378,16 +2553,16 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			const executeAgentAction = action => {
 				const multitask = action === 'multitask';
 				const selectedAgentIds = selectedAgentFields.filter(input => input.checked).map(input => input.value);
-				if (multitask && imageAttachments.length > 0) {
-					setComposerStatus('Image attachments are available in Agent, Plan, and Research modes.');
+				if (multitask && (imageAttachments.length > 0 || textFileAttachments.length > 0)) {
+					setComposerStatus('Attachments are available in Agent, Plan, and Research modes.');
 					return;
 				}
 				if (multitask && selectedAgentIds.length === 0) {
-					vscode.postMessage({ type: 'openCommand', command: 'fikeya.configureAgents' });
+					postUi('openCommand', { command: 'fikeya.configureAgents' });
 					return;
 				}
 				if (!multitask && !providerField?.value) {
-					vscode.postMessage({ type: 'openCommand', command: 'fikeya.configureProvider' });
+					postUi('openCommand', { command: 'fikeya.configureProvider' });
 					return;
 				}
 				const request = multitask
@@ -2407,9 +2582,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				hideNetworkConfirmation();
 				networkConsent.checked = false;
 				imageAttachments = [];
-				renderImageAttachments();
+				textFileAttachments = [];
+				renderAttachments();
 				persistUiState({ chatDraft: '' });
-				vscode.postMessage({ type: action === 'plan' ? 'proposePlan' : multitask ? 'runMultiAgent' : 'runAgent', ...request });
+				const actionType = action === 'plan' ? 'proposePlan' : multitask ? 'runMultiAgent' : 'runAgent';
+				postUi(actionType, request);
 			};
 			agentForm.addEventListener('submit', event => {
 				event.preventDefault();
@@ -2465,7 +2642,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 					: null;
 			focusTarget?.focus({ preventScroll: true });
 		}
-		document.querySelectorAll('[data-memory-refresh]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'refreshMemory' })));
+		document.querySelectorAll('[data-memory-refresh]').forEach(button => button.addEventListener('click', () => postUi('refreshMemory')));
 		const graphDataElement = document.getElementById('fikeya-memory-graph-data');
 		const graphSvg = document.querySelector('[data-memory-graph]');
 		if (graphDataElement && graphSvg) {
@@ -2609,7 +2786,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			document.querySelector('[data-graph-zoom-in]')?.addEventListener('click', () => { zoom = Math.min(2.5, zoom * 1.2); applyScene(); saveGraphState(); });
 			document.querySelector('[data-graph-zoom-out]')?.addEventListener('click', () => { zoom = Math.max(.55, zoom / 1.2); applyScene(); saveGraphState(); });
 			document.querySelector('[data-graph-reset]')?.addEventListener('click', () => { positions.clear(); pan = { x: 0, y: 0 }; zoom = 1; selectedId = null; applyScene(); renderGraph(); saveGraphState(); });
-			openSource?.addEventListener('click', () => { if (openSource.dataset.openSource) vscode.postMessage({ type: 'openFile', path: openSource.dataset.openSource }); });
+			openSource?.addEventListener('click', () => { if (openSource.dataset.openSource) postUi('openFile', { path: openSource.dataset.openSource }); });
 			fullView?.addEventListener('click', () => { const expanded = graphRoot?.dataset.expanded !== 'true'; if (graphRoot) graphRoot.dataset.expanded = String(expanded); fullView.setAttribute('aria-pressed', String(expanded)); fullView.textContent = expanded ? 'Exit full view' : 'Full view'; persistUiState({ graphExpanded: expanded }); });
 			if (graphRoot && persistedState.graphExpanded === true) { graphRoot.dataset.expanded = 'true'; fullView?.setAttribute('aria-pressed', 'true'); if (fullView) fullView.textContent = 'Exit full view'; }
 			document.addEventListener('keydown', event => { if (event.key === 'Escape' && graphRoot?.dataset.expanded === 'true') { graphRoot.dataset.expanded = 'false'; fullView?.setAttribute('aria-pressed', 'false'); if (fullView) fullView.textContent = 'Full view'; persistUiState({ graphExpanded: false }); fullView?.focus(); } });
@@ -2956,10 +3133,11 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 		<div class="chat-thread" data-chat-thread data-message-count="${state.conversation.length}" aria-live="polite">${chatPlan}${conversation}${progress}${outcome}</div>
 		<form class="agent-form" data-agent-form autocomplete="off">
 			<div class="composer-attachments" data-composer-attachments hidden aria-live="polite"></div>
-			<input data-image-input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+			<input data-attachment-input type="file" accept="image/png,image/jpeg,image/webp,image/gif,text/*,.c,.cc,.cfg,.cjs,.cmd,.conf,.cpp,.cs,.css,.dart,.go,.h,.hpp,.html,.ini,.java,.js,.json,.jsonc,.jsx,.kt,.md,.mdx,.mjs,.php,.ps1,.py,.rb,.rs,.sh,.sql,.swift,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml" multiple hidden${controlsDisabled ? ' disabled' : ''}>
+			<input data-folder-input type="file" webkitdirectory directory multiple hidden${controlsDisabled ? ' disabled' : ''}>
 			<label class="field composer"><span class="sr-only">${escapeHtml(strings.prompt)}</span><textarea name="prompt" maxlength="65536" placeholder="${escapeHtml(vscode.l10n.t('Plan, build, ask, or research...'))}"${controlsDisabled ? ' disabled' : ''} required></textarea></label>
 			<div class="composer-bar">
-				<button class="quiet composer-icon" data-attach-image type="button" aria-label="${escapeHtml(vscode.l10n.t('Attach images'))}" title="${escapeHtml(vscode.l10n.t('Attach or paste images'))}"${controlsDisabled ? ' disabled' : ''}><span aria-hidden="true">＋</span></button>
+				<details class="composer-attach"><summary aria-label="${escapeHtml(vscode.l10n.t('Attach files or images'))}" title="${escapeHtml(vscode.l10n.t('Attach, paste, or drop files'))}"><span aria-hidden="true">＋</span></summary><div class="composer-attach-menu"><button data-attach-files type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Files or images'))}</button><button data-attach-folder type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Folder'))}</button></div></details>
 				<label class="field composer-mode"><span class="sr-only">${escapeHtml(vscode.l10n.t('Mode'))}</span><select name="chatMode" aria-label="${escapeHtml(vscode.l10n.t('Chat mode'))}"${controlsDisabled ? ' disabled' : ''}><option value="agent"${initialComposerMode === 'agent' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Agent'))}</option><option value="plan"${initialComposerMode === 'plan' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Plan'))}</option><option value="research"${initialComposerMode === 'research' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Research'))}</option><option value="multitask">${escapeHtml(vscode.l10n.t('Multitask'))}</option></select></label>
 				<label class="field inline-field" data-single-provider><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(vscode.l10n.t('Model provider'))}" title="${escapeHtml(vscode.l10n.t('Choose a model'))}"${providerControlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label>
 				<details class="agent-picker" data-agent-picker hidden><summary>${escapeHtml(vscode.l10n.t('Agents'))}<span data-agent-count>0</span></summary><div class="agent-picker-menu"><strong>${escapeHtml(vscode.l10n.t('Parallel advisory agents'))}</strong><p class="muted">${escapeHtml(vscode.l10n.t('Select independent planning, research, or review agents. Approvals remain serialized.'))}</p>${agentProfileOptions}<label class="field"><span>${escapeHtml(vscode.l10n.t('Maximum parallel agents'))}</span><select name="maxConcurrency"${controlsDisabled ? ' disabled' : ''}><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option></select></label><button class="secondary" data-command="fikeya.configureAgents" type="button">${escapeHtml(vscode.l10n.t('Configure agents'))}</button></div></details>
@@ -2996,7 +3174,11 @@ function renderConversationMessage(message: FikeyaConversationMessage): string {
 	const className = message.role === 'user' ? 'user-message' : message.role === 'assistant' ? 'assistant-message' : 'notice-message';
 	const content = renderSafeMarkdown(message.content, { copy: vscode.l10n.t('Copy'), reviewDiff: vscode.l10n.t('Review diff') });
 	const attachments = message.attachments?.length
-		? `<div class="message-attachments" aria-label="${escapeHtml(vscode.l10n.t('Image attachments'))}">${message.attachments.map(attachment => `<span class="message-attachment"><span aria-hidden="true">▧</span><strong title="${escapeHtml(attachment.name)}">${escapeHtml(attachment.name)}</strong><span>${escapeHtml(formatByteCount(attachment.sizeBytes))}</span></span>`).join('')}</div>`
+		? `<div class="message-attachments" aria-label="${escapeHtml(vscode.l10n.t('Attachments'))}">${message.attachments.map(attachment => {
+			const label = attachment.relativePath ?? attachment.name;
+			const icon = attachment.kind === 'text' ? 'FILE' : '▧';
+			return `<span class="message-attachment"><span aria-hidden="true">${escapeHtml(icon)}</span><strong title="${escapeHtml(label)}">${escapeHtml(label)}</strong><span>${escapeHtml(formatByteCount(attachment.sizeBytes))}</span></span>`;
+		}).join('')}</div>`
 		: '';
 	return `<article class="chat-message ${className}" data-tone="${message.tone ?? 'normal'}"><div class="message-meta"><strong>${escapeHtml(roleLabel)}</strong>${provider}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatConversationTime(message.createdAt))}</time></div>${attachments}<div class="message-content">${content}</div><div class="message-actions"><button class="quiet copy-message" data-copy-message type="button" aria-label="${escapeHtml(vscode.l10n.t('Copy message'))}" title="${escapeHtml(vscode.l10n.t('Copy message'))}"><span aria-hidden="true">⧉</span></button></div></article>`;
 }
@@ -3546,7 +3728,8 @@ function createConversationMessage(
 	content: string,
 	providerName?: string,
 	tone: FikeyaConversationMessage['tone'] = 'normal',
-	images: readonly FikeyaImageInput[] = []
+	images: readonly FikeyaImageInput[] = [],
+	files: readonly FikeyaTextFileInput[] = []
 ): FikeyaConversationMessage {
 	return {
 		id: `chat-${Date.now()}-${randomBytes(5).toString('hex')}`,
@@ -3555,13 +3738,24 @@ function createConversationMessage(
 		createdAt: new Date().toISOString(),
 		providerName,
 		tone,
-		...(images.length === 0 ? {} : {
-			attachments: images.map(image => ({
-				name: image.name,
-				mimeType: image.mimeType,
-				sizeBytes: image.sizeBytes,
-				sha256: `sha256:${createHash('sha256').update(Buffer.from(image.base64Data, 'base64')).digest('hex')}`
-			}))
+		...(images.length === 0 && files.length === 0 ? {} : {
+			attachments: [
+				...images.map(image => ({
+					kind: 'image' as const,
+					name: image.name,
+					mimeType: image.mimeType,
+					sizeBytes: image.sizeBytes,
+					sha256: `sha256:${createHash('sha256').update(Buffer.from(image.base64Data, 'base64')).digest('hex')}`
+				})),
+				...files.map(file => ({
+					kind: 'text' as const,
+					name: file.name,
+					mimeType: file.mimeType,
+					relativePath: file.relativePath,
+					sizeBytes: file.sizeBytes,
+					sha256: `sha256:${createHash('sha256').update(file.text, 'utf8').digest('hex')}`
+				}))
+			]
 		})
 	};
 }
