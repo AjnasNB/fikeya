@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import path from 'path';
+import fs from 'fs';
 import es from 'event-stream';
 import pickle from 'chromium-pickle-js';
 import Filesystem from 'asar/lib/filesystem.js';
@@ -11,10 +12,28 @@ import VinylFile from 'vinyl';
 import minimatch from 'minimatch';
 
 export function createAsar(folderPath: string, unpackGlobs: string[], skipGlobs: string[], duplicateGlobs: string[], destFilename: string): NodeJS.ReadWriteStream {
+	const archiveRoot = fs.realpathSync(folderPath);
+
+	const getArchiveRelativePath = (file: VinylFile): string => {
+		const normalized = file.relative.replace(/\\/g, '/');
+		const nodeModulesMarker = 'node_modules/';
+		const markerIndex = normalized.indexOf(nodeModulesMarker);
+		const relative = markerIndex >= 0 ? normalized.substring(markerIndex + nodeModulesMarker.length) : normalized;
+		const platformRelative = relative.split('/').join(path.sep);
+		const resolved = path.resolve(archiveRoot, platformRelative);
+		const rootRelative = path.relative(archiveRoot, resolved);
+		if (!rootRelative || rootRelative === '..' || rootRelative.startsWith(`..${path.sep}`) || path.isAbsolute(rootRelative)) {
+			throw new Error(`ASAR entry must stay within the archive root: ${file.relative}`);
+		}
+		return rootRelative;
+	};
+
+	const getMatchPath = (file: VinylFile): string => `node_modules/${getArchiveRelativePath(file).replace(/\\/g, '/')}`;
 
 	const shouldUnpackFile = (file: VinylFile): boolean => {
+		const matchPath = getMatchPath(file);
 		for (let i = 0; i < unpackGlobs.length; i++) {
-			if (minimatch(file.relative, unpackGlobs[i])) {
+			if (minimatch(matchPath, unpackGlobs[i])) {
 				return true;
 			}
 		}
@@ -22,8 +41,9 @@ export function createAsar(folderPath: string, unpackGlobs: string[], skipGlobs:
 	};
 
 	const shouldSkipFile = (file: VinylFile): boolean => {
+		const matchPath = getMatchPath(file);
 		for (const skipGlob of skipGlobs) {
-			if (minimatch(file.relative, skipGlob)) {
+			if (minimatch(matchPath, skipGlob)) {
 				return true;
 			}
 		}
@@ -33,15 +53,16 @@ export function createAsar(folderPath: string, unpackGlobs: string[], skipGlobs:
 	// Files that should be duplicated between
 	// node_modules.asar and node_modules
 	const shouldDuplicateFile = (file: VinylFile): boolean => {
+		const matchPath = getMatchPath(file);
 		for (const duplicateGlob of duplicateGlobs) {
-			if (minimatch(file.relative, duplicateGlob)) {
+			if (minimatch(matchPath, duplicateGlob)) {
 				return true;
 			}
 		}
 		return false;
 	};
 
-	const filesystem = new Filesystem(folderPath);
+	const filesystem = new Filesystem(archiveRoot);
 	const out: Buffer[] = [];
 
 	// Keep track of pending inserts
@@ -51,29 +72,20 @@ export function createAsar(folderPath: string, unpackGlobs: string[], skipGlobs:
 	// Do not insert twice the same directory
 	const seenDir: { [key: string]: boolean } = {};
 	const insertDirectoryRecursive = (dir: string) => {
+		if (path.resolve(dir) === archiveRoot) {
+			return;
+		}
 		if (seenDir[dir]) {
 			return;
 		}
 
-		let lastSlash = dir.lastIndexOf('/');
-		if (lastSlash === -1) {
-			lastSlash = dir.lastIndexOf('\\');
-		}
-		if (lastSlash !== -1) {
-			insertDirectoryRecursive(dir.substring(0, lastSlash));
-		}
+		insertDirectoryRecursive(path.dirname(dir));
 		seenDir[dir] = true;
 		filesystem.insertDirectory(dir);
 	};
 
 	const insertDirectoryForFile = (file: string) => {
-		let lastSlash = file.lastIndexOf('/');
-		if (lastSlash === -1) {
-			lastSlash = file.lastIndexOf('\\');
-		}
-		if (lastSlash !== -1) {
-			insertDirectoryRecursive(file.substring(0, lastSlash));
-		}
+		insertDirectoryRecursive(path.dirname(file));
 	};
 
 	const insertFile = (relativePath: string, stat: { size: number; mode: number }, shouldUnpack: boolean) => {
@@ -108,15 +120,16 @@ export function createAsar(folderPath: string, unpackGlobs: string[], skipGlobs:
 				contents: file.contents
 			}));
 		}
+		const archiveRelativePath = getArchiveRelativePath(file);
+		const archivePath = path.join(archiveRoot, archiveRelativePath);
 		const shouldUnpack = shouldUnpackFile(file);
-		insertFile(file.relative, { size: file.contents.length, mode: file.stat.mode }, shouldUnpack);
+		insertFile(archivePath, { size: file.contents.length, mode: file.stat.mode }, shouldUnpack);
 
 		if (shouldUnpack) {
 			// The file goes outside of xx.asar, in a folder xx.asar.unpacked
-			const relative = path.relative(folderPath, file.path);
 			this.queue(new VinylFile({
 				base: '.',
-				path: path.join(destFilename + '.unpacked', relative),
+				path: path.join(destFilename + '.unpacked', archiveRelativePath),
 				stat: file.stat,
 				contents: file.contents
 			}));
