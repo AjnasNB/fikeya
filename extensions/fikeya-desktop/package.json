@@ -2,7 +2,7 @@
 	"name": "fikeya-desktop",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "0.1.0-beta.2",
+	"version": "0.1.0-beta.3",
 	"publisher": "fikeya",
 	"license": "AGPL-3.0-or-later",
 	"repository": {

@@ -108,7 +108,7 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
         self.assertIn("files saved", outcome)
         self.assertIn("tests passed", outcome)
 
-    def test_composer_accepts_ephemeral_images_without_persisting_data_urls(self) -> None:
+    def test_composer_accepts_ephemeral_files_and_images_without_persisting_content(self) -> None:
         source = (
             REPOSITORY_ROOT / "extensions/fikeya-desktop/src/extension.ts"
         ).read_text(encoding="utf-8")
@@ -116,9 +116,12 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
             REPOSITORY_ROOT / "extensions/fikeya-desktop/src/conversation.ts"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("data-image-input", source)
+        self.assertIn("data-attachment-input", source)
+        self.assertIn("data-folder-input", source)
         self.assertIn("clipboardData?.items", source)
+        self.assertIn("droppedItems(event.dataTransfer)", source)
         self.assertIn("images: imageAttachments", source)
+        self.assertIn("files: textFileAttachments", source)
         self.assertNotIn("dataUrl", conversation)
         self.assertIn("Content-free metadata only", conversation)
 
