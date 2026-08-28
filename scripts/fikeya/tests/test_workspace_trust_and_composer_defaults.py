@@ -54,7 +54,10 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
             source.index("public async configureProvider(")
         ]
 
-        self.assertIn("provider.openDefaultLayout('chat')", activation)
+        self.assertIn("provider.openWorkspacePanel('chat')", activation)
+        self.assertIn("startupMode === 'project'", activation)
+        self.assertIn("createStatusBarItem('fikeya.chat.toggle'", activation)
+        self.assertIn("Ctrl+L", activation)
         self.assertIn("this.hostCapabilities.isFikeyaProduct", layouts)
         self.assertIn("this.openWorkspacePanel(mode)", layouts)
         self.assertIn("this.openEditorLayout(mode)", layouts)
@@ -64,6 +67,28 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
         self.assertIn("secondarySidebar", manifest["contributes"]["viewsContainers"])
         self.assertNotIn("activitybar", manifest["contributes"]["viewsContainers"])
         self.assertNotIn("queueMicrotask", activation)
+
+        startup_mode = manifest["contributes"]["configuration"]["properties"]["fikeya.startupMode"]
+        self.assertEqual(startup_mode["default"], "project")
+        self.assertEqual(startup_mode["enum"], ["project", "editor", "none"])
+        desktop_toggle = next(
+            binding
+            for binding in manifest["contributes"]["keybindings"]
+            if binding["command"] == "fikeya.chat.toggle" and binding["key"] == "ctrl+l"
+        )
+        self.assertEqual(desktop_toggle["when"], "fikeya.isFikeyaProduct")
+
+    def test_chat_exposes_a_permanent_project_editor_switch(self) -> None:
+        source = (
+            REPOSITORY_ROOT / "extensions/fikeya-desktop/src/extension.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('data-layout-switch', source)
+        self.assertIn("Project UI", source)
+        self.assertIn("Editor + Chat", source)
+        self.assertIn("layoutSwitch?.addEventListener('change'", source)
+        self.assertIn("public async toggleChatPane()", source)
+        self.assertIn("this.view?.visible", source)
 
     def test_chat_stays_anchored_and_saves_only_dirty_workspace_files(self) -> None:
         source = (
