@@ -23,6 +23,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'refreshProviders' }
 	| { readonly type: 'webviewReady' }
 	| { readonly type: 'pickMentionFiles'; readonly source: 'workspace' | 'computer' }
+	| { readonly type: 'attachDroppedResources'; readonly resourceUris: readonly string[] }
 	| { readonly type: 'setComposerAttachmentState'; readonly hasAttachments: boolean }
 	| { readonly type: 'configureProviderProfile'; readonly providerId: string; readonly profileLabel: string; readonly baseUrl: string; readonly model: string; readonly secret?: string }
 	| { readonly type: 'testProvider'; readonly providerName: string }
@@ -87,6 +88,8 @@ const allowedCommands: readonly FikeyaCommand[] = [
 
 const maximumPromptBytes = 262_144;
 const maximumPlanSpecificationBytes = 1_048_576;
+const maximumDroppedResourceCount = 32;
+const maximumResourceUriLength = 4_096;
 const providerNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const requestIdPattern = /^[a-zA-Z0-9_-]{8,128}$/;
 const conversationMessageIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
@@ -138,6 +141,15 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'pickMentionFiles':
 			return value.source === 'workspace' || value.source === 'computer'
 				? { type: value.type, source: value.source }
+				: undefined;
+		case 'attachDroppedResources':
+			return Array.isArray(value.resourceUris)
+				&& value.resourceUris.length > 0
+				&& value.resourceUris.length <= maximumDroppedResourceCount
+				&& value.resourceUris.every(resourceUri => typeof resourceUri === 'string'
+					&& resourceUri.length > 0
+					&& resourceUri.length <= maximumResourceUriLength)
+				? { type: value.type, resourceUris: value.resourceUris as string[] }
 				: undefined;
 		case 'configureProviderProfile': {
 			if (!isProviderName(value.providerId)
