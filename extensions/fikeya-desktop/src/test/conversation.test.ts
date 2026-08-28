@@ -242,6 +242,22 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.doesNotMatch(source, /data-layout-switch/u);
 	});
 
+	test('initializes the workspace once before accepting any coding request', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /private workspaceInitialization: Thenable<boolean> \| undefined/u);
+		assert.match(source, /if \(this\.workspaceInitialization\) \{\s*return this\.workspaceInitialization;/u);
+		for (const method of ['runAgent', 'runMultiAgent', 'proposePlan', 'startProject']) {
+			const methodStart = source.indexOf(`private async ${method}`);
+			assert.notStrictEqual(methodStart, -1, `${method} must exist`);
+			const nextMethod = source.indexOf('\n\tprivate ', methodStart + 1);
+			const methodSource = source.slice(methodStart, nextMethod === -1 ? source.length : nextMethod);
+			const initializationIndex = methodSource.indexOf('ensureWorkspaceInitialized');
+			const acceptanceIndex = methodSource.indexOf('onAccepted?.()');
+			assert.ok(initializationIndex >= 0, `${method} must initialize the workspace`);
+			assert.ok(acceptanceIndex > initializationIndex, `${method} must initialize before accepting the composer request`);
+		}
+	});
+
 	test('uses one accessible animated copy action instead of a floating button cluster', async () => {
 		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
 		assert.match(source, /role="toolbar" aria-label=/u);

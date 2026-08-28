@@ -259,6 +259,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private composerHasTransientAttachments = false;
 	private lastAcceptedComposerRequestId: string | undefined;
 	private pendingComposerFiles: readonly FikeyaTextFileInput[] = [];
+	private workspaceInitialization: Thenable<boolean> | undefined;
 	private previousConversation: readonly FikeyaConversationMessage[] | undefined;
 	private projectPanelRequired = false;
 	private disposed = false;
@@ -1134,19 +1135,72 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 
+		if (command === 'init') {
+			await this.ensureWorkspaceInitialized(workspacePath, true);
+			return;
+		}
+
 		this.state = { ...this.state, runtime: 'checking' };
 		this.refresh();
 		const title = command === 'doctor' ? vscode.l10n.t('Running Fikeya Doctor') : vscode.l10n.t('Initializing Fikeya Workspace');
 		const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () => runFikeyaRuntime(command, workspacePath));
-		const memoryInitialization = result.ok && command === 'init'
-			? await initializeQarinahMemory(this.context.extensionPath, workspacePath)
-			: undefined;
 		this.applyRuntimeResult(result, command);
 		if (result.ok) {
-			if (memoryInitialization && !memoryInitialization.ok) {
-				void vscode.window.showErrorMessage(vscode.l10n.t('Fikeya initialized, but its pinned Qarinah memory could not be initialized.'));
-			}
 			await this.refreshMemory(false);
+		}
+	}
+
+	private async ensureWorkspaceInitialized(workspacePath: string, announce: boolean): Promise<boolean> {
+		if (this.state.workspaceInitialized) {
+			return true;
+		}
+		if (this.workspaceInitialization) {
+			return this.workspaceInitialization;
+		}
+
+		this.state = { ...this.state, runtime: 'checking' };
+		const initialization = vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: announce
+					? vscode.l10n.t('Initializing Fikeya Workspace')
+					: vscode.l10n.t('Preparing this workspace for Fikeya')
+			},
+			async () => {
+				const result = await runFikeyaRuntime('init', workspacePath);
+				if (!result.ok) {
+					this.state = { ...this.state, runtime: 'attention', workspaceInitialized: false };
+					this.refresh();
+					void vscode.window.showErrorMessage(runtimeFailureMessage(result.failure));
+					return false;
+				}
+
+				const memoryInitialization = await initializeQarinahMemory(this.context.extensionPath, workspacePath);
+				this.state = {
+					...this.state,
+					runtime: 'ready',
+					workspaceInitialized: result.report?.initialized ?? true,
+					runtimeProviderCount: result.report?.providerCount ?? this.state.runtimeProviderCount,
+					qarinah: result.report?.qarinah ?? this.state.qarinah
+				};
+				if (!memoryInitialization.ok) {
+					void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya is ready, but Qarinah memory could not be initialized. Run Fikeya: Run Doctor for details.'));
+				}
+				if (announce) {
+					this.refresh();
+					void vscode.window.showInformationMessage(vscode.l10n.t('Fikeya workspace initialized.'));
+					await this.refreshMemory(false);
+				}
+				return true;
+			}
+		);
+		this.workspaceInitialization = initialization;
+		try {
+			return await initialization;
+		} finally {
+			if (this.workspaceInitialization === initialization) {
+				this.workspaceInitialization = undefined;
+			}
 		}
 	}
 
@@ -1264,6 +1318,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			planCancellationInProgress: this.planCancellationInProgress
 		});
 		if (!workspacePath || chatBlocked || this.activePlanProposalRun || !profile) {
+			return;
+		}
+		if (!await this.ensureWorkspaceInitialized(workspacePath, false)) {
 			return;
 		}
 		if (!await this.saveWorkspaceEditsBeforeAgentRun(workspacePath)) {
@@ -1434,6 +1491,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			|| selectedProfiles.some(profile => !advisoryRoles.has(profile.role))) {
 			return;
 		}
+		if (!await this.ensureWorkspaceInitialized(workspacePath, false)) {
+			return;
+		}
 		if (!await this.saveWorkspaceEditsBeforeAgentRun(workspacePath)) {
 			return;
 		}
@@ -1568,6 +1628,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
 		if (!workspacePath || this.activeAgentRun || this.activeMultiAgentRun || this.activePlanProposalRun || this.activePlanRun || this.activeProjectRun || this.planCancellationInProgress || !profile) {
+			return;
+		}
+		if (!await this.ensureWorkspaceInitialized(workspacePath, false)) {
 			return;
 		}
 
@@ -1816,6 +1879,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 		if (this.currentProjectId() && !currentProject && this.state.project.status !== 'idle') {
 			void vscode.window.showErrorMessage(vscode.l10n.t('Wait for the current durable project record to finish loading, then try again.'));
+			return;
+		}
+		if (!await this.ensureWorkspaceInitialized(workspacePath, false)) {
 			return;
 		}
 		if (!await this.saveWorkspaceEditsBeforeAgentRun(workspacePath)) {
