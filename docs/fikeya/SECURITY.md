@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Fikeya 0.1.0-beta.6 is the current public-beta source candidate. This document distinguishes:
+Fikeya 0.1.0-beta.7 is the current public-beta source candidate. This document distinguishes:
 
 - **Current enforcement:** behavior enforced in the integrated Desktop/runtime path today.
 - **Standalone enforcement:** behavior implemented and tested in a component that is not yet wired into the product path.
@@ -41,7 +41,7 @@ The integrated runtime provides canonical workspace file operations with SHA-256
 
 Native Playwright browser actions are available only through typed, approval-gated tool calls. The runtime bounds URLs, selectors, typed input, navigation and wait time, response text, screenshots, action count, and session lifetime. It strips URL credentials, blocks unsafe schemes, treats page content as untrusted, disables downloads and service workers, and requires a separate explicit opt-in for private or loopback navigation. Browser cancellation closes the dedicated session; a non-wait action may acknowledge cancellation only after its already-bounded Playwright timeout returns.
 
-The beta.6 Windows x64 Desktop and VSIX runtime embed one pinned Chromium Headless Shell payload and verify its version, file set, digest, and required licenses. The source and standalone CLI paths must install the Runtime `browser` extra and provision the matching browser separately. No embedded browser package is shipped for macOS, Linux, or ARM64.
+The beta.7 Windows x64 Desktop and VSIX runtime embed one pinned Chromium Headless Shell payload and verify its version, file set, digest, and required licenses. The source and standalone CLI paths must install the Runtime `browser` extra and provision the matching browser separately. No embedded browser package is shipped for macOS, Linux, or ARM64.
 
 Cockroach Browser and Cockroach Crawler presets remain configuration only. They start disabled, bind enablement to an exact reviewed manifest digest, and do not start a child merely by being listed or enabled. Their loader uses a fixed executable without a shell, a minimal environment, root-bound metadata, and bounded request/response/session limits. Complete MCP framing, crawler robots and redirect policy, provenance verification, and forced child termination on protocol failure remain caller responsibilities.
 
@@ -132,7 +132,7 @@ Before a stable release, tests must cover:
 
 Passing focused component tests does not satisfy this gate until the integrated Desktop/CLI path exercises the same boundaries on supported platforms.
 
-The beta.6 release workflow signs and verifies the outer Windows installer only. Nested executables, the VSIX, wheels, and source distributions are covered by hashes and release provenance, not claimed to carry independent Authenticode signatures. macOS, Linux, and ARM64 installers are not currently shipped.
+The beta.7 release workflow signs and verifies the outer Windows installer only. Nested executables, the VSIX, wheels, and source distributions are covered by hashes and release provenance, not claimed to carry independent Authenticode signatures. macOS, Linux, and ARM64 installers are not currently shipped.
 
 ## Vulnerability reporting
 

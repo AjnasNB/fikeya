@@ -1,6 +1,6 @@
 # Trusted publishing for Fikeya
 
-> **Current release status:** Fikeya `0.1.0-beta.6` is a source candidate and has not been published or Authenticode-signed. Treat every beta-6 Windows build as unsigned unless the final `release-verification.json` reports a valid trusted signature. An unsigned installer can show an unknown-publisher warning. This guide documents the approved signing paths; it does not claim that any current binary is signed.
+> **Current release status:** Fikeya `0.1.0-beta.7` is a source candidate and has not been published or Authenticode-signed. Treat every beta-7 Windows build as unsigned unless the final `release-verification.json` reports a valid trusted signature. An unsigned installer can show an unknown-publisher warning. This guide documents the approved signing paths; it does not claim that any current binary is signed.
 
 Changing installer metadata such as `AppPublisher` does not create a trusted publisher. Trust requires a valid signature from a publicly trusted identity, applied to the final artifact and verified before release.
 

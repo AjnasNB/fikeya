@@ -301,7 +301,7 @@ action count. URL credentials and unsafe schemes are rejected, web content stays
 untrusted, and private or loopback navigation requires the explicit
 `--allow-private-browser` opt-in.
 
-The beta.6 Windows x64 Desktop and Windows x64 VSIX embed the reviewed Chromium
+The beta.7 Windows x64 Desktop and Windows x64 VSIX embed the reviewed Chromium
 Headless Shell payload. The standalone CLI wheel does not contain a browser
 binary. Source and CLI users install the `browser` extra and provision the pinned
 Playwright browser as shown in the development setup. Fikeya does not currently
