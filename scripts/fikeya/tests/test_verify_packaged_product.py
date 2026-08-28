@@ -41,29 +41,29 @@ class PackagedProductVerificationTests(unittest.TestCase):
         verify_runtime_version_identity(
             {
                 "version": "1.136.0",
-                "distributionVersion": "0.1.0-beta.7",
+                "distributionVersion": "0.1.0-beta.8",
             },
             {
                 "version": "1.136.0",
-                "distributionVersion": "0.1.0-beta.7",
+                "distributionVersion": "0.1.0-beta.8",
             },
             runtime_version="1.136.0",
-            public_version="0.1.0-beta.7",
+            public_version="0.1.0-beta.8",
         )
 
     def test_rejects_public_version_as_extension_api_version(self) -> None:
         with self.assertRaisesRegex(ValueError, "extension API compatibility"):
             verify_runtime_version_identity(
                 {
-                    "version": "0.1.0-beta.7",
-                    "distributionVersion": "0.1.0-beta.7",
+                    "version": "0.1.0-beta.8",
+                    "distributionVersion": "0.1.0-beta.8",
                 },
                 {
-                    "version": "0.1.0-beta.7",
-                    "distributionVersion": "0.1.0-beta.7",
+                    "version": "0.1.0-beta.8",
+                    "distributionVersion": "0.1.0-beta.8",
                 },
                 runtime_version="1.136.0",
-                public_version="0.1.0-beta.7",
+                public_version="0.1.0-beta.8",
             )
 
     def test_verifies_packaged_product_and_package_together(self) -> None:
@@ -77,7 +77,7 @@ class PackagedProductVerificationTests(unittest.TestCase):
                     {
                         "builtInAiExtensions": [],
                         "version": "1.136.0",
-                        "distributionVersion": "0.1.0-beta.7",
+                        "distributionVersion": "0.1.0-beta.8",
                     }
                 ),
                 encoding="utf-8",
@@ -86,7 +86,7 @@ class PackagedProductVerificationTests(unittest.TestCase):
                 json.dumps(
                     {
                         "version": "1.136.0",
-                        "distributionVersion": "0.1.0-beta.7",
+                        "distributionVersion": "0.1.0-beta.8",
                     }
                 ),
                 encoding="utf-8",
@@ -95,7 +95,7 @@ class PackagedProductVerificationTests(unittest.TestCase):
                 product_path,
                 package_path=package_path,
                 runtime_version="1.136.0",
-                public_version="0.1.0-beta.7",
+                public_version="0.1.0-beta.8",
             )
 
     def test_accepts_the_exact_windows_executable_identity(self) -> None:
@@ -105,14 +105,14 @@ class PackagedProductVerificationTests(unittest.TestCase):
                 "companyName": "Ajnas N B",
                 "fileDescription": "Fikeya",
                 "originalFilename": "Fikeya.exe",
-                "fileVersion": "0.1.0.7",
-                "productVersion": "0.1.0-beta.7",
-                "fileVersionRaw": "0.1.0.7",
-                "productVersionRaw": "0.1.0.7",
+                "fileVersion": "0.1.0.8",
+                "productVersion": "0.1.0-beta.8",
+                "fileVersionRaw": "0.1.0.8",
+                "productVersionRaw": "0.1.0.8",
                 "authenticodeStatus": "NotSigned",
             },
-            public_version="0.1.0-beta.7",
-            numeric_version="0.1.0.7",
+            public_version="0.1.0-beta.8",
+            numeric_version="0.1.0.8",
         )
 
     def test_rejects_a_normalized_prerelease_windows_version(self) -> None:
@@ -121,8 +121,8 @@ class PackagedProductVerificationTests(unittest.TestCase):
             "companyName": "Ajnas N B",
             "fileDescription": "Fikeya",
             "originalFilename": "Fikeya.exe",
-            "fileVersion": "0.1.0-beta.7",
-            "productVersion": "0.1.0-beta.7",
+            "fileVersion": "0.1.0-beta.8",
+            "productVersion": "0.1.0-beta.8",
             "fileVersionRaw": "0.1.0.0",
             "productVersionRaw": "0.1.0.0",
             "authenticodeStatus": "NotSigned",
@@ -130,8 +130,8 @@ class PackagedProductVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fileVersion"):
             verify_windows_executable_metadata(
                 metadata,
-                public_version="0.1.0-beta.7",
-                numeric_version="0.1.0.7",
+                public_version="0.1.0-beta.8",
+                numeric_version="0.1.0.8",
             )
 
 
