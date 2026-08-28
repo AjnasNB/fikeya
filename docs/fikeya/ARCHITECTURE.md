@@ -4,7 +4,7 @@ Fikeya is an AI code editor and coding-agent runtime first. Durable sessions and
 
 ## Status and reading guide
 
-Fikeya 0.1.0-beta.5 is the current public-beta source candidate. This document separates three different kinds of behavior:
+Fikeya 0.1.0-beta.6 is the current public-beta source candidate. This document separates three different kinds of behavior:
 
 - **Integrated now** is reachable through the current Desktop extension or `fikeya` CLI.
 - **Standalone component** has focused tests in this repository but is not yet connected to the Desktop/CLI product path.
@@ -78,7 +78,7 @@ interface FikeyaMemoryPort {
 
 The integrated runtime provides a dedicated Playwright browser session behind the same exact-call approval and cancellation boundaries as workspace and process tools. It validates URLs, selectors, text inputs, timeouts, output sizes, screenshot paths, session limits, and redirects. Browser content is untrusted evidence. Public HTTPS navigation is the default; private or loopback targets require a separate one-run opt-in. Research can inspect and interact with web pages but cannot write a screenshot into the workspace.
 
-The beta.5 Windows x64 Desktop and Windows x64 VSIX runtime embed one pinned, hash-verified Chromium Headless Shell payload. Source and standalone CLI installations must install the Runtime `browser` extra and provision the matching Playwright browser separately. No embedded browser package or Fikeya installer is currently shipped for macOS, Linux, Windows ARM64, or macOS ARM64.
+The beta.6 Windows x64 Desktop and Windows x64 VSIX runtime embed one pinned, hash-verified Chromium Headless Shell payload. Source and standalone CLI installations must install the Runtime `browser` extra and provision the matching Playwright browser separately. No embedded browser package or Fikeya installer is currently shipped for macOS, Linux, Windows ARM64, or macOS ARM64.
 
 Reviewed, disabled-by-default configuration presets remain available for separately installed Cockroach Browser and Cockroach Crawler executables. Enabling one records an exact manifest digest for one workspace but does not start the tool. These external presets still do not provide a complete integrated MCP framing/session loop; their caller remains responsible for protocol framing, upstream network policy, and protocol-failure termination.
 
