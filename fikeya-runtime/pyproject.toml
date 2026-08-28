@@ -36,6 +36,9 @@ classifiers = [
 azure = [
   "azure-identity>=1.20,<2",
 ]
+browser = [
+  "playwright>=1.52,<2",
+]
 test = [
   "pytest>=8.3,<10",
 ]
