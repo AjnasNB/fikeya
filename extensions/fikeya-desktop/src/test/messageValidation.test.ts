@@ -229,6 +229,26 @@ describe('Fikeya webview message validation', () => {
 		assert.match(buildAgentProviderPrompt('research', 'Where is the parser?'), /Distinguish project evidence from inference/u);
 	});
 
+	test('accepts bounded file-picker actions and request correlation identifiers', () => {
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'webviewReady' }), { type: 'webviewReady' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'workspace' }), { type: 'pickMentionFiles', source: 'workspace' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'computer' }), { type: 'pickMentionFiles', source: 'computer' });
+		assert.strictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'network' }), undefined);
+		const request = {
+			type: 'runAgent',
+			requestId: 'request_20260828',
+			providerName: 'local-default',
+			prompt: 'Inspect the selected files.',
+			...agentComposerDefaults,
+			composerMode: 'build',
+			allowNetwork: true
+		};
+		const parsed = parseWebviewMessage(request);
+		assert.ok(parsed && parsed.type === 'runAgent');
+		assert.deepStrictEqual(parsed.requestId, request.requestId);
+		assert.strictEqual(parseWebviewMessage({ ...request, requestId: 'bad id' }), undefined);
+	});
+
 	test('accepts bounded audited-project lifecycle messages without attachments or argv content', () => {
 		assert.deepStrictEqual(parseWebviewMessage({
 			type: 'startProject',

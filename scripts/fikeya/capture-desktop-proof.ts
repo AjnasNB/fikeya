@@ -77,7 +77,10 @@ const captureProviderDecisions = [
 		content: captureProviderOutput
 	}
 ] as const;
-const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 3) + 4;
+// Chat, pasted-image Chat, and mentioned-file Chat each use the three-stage
+// agent loop. Multitask exercises two advisory loops plus one lead loop. The audited Project/Plan
+// workflow uses seven bounded planning, audit, execution, and review calls.
+const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 6) + 7;
 
 interface CaptureOptions {
 	compile: boolean;

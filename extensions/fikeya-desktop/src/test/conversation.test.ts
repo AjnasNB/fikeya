@@ -147,6 +147,19 @@ describe('Fikeya live conversation state', () => {
 });
 
 describe('Fikeya chat webview refresh state', () => {
+	test('renders the inline webview JavaScript with literal escapes intact', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		const scriptStart = source.lastIndexOf('<script nonce=');
+		const scriptBodyStart = source.indexOf('>\n', scriptStart) + 2;
+		const scriptEnd = source.indexOf('</script>', scriptBodyStart);
+		const script = source.slice(scriptBodyStart, scriptEnd);
+		assert.ok(scriptStart > 0 && scriptBodyStart > scriptStart && scriptEnd > scriptBodyStart);
+		assert.match(source.slice(0, scriptStart), /return String\.raw`<!DOCTYPE html>/u);
+		assert.doesNotThrow(() => new Function(script));
+		assert.match(script, /document\.addEventListener\('submit', event => event\.preventDefault\(\), true\)/u);
+		assert.match(script, /replaceAll\('\\\\', '\/'\)/u);
+	});
+
 	test('restores composer focus against the rendered Chat surface', async () => {
 		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
 		assert.match(source, /focusSurface: initialSurface/u);

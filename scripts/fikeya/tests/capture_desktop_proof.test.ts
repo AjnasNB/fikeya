@@ -243,7 +243,8 @@ test('Electron Chat proof validates a real 360px-class responsive panel', async 
 	assert.match(scenario, /\.chat-plan-details/u);
 	assert.match(scenario, /\[data-agent-form\] \[name="prompt"\]/u);
 	assert.match(scenario, /\[data-agent-form\] \[name="chatMode"\]/u);
-	assert.match(scenario, /option\.value === 'multitask'/u);
+	assert.match(scenario, /fiveModesAvailable/u);
+	assert.match(scenario, /ask,plan,build,review,research/u);
 	assert.match(scenario, /\[data-agent-run\]/u);
 	assert.match(scenario, /\[data-network-confirmation\]/u);
 	assert.match(scenario, /\[data-network-confirm\]/u);
@@ -256,7 +257,8 @@ test('Electron Chat proof validates a real 360px-class responsive panel', async 
 test('Electron proof executes and verifies a bounded two-agent Multitask batch', async () => {
 	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
 	assert.match(scenario, /id: 'completed-multitask'/u);
-	assert.match(scenario, /mode\.value = 'multitask'/u);
+	assert.match(scenario, /mode\.value = 'review'/u);
+	assert.match(scenario, /parallelToggle\.click\(\)/u);
 	assert.match(scenario, /input\.checked = true/u);
 	assert.match(scenario, /form\.requestSubmit\(\)/u);
 	assert.match(scenario, /\[data-network-confirm\]/u);
@@ -268,7 +270,17 @@ test('Electron proof executes and verifies a bounded two-agent Multitask batch',
 	assert.match(scenario, /\.multi-agent-live/u);
 	assert.match(scenario, /status\.toLowerCase\(\)\.includes\('completed'\)/u);
 	assert.match(scenario, /results\.every\(item => item\.content ===/u);
-	assert.equal(captureProviderExpectedRequestCount, 13);
+	assert.equal(captureProviderExpectedRequestCount, 25);
+});
+
+test('Electron Chat proof mentions a bounded workspace file through the native picker', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /id: 'mentioned-file-chat'/u);
+	assert.match(scenario, /\[data-mention-workspace\]/u);
+	assert.match(scenario, /Add workspace files to this message/u);
+	assert.match(scenario, /page\.keyboard\.type\('README\.md'\)/u);
+	assert.match(scenario, /prompt\?\.value\.includes\('@README\.md'\)/u);
+	assert.match(scenario, /attachment === 'README\.md'/u);
 });
 
 test('Electron Chat proof pastes an image and delivers it to the provider', async () => {

@@ -33,7 +33,8 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
 
         self.assertIn('class="composer-menu-controls"', surface)
         self.assertIn("Configure models", surface)
-        self.assertIn('data-agent-run type="submit"', surface)
+        self.assertIn('data-agent-run type="button"', surface)
+        self.assertIn("document.addEventListener('submit', event => event.preventDefault(), true)", source)
         self.assertIn('aria-hidden="true">↑</span>', surface)
         self.assertNotIn('class="quiet composer-add-model"', surface)
         self.assertNotIn('class="run-controls"', surface)
@@ -147,6 +148,10 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
         self.assertIn("droppedItems(event.dataTransfer)", source)
         self.assertIn("images: imageAttachments", source)
         self.assertIn("files: textFileAttachments", source)
+        self.assertIn("data-mention-workspace", source)
+        self.assertIn("data-mention-computer", source)
+        self.assertIn("fikeya.composerFilesPicked", source)
+        self.assertIn("maximumTextFileCount", source)
         self.assertNotIn("dataUrl", conversation)
         self.assertIn("Content-free metadata only", conversation)
 

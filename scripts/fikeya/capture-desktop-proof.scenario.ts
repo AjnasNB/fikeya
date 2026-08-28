@@ -108,7 +108,7 @@ interface NarrowPanelState {
 	readonly modeVisible: boolean;
 	readonly contextOptionsVisible: boolean;
 	readonly moreActionsVisible: boolean;
-	readonly multitaskAvailable: boolean;
+	readonly fiveModesAvailable: boolean;
 	readonly composerAnchored: boolean;
 }
 
@@ -576,7 +576,7 @@ const scenario: Scenario = {
 						const provider = document.querySelector('[data-agent-form] [name="providerName"]');
 						if (!prompt || !mode || !provider || !Array.from(provider.options).some(option => option.value === ${JSON.stringify(providerName)})) return false;
 						return !document.querySelector('[data-surface-panel="chat"]')?.hidden
-							&& Array.from(mode.options).map(option => option.value).join(',') === 'agent,plan,research,multitask';
+							&& Array.from(mode.options).map(option => option.value).join(',') === 'ask,plan,build,review,research';
 					})()`,
 					'The real Fikeya Chat composer did not become ready.',
 					60_000
@@ -628,7 +628,7 @@ const scenario: Scenario = {
 						usageBasis
 					};
 					return value.chatVisible
-						&& value.modes.join(',') === 'agent,plan,research,multitask'
+						&& value.modes.join(',') === 'ask,plan,build,review,research'
 						&& value.assistant === ${JSON.stringify(providerOutput)}
 						&& value.provider === ${JSON.stringify(`${providerName} | fikeya-proof-model`)}
 						&& value.usage['Input Tokens'] === '60'
@@ -668,7 +668,7 @@ const scenario: Scenario = {
 					const provider = form?.querySelector('[name="providerName"]');
 					const mode = form?.querySelector('[name="chatMode"]');
 					if (!form || !prompt || !provider || !mode) return false;
-					mode.value = 'agent';
+					mode.value = 'build';
 					mode.dispatchEvent(new Event('change', { bubbles: true }));
 					provider.value = ${JSON.stringify(providerName)};
 					provider.dispatchEvent(new Event('change', { bubbles: true }));
@@ -696,6 +696,79 @@ const scenario: Scenario = {
 			}
 		},
 		{
+			id: 'mentioned-file-chat',
+			title: 'Mention a workspace file and deliver its bounded content to the selected model',
+			async run({ code, page }) {
+				const opened = await evaluateFikeya<boolean>(code, `(() => {
+					const mention = document.querySelector('[data-mention-workspace]');
+					if (!mention) return false;
+					mention.click();
+					return true;
+				})()`);
+				if (!opened) {
+					throw new Error('The workspace-file mention action was not available.');
+				}
+				const pickerTitle = 'Add workspace files to this message';
+				await waitForQuickInput(page, pickerTitle);
+				const focused = await page.evaluate<boolean>(`(() => {
+					const input = document.querySelector('.quick-input-widget .quick-input-box input');
+					if (!input) return false;
+					input.focus();
+					return document.activeElement === input;
+				})()`);
+				if (!focused) {
+					throw new Error('The workspace-file mention picker could not receive focus.');
+				}
+				await page.keyboard.press('Control+A');
+				await page.keyboard.type('README.md');
+				await waitFor(
+					() => page.evaluate<boolean>(`document.querySelectorAll('.quick-input-list .monaco-list-row').length === 1`),
+					'The workspace-file mention picker did not narrow to README.md.',
+					10_000
+				);
+				await page.keyboard.press('ArrowDown');
+				await page.keyboard.press('Space');
+				await page.keyboard.press('Enter');
+				await waitForFikeya<boolean>(code, `(() => {
+					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
+					const file = document.querySelector('[data-composer-attachments] .composer-attachment.file strong');
+					return file?.textContent?.trim() === 'README.md' && prompt?.value.includes('@README.md');
+				})()`, 'README.md was not attached through the workspace mention flow.', 20_000);
+				const submitted = await evaluateFikeya<boolean>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
+					const prompt = form?.querySelector('[name="prompt"]');
+					const provider = form?.querySelector('[name="providerName"]');
+					const mode = form?.querySelector('[name="chatMode"]');
+					if (!form || !prompt || !provider || !mode) return false;
+					mode.value = 'build';
+					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					provider.value = ${JSON.stringify(providerName)};
+					provider.dispatchEvent(new Event('change', { bubbles: true }));
+					prompt.value += ' Explain the evidence in this mentioned file.';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					if (!form.checkValidity()) return false;
+					form.requestSubmit();
+					const confirmation = form.querySelector('[data-network-confirmation]');
+					const sendOnce = form.querySelector('[data-network-confirm]');
+					if (!confirmation || confirmation.hidden || !sendOnce) return false;
+					sendOnce.click();
+					return true;
+				})()`);
+				if (!submitted) {
+					throw new Error('The mentioned-file Chat turn could not be submitted.');
+				}
+				const state = await waitForFikeya<ImageChatState>(code, `(() => {
+					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim() ?? '';
+					const attachment = Array.from(document.querySelectorAll('.user-message .message-attachment strong')).at(-1)?.textContent?.trim() ?? '';
+					const status = document.querySelector('.composer-status')?.textContent?.trim() ?? '';
+					return assistant === ${JSON.stringify(providerOutput)} && attachment === 'README.md' && status.toLowerCase().includes('completed')
+						? { assistant, attachment, status }
+						: false;
+				})()`, 'The mentioned workspace file did not complete a visible provider-backed Chat turn.', 90_000);
+				return `Mentioned ${state.attachment} through @, delivered its bounded UTF-8 content, and completed the real provider-backed Chat turn.`;
+			}
+		},
+		{
 			id: 'completed-multitask',
 			title: 'Complete a bounded two-agent Multitask batch through the real UI',
 			async run({ code, page }) {
@@ -704,8 +777,11 @@ const scenario: Scenario = {
 					const prompt = form?.querySelector('[name="prompt"]');
 					const mode = form?.querySelector('[name="chatMode"]');
 					if (!form || !prompt || !mode) return false;
-					mode.value = 'multitask';
+					mode.value = 'review';
 					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					const parallelToggle = form.querySelector('[data-parallel-toggle]');
+					if (!parallelToggle) return false;
+					parallelToggle.click();
 					const choices = Array.from(form.querySelectorAll('[data-agent-picker] .agent-choice'));
 					const expected = new Set(['Proof Planner', 'Proof Reviewer']);
 					if (choices.length !== 2 || choices.some(choice => !expected.has(choice.querySelector('strong')?.textContent?.trim() ?? ''))) return false;
@@ -822,7 +898,7 @@ const scenario: Scenario = {
 					const cancel = form?.querySelector('[data-network-cancel]');
 					const footer = form?.querySelector('.composer-foot');
 					if (!form || !prompt || !mode || !confirmation || !sendOnce || !cancel || !footer) return false;
-					mode.value = 'agent';
+					mode.value = 'build';
 					mode.dispatchEvent(new Event('change', { bubbles: true }));
 					prompt.value = 'Verify the short composer confirmation without contacting the provider.';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
@@ -893,13 +969,13 @@ const scenario: Scenario = {
 						sendVisible: visible(send),
 						modeVisible: visible(mode),
 						moreActionsVisible: visible(moreActions),
-						multitaskAvailable: Array.from(mode?.options ?? []).some(option => option.value === 'multitask'),
+						fiveModesAvailable: Array.from(mode?.options ?? []).map(option => option.value).join(',') === 'ask,plan,build,review,research',
 						composerAnchored: Boolean(formRect && formRect.bottom <= window.innerHeight + 1 && formRect.bottom >= window.innerHeight - 36)
 					};
 					return value.viewportWidth >= 340 && value.viewportWidth <= 420
 						&& value.documentWidth <= value.viewportWidth + 1
 						&& value.bodyWidth <= value.viewportWidth + 1
-						&& Object.entries(value).filter(([key]) => key.endsWith('Visible') || key === 'multitaskAvailable' || key === 'composerAnchored').every(([, shown]) => shown === true)
+						&& Object.entries(value).filter(([key]) => key.endsWith('Visible') || key === 'fiveModesAvailable' || key === 'composerAnchored').every(([, shown]) => shown === true)
 						? value
 						: false;
 				})()`, 'The real Chat panel overflowed or hid a primary control at its narrow width.', 20_000);
@@ -1146,8 +1222,17 @@ const scenario: Scenario = {
 		{
 			id: 'editor-terminal-layout',
 			title: 'Keep Editor UI Chat full-height beside the bottom terminal',
-			async run({ code, page, workbench }) {
-				await runWorkbenchCommand(workbench, page, 'fikeya.layout.editor');
+			async run({ code, page }) {
+				const switched = await evaluateFikeya<boolean>(code, `(() => {
+					const select = document.querySelector('[data-layout-switch]');
+					if (!(select instanceof HTMLSelectElement)) return false;
+					select.value = 'editor';
+					select.dispatchEvent(new Event('change', { bubbles: true }));
+					return true;
+				})()`);
+				if (!switched) {
+					throw new Error('The Project UI dropdown did not expose Editor + Chat.');
+				}
 				await waitFor(
 					() => page.evaluate<boolean>(`(() => {
 						const auxiliary = document.querySelector('.part.auxiliarybar');
@@ -1158,7 +1243,7 @@ const scenario: Scenario = {
 					30_000
 				);
 				await waitForFikeya<boolean>(code, `Boolean(document.querySelector('[data-agent-form]'))`, 'The Editor UI Chat composer did not become ready.', 20_000);
-				await runWorkbenchCommand(workbench, page, 'workbench.action.terminal.toggleTerminal');
+				await page.keyboard.press('Control+Backquote');
 				const layout = await waitFor(
 					() => page.evaluate<{ panelTop: number; panelRight: number; chatLeft: number; chatBottom: number } | false>(`(() => {
 						const panel = document.querySelector('.part.panel');
