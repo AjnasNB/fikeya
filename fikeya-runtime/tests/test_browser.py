@@ -155,6 +155,20 @@ def test_all_operations_return_bounded_receipts_without_retaining_input(
     assert secret not in json.dumps(typed.as_json(), sort_keys=True)
 
 
+def test_wait_polls_cancellation_before_completing_the_browser_action(
+    tmp_path: Path,
+) -> None:
+    driver = FakeDriver()
+    browser = session(tmp_path, driver)
+    checks = iter((False, False, True))
+    browser.navigate("https://example.test/")
+
+    with pytest.raises(BrowserError, match="cancelled"):
+        browser.wait(1_000, cancellation_requested=lambda: next(checks))
+
+    assert driver.waits == [100, 100]
+
+
 @pytest.mark.parametrize(
     "url",
     [

@@ -689,7 +689,12 @@ class BrowserSession:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
 
-    def wait(self, milliseconds: int) -> BrowserActionResult:
+    def wait(
+        self,
+        milliseconds: int,
+        *,
+        cancellation_requested: Callable[[], bool] | None = None,
+    ) -> BrowserActionResult:
         """Wait for at most ten seconds within the session lifetime."""
 
         started_at = self._clock()
@@ -707,7 +712,15 @@ class BrowserSession:
             raise BrowserLimitError(
                 "Browser wait exceeds the remaining session lifetime."
             )
-        self._driver.wait(milliseconds)
+        waited = 0
+        while waited < milliseconds:
+            if cancellation_requested is not None and cancellation_requested():
+                raise BrowserError("Browser wait was cancelled.")
+            interval = min(100, milliseconds - waited)
+            self._driver.wait(interval)
+            waited += interval
+        if cancellation_requested is not None and cancellation_requested():
+            raise BrowserError("Browser wait was cancelled.")
         current = self._current_receipt_url()
         receipt = self._receipt(
             "wait",

@@ -495,12 +495,13 @@ class WorkspaceExecutionBroker:
             elif call.name.startswith("browser."):
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
-                    self._browser_worker(), self._run_browser, call
+                    self._browser_worker(), self._run_browser, call, cancellation
                 )
             else:
                 result = ToolResult(call.call_id, "error", "Unknown broker tool.")
         except (ApprovalError, FikeyaError, OSError, UnicodeError, ValueError) as error:
             result = ToolResult(call.call_id, "error", _safe_error(error))
+        cancellation.raise_if_cancelled()
         self.state.results[idempotency_key] = result
         if not any(item.call_id == call.call_id for item in self.state.receipts):
             self.state.receipts.append(
@@ -550,7 +551,10 @@ class WorkspaceExecutionBroker:
             )
         return self._browser
 
-    def _run_browser(self, call: ToolCall) -> ToolResult:
+    def _run_browser(
+        self, call: ToolCall, cancellation: CancellationToken
+    ) -> ToolResult:
+        cancellation.raise_if_cancelled()
         session = self._browser_session()
         result: BrowserActionResult
         if call.name == "browser.navigate":
@@ -624,13 +628,17 @@ class WorkspaceExecutionBroker:
             arguments = _exact_arguments(
                 call, required=frozenset({"milliseconds"}), optional=frozenset()
             )
-            result = session.wait(_required_integer(arguments, "milliseconds"))
+            result = session.wait(
+                _required_integer(arguments, "milliseconds"),
+                cancellation_requested=lambda: cancellation.cancelled,
+            )
         elif call.name == "browser.close":
             _exact_arguments(call, required=frozenset(), optional=frozenset())
             result = session.close()
             self._browser = None
         else:
             raise ValueError("Unknown browser operation.")
+        cancellation.raise_if_cancelled()
         return ToolResult(call.call_id, "ok", stable_json(result.as_json()), "application/json")
 
     def _list_files(self, call: ToolCall) -> ToolResult:

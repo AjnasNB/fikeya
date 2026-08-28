@@ -9,12 +9,14 @@ import socket
 import sqlite3
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
 from fikeya_agent_core import ApprovalDecision, CancellationToken, ToolCall
+from fikeya_agent_core.errors import CancellationError
 
-from fikeya_runtime.browser import BrowserActionResult, BrowserReceipt
+from fikeya_runtime.browser import BrowserActionResult, BrowserError, BrowserReceipt
 from fikeya_runtime.coding import CodingAgentRunner, WorkspaceExecutionBroker
 from fikeya_runtime.credentials import CredentialResolver
 from fikeya_runtime.inference import JsonResponse, ProviderExecutor
@@ -345,6 +347,72 @@ class _FakeBrowserSession:
                 1,
             )
         )
+
+
+class _CancellableBrowserSession:
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.closed = False
+
+    def wait(
+        self,
+        _milliseconds: int,
+        *,
+        cancellation_requested: object,
+    ) -> BrowserActionResult:
+        assert callable(cancellation_requested)
+        self.entered.set()
+        deadline = time.monotonic() + 5
+        while not cancellation_requested() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if cancellation_requested():
+            raise BrowserError("Browser wait was cancelled.")
+        raise AssertionError("Browser cancellation was not delivered.")
+
+    def close(self) -> BrowserActionResult:
+        self.closed = True
+        return BrowserActionResult(
+            BrowserReceipt("close", None, "sha256:" + "5" * 64, 1)
+        )
+
+
+def test_broker_cancellation_unwinds_browser_worker_before_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "cancel-browser"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    session = _CancellableBrowserSession()
+    broker = WorkspaceExecutionBroker(
+        workspace,
+        mode=AgentMode.BUILD,
+        browser_session=session,  # type: ignore[arg-type]
+    )
+    token = CancellationToken()
+
+    async def exercise() -> None:
+        task = asyncio.create_task(
+            broker.execute(
+                ToolCall(
+                    "browser:wait-cancel",
+                    "browser.wait",
+                    {"milliseconds": 10_000},
+                ),
+                token,
+                idempotency_key="browser-wait-cancel",
+            )
+        )
+        entered = await asyncio.to_thread(session.entered.wait, 5)
+        assert entered
+        token.cancel()
+        with pytest.raises(CancellationError):
+            await task
+
+    _run(exercise(), monkeypatch)
+    broker.close()
+    assert session.closed
+    assert broker.state.receipts == []
 
 
 def test_build_mode_routes_browser_actions_and_records_content_minimal_receipts(
