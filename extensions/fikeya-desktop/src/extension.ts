@@ -260,6 +260,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private lastAcceptedComposerRequestId: string | undefined;
 	private pendingComposerFiles: readonly FikeyaTextFileInput[] = [];
 	private workspaceInitialization: Thenable<boolean> | undefined;
+	private qarinahWorkspaceInitialized = false;
 	private previousConversation: readonly FikeyaConversationMessage[] | undefined;
 	private projectPanelRequired = false;
 	private disposed = false;
@@ -1151,7 +1152,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	}
 
 	private async ensureWorkspaceInitialized(workspacePath: string, announce: boolean): Promise<boolean> {
-		if (this.state.workspaceInitialized) {
+		if (this.state.workspaceInitialized && this.qarinahWorkspaceInitialized) {
 			return true;
 		}
 		if (this.workspaceInitialization) {
@@ -1167,7 +1168,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 					: vscode.l10n.t('Preparing this workspace for Fikeya')
 			},
 			async () => {
-				const result = await runFikeyaRuntime('init', workspacePath);
+				const result = this.state.workspaceInitialized
+					? { ok: true, failure: 'none' as const, report: undefined }
+					: await runFikeyaRuntime('init', workspacePath);
 				if (!result.ok) {
 					this.state = { ...this.state, runtime: 'attention', workspaceInitialized: false };
 					this.refresh();
@@ -1176,15 +1179,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				}
 
 				const memoryInitialization = await initializeQarinahMemory(this.context.extensionPath, workspacePath);
+				this.qarinahWorkspaceInitialized = memoryInitialization.ok;
 				this.state = {
 					...this.state,
 					runtime: 'ready',
 					workspaceInitialized: result.report?.initialized ?? true,
 					runtimeProviderCount: result.report?.providerCount ?? this.state.runtimeProviderCount,
-					qarinah: result.report?.qarinah ?? this.state.qarinah
+					qarinah: memoryInitialization.ok
+						? vscode.l10n.t('Ready')
+						: result.report?.qarinah ?? this.state.qarinah
 				};
 				if (!memoryInitialization.ok) {
-					void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya is ready, but Qarinah memory could not be initialized. Run Fikeya: Run Doctor for details.'));
+					void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya is ready, but Qarinah memory could not be initialized. Run Fikeya: Initialize Workspace to retry.'));
 				}
 				if (announce) {
 					this.refresh();

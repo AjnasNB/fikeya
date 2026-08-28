@@ -243,9 +243,13 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.doesNotMatch(source, /data-layout-switch/u);
 	});
 
-	test('initializes the workspace once before accepting any coding request', async () => {
+	test('initializes Fikeya and retries Qarinah before accepting any coding request', async () => {
 		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
 		assert.match(source, /private workspaceInitialization: Thenable<boolean> \| undefined/u);
+		assert.match(source, /private qarinahWorkspaceInitialized = false/u);
+		assert.match(source, /this\.state\.workspaceInitialized && this\.qarinahWorkspaceInitialized/u);
+		assert.match(source, /this\.qarinahWorkspaceInitialized = memoryInitialization\.ok/u);
+		assert.match(source, /Run Fikeya: Initialize Workspace to retry/u);
 		assert.match(source, /if \(this\.workspaceInitialization\) \{\s*return this\.workspaceInitialization;/u);
 		for (const method of ['runAgent', 'runMultiAgent', 'proposePlan', 'startProject']) {
 			const methodStart = source.indexOf(`private async ${method}`);
