@@ -18,8 +18,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from fikeya_agent_core import ApprovalDecision
+
 from . import __version__
 from .agent import AgentRunner
+from .autonomy import AutonomousProjectLoop, AutonomyRecord, ProviderOptions
+from .coding import CodingAgentRunner
 from .conversation import parse_conversation_history
 from .credentials import CredentialResolver
 from .errors import (
@@ -55,7 +59,7 @@ from .tool_presets import (
     ToolPreset,
     ToolPresetLoader,
 )
-from .util import utc_now
+from .util import sha256_text, utc_now
 from .workspace import Workspace, initialize_workspace, runtime_home
 
 
@@ -227,6 +231,61 @@ def _parser() -> argparse.ArgumentParser:
     agent_receipts.add_argument("--workspace", default=".")
     agent_receipts.add_argument("--json", action="store_true")
 
+    project = subcommands.add_parser(
+        "project",
+        help="Run a bounded, durable plan-audit-build-audit-verify project loop.",
+    )
+    project_commands = project.add_subparsers(dest="project_command", required=True)
+
+    project_start = project_commands.add_parser(
+        "start",
+        help="Create a durable project run and stop for exact plan review or approval.",
+    )
+    project_start.add_argument("path", nargs="?", default=".")
+    project_start.add_argument("--provider", required=True)
+    project_start.add_argument("--protocol-stdin", action="store_true")
+    project_start.add_argument("--json-lines", action="store_true")
+    project_start.add_argument("--allow-network", action="store_true")
+    project_start.add_argument("--allow-private-browser", action="store_true")
+    project_start.add_argument("--timeout", type=float, default=120.0)
+    project_start.add_argument("--max-output-tokens", type=int, default=4_096)
+    project_start.add_argument(
+        "--memory", choices=("auto", "off", "required"), default="auto"
+    )
+    project_start.add_argument("--context-max-characters", type=int, default=12_000)
+
+    project_resume = project_commands.add_parser(
+        "resume",
+        help="Resume one stopped run after its exact plan was reviewed or approved.",
+    )
+    project_resume.add_argument("run_id")
+    project_resume.add_argument("--workspace", default=".")
+    project_resume.add_argument("--provider", required=True)
+    project_resume.add_argument("--protocol-stdin", action="store_true")
+    project_resume.add_argument("--json-lines", action="store_true")
+    project_resume.add_argument("--allow-network", action="store_true")
+    project_resume.add_argument("--allow-private-browser", action="store_true")
+    project_resume.add_argument("--timeout", type=float, default=120.0)
+    project_resume.add_argument("--max-output-tokens", type=int, default=4_096)
+    project_resume.add_argument(
+        "--memory", choices=("auto", "off", "required"), default="auto"
+    )
+    project_resume.add_argument("--context-max-characters", type=int, default=12_000)
+
+    project_show = project_commands.add_parser(
+        "show", help="Show one durable project record and its content-free history."
+    )
+    project_show.add_argument("run_id")
+    project_show.add_argument("--workspace", default=".")
+    project_show.add_argument("--json", action="store_true")
+
+    project_cancel = project_commands.add_parser(
+        "cancel", help="Permanently cancel one non-terminal project run."
+    )
+    project_cancel.add_argument("run_id")
+    project_cancel.add_argument("--workspace", default=".")
+    project_cancel.add_argument("--json", action="store_true")
+
     plan = subcommands.add_parser(
         "plan", help="Create and run durable approval-gated local plans."
     )
@@ -298,6 +357,11 @@ def _parser() -> argparse.ArgumentParser:
             default=[],
             help="Replace the default process allowlist with this executable name.",
         )
+        plan_run.add_argument(
+            "--allow-private-browser",
+            action="store_true",
+            help="Permit approved browser steps to access private or loopback hosts.",
+        )
         plan_run.add_argument("--json", action="store_true")
 
     plan_cancel = plan_commands.add_parser("cancel", help="Cancel a non-terminal plan.")
@@ -354,6 +418,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_provider(args)
         if args.command == "agent":
             return _run_agent(args)
+        if args.command == "project":
+            return _run_project(args)
         if args.command == "plan":
             return _run_plan(args)
         if args.command == "tool":
@@ -777,6 +843,192 @@ def _run_agent(args: argparse.Namespace) -> int:
     raise AssertionError("argparse accepted an unknown agent command")
 
 
+def _run_project(args: argparse.Namespace) -> int:
+    workspace_path = (
+        args.path if args.project_command == "start" else args.workspace
+    )
+    workspace = Workspace.load(workspace_path)
+    store = ProviderStore(runtime_home(args.home))
+    loop = _build_project_loop(
+        workspace,
+        store,
+        memory_mode=getattr(args, "memory", "auto"),
+    )
+
+    if args.project_command == "show":
+        record = loop.load(args.run_id)
+        _emit(
+            _project_result(loop, record, message="Loaded durable project run."),
+            as_json=args.json,
+        )
+        return 0
+    if args.project_command == "cancel":
+        record = loop.cancel(args.run_id)
+        _emit(
+            _project_result(loop, record, message="Cancelled durable project run."),
+            as_json=args.json,
+        )
+        return 0
+    if not args.protocol_stdin or not args.json_lines:
+        raise ProviderError(
+            "Project start and resume require --protocol-stdin and --json-lines so the goal stays out of process arguments and approvals remain exact."
+        )
+
+    message = _read_protocol_message(_PROJECT_PROTOCOL_BYTES)
+    if args.project_command == "start":
+        goal, completion_criteria = _project_start_message(message)
+        record = loop.start(goal, completion_criteria=completion_criteria)
+    elif args.project_command == "resume":
+        goal = _project_resume_message(message, args.run_id)
+        current = loop.load(args.run_id)
+        if current.goal_sha256 != sha256_text(goal.strip()):
+            raise ProviderError(
+                "Resume goal does not match the original durable project run."
+            )
+        record = loop.resume(args.run_id)
+    else:
+        raise AssertionError("argparse accepted an unknown project command")
+
+    async def approve(request: dict[str, object]) -> ApprovalDecision:
+        _emit_protocol_message(request)
+        response = await asyncio.to_thread(_read_protocol_message, 65_536)
+        if (
+            set(response) != {"decision", "requestId", "type"}
+            or response.get("type") != "approval"
+        ):
+            raise ProviderError(
+                "Project approval responses must contain only type, requestId, and decision."
+            )
+        if response.get("requestId") != request.get("requestId"):
+            raise ProviderError("Project approval does not match the active request.")
+        try:
+            return ApprovalDecision(response.get("decision"))
+        except ValueError as error:
+            raise ProviderError(
+                "Approval decision must be allow_once, deny_once, or cancel."
+            ) from error
+
+    cancellation = CancellationToken()
+    options = ProviderOptions(
+        provider_name=args.provider,
+        allow_network=args.allow_network,
+        allow_private_browser=args.allow_private_browser,
+        timeout=args.timeout,
+        max_output_tokens=args.max_output_tokens,
+        memory_mode=args.memory,
+        context_max_characters=args.context_max_characters,
+    )
+    with _cancellation_signals(cancellation):
+        record = asyncio.run(
+            loop.advance(
+                record.run_id,
+                goal=goal,
+                provider=options,
+                cancellation=cancellation,
+                approval_handler=approve,
+            )
+        )
+    _emit_protocol_message(
+        {
+            "type": "project_result",
+            **_project_result(loop, record, message="Project run reached a durable stop."),
+        }
+    )
+    return 2 if record.stage.value == "failed" else 0
+
+
+def _build_project_loop(
+    workspace: Workspace,
+    store: ProviderStore,
+    *,
+    memory_mode: str,
+) -> AutonomousProjectLoop:
+    agent = AgentRunner(workspace, store)
+    if memory_mode != "off":
+        agent.memory = select_qarinah_adapter(
+            workspace_root=workspace.root,
+            state=agent.state,
+        )
+    planner = PlanProposalRunner(agent)
+    coding_runner = CodingAgentRunner(workspace, store)
+    return AutonomousProjectLoop(workspace, planner, coding_runner)
+
+
+def _project_start_message(
+    message: dict[str, object],
+) -> tuple[str, tuple[str, ...]]:
+    if set(message) not in ({"goal", "type"}, {"completionCriteria", "goal", "type"}):
+        raise ProviderError(
+            "Project start must contain only type=start, goal, and optional completionCriteria."
+        )
+    if message.get("type") != "start":
+        raise ProviderError("Project start protocol type must be start.")
+    goal = _project_goal(message.get("goal"))
+    raw_criteria = message.get("completionCriteria", [])
+    if not isinstance(raw_criteria, list) or len(raw_criteria) > 64:
+        raise ProviderError("completionCriteria must be an array of at most 64 strings.")
+    criteria: list[str] = []
+    for value in raw_criteria:
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value.encode("utf-8")) > 4_096
+        ):
+            raise ProviderError(
+                "Each completion criterion must be a non-empty string of at most 4096 UTF-8 bytes."
+            )
+        criteria.append(value.strip())
+    return goal, tuple(criteria)
+
+
+def _project_resume_message(message: dict[str, object], run_id: str) -> str:
+    if set(message) != {"goal", "runId", "type"}:
+        raise ProviderError(
+            "Project resume must contain only type=resume, runId, and goal."
+        )
+    if message.get("type") != "resume" or message.get("runId") != run_id:
+        raise ProviderError("Project resume protocol is bound to another run.")
+    return _project_goal(message.get("goal"))
+
+
+def _project_goal(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value.strip().encode("utf-8")) > _PROJECT_GOAL_BYTES
+    ):
+        raise ProviderError(
+            f"Project goal must be 1-{_PROJECT_GOAL_BYTES} UTF-8 bytes."
+        )
+    return value.strip()
+
+
+def _project_result(
+    loop: AutonomousProjectLoop,
+    record: AutonomyRecord,
+    *,
+    message: str,
+) -> dict[str, object]:
+    durable = record.as_json()
+    next_action: dict[str, object] | None = None
+    if record.stop_reason == "plan_review_required" and record.plan_id:
+        next_action = {"action": "review_plan", "planId": record.plan_id}
+    elif record.stop_reason == "plan_approval_required" and record.plan_id:
+        next_action = {"action": "approve_plan_steps", "planId": record.plan_id}
+    elif record.can_resume:
+        next_action = {"action": "resume_project", "runId": record.run_id}
+    return {
+        "history": list(loop.store.history(record.run_id)),
+        "message": message,
+        "nextAction": next_action,
+        "ok": record.stage.value != "failed",
+        "planId": record.plan_id,
+        "record": durable,
+        "runId": record.run_id,
+        "stage": record.stage.value,
+    }
+
+
 def _run_coding_agent(
     args: argparse.Namespace,
     workspace: Workspace,
@@ -920,8 +1172,12 @@ def _read_protocol_message(maximum_bytes: int) -> dict[str, object]:
             "A coding protocol message exceeded its byte limit or lacked a newline."
         )
     try:
-        value = json.loads(line)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        value = json.loads(
+            line,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_non_finite_json,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise ProviderError(
             "Coding protocol messages must be UTF-8 JSON objects."
         ) from error
@@ -1083,6 +1339,7 @@ def _run_plan(args: argparse.Namespace) -> int:
                 service.run(
                     args.plan_id,
                     allowed_executables=allowed,
+                    allow_private_browser=args.allow_private_browser,
                     resume=args.plan_command == "resume",
                     cancellation=cancellation,
                 )
@@ -1112,6 +1369,8 @@ def _run_plan(args: argparse.Namespace) -> int:
 
 _PLAN_SPECIFICATION_BYTES = 1_048_576
 _PLAN_REQUEST_BYTES = (MAX_REQUEST_BYTES * 4) + 4_096
+_PROJECT_GOAL_BYTES = 65_536
+_PROJECT_PROTOCOL_BYTES = 524_288
 
 
 def _read_bounded_json_object(maximum_bytes: int) -> dict[str, object]:

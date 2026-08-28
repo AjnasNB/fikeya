@@ -7,12 +7,14 @@ import io
 import json
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fikeya_agent_core import AgentNoProgressError
 
 from fikeya_runtime.cli import _parser, main
 from fikeya_runtime.errors import ProviderConnectivityError, SecretStoreUnavailable
+from fikeya_runtime.util import sha256_text
 
 _ORIGINAL_SOCKET_CONNECT = socket.socket.connect
 
@@ -68,6 +70,303 @@ class _ProtocolInput:
 
     def isatty(self) -> bool:
         return False
+
+
+class _FakeAutonomyRecord:
+    def __init__(
+        self,
+        *,
+        goal: str,
+        stage: str,
+        stop_reason: str | None = None,
+        can_resume: bool = False,
+    ) -> None:
+        self.run_id = "aut_test"
+        self.plan_id = "plan_test"
+        self.goal_sha256 = sha256_text(goal)
+        self.stage = SimpleNamespace(value=stage)
+        self.stop_reason = stop_reason
+        self.can_resume = can_resume
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "goalSha256": self.goal_sha256,
+            "planId": self.plan_id,
+            "runId": self.run_id,
+            "stage": self.stage.value,
+            "stopReason": self.stop_reason,
+        }
+
+
+class _FakeAutonomyLoop:
+    def __init__(self, goal: str) -> None:
+        self.goal = goal
+        self.started: tuple[str, tuple[str, ...]] | None = None
+        self.resumed = False
+        self.cancelled = False
+        self.store = SimpleNamespace(
+            history=lambda run_id: (
+                {
+                    "createdAt": "2026-08-28T00:00:00Z",
+                    "documentSha256": "sha256:" + ("a" * 64),
+                    "revision": 1,
+                    "stage": "stopped",
+                },
+            )
+        )
+
+    def start(
+        self, goal: str, *, completion_criteria: tuple[str, ...]
+    ) -> _FakeAutonomyRecord:
+        self.started = (goal, completion_criteria)
+        return _FakeAutonomyRecord(goal=goal, stage="plan")
+
+    def load(self, run_id: str) -> _FakeAutonomyRecord:
+        assert run_id == "aut_test"
+        return _FakeAutonomyRecord(
+            goal=self.goal,
+            stage="stopped",
+            stop_reason="plan_review_required",
+            can_resume=True,
+        )
+
+    def resume(self, run_id: str) -> _FakeAutonomyRecord:
+        assert run_id == "aut_test"
+        self.resumed = True
+        return _FakeAutonomyRecord(goal=self.goal, stage="execute")
+
+    def cancel(self, run_id: str) -> _FakeAutonomyRecord:
+        assert run_id == "aut_test"
+        self.cancelled = True
+        return _FakeAutonomyRecord(
+            goal=self.goal,
+            stage="stopped",
+            stop_reason="person cancelled",
+        )
+
+    async def advance(self, run_id: str, **values: object) -> _FakeAutonomyRecord:
+        assert run_id == "aut_test"
+        assert values["goal"] == self.goal
+        approval = values["approval_handler"]
+        decision = await approval(
+            {
+                "requestId": "approval_test",
+                "toolName": "workspace.read_file",
+                "type": "approval_request",
+            }
+        )
+        assert decision.value == "allow_once"
+        return _FakeAutonomyRecord(
+            goal=self.goal,
+            stage="stopped",
+            stop_reason="plan_review_required",
+            can_resume=True,
+        )
+
+
+def test_project_start_keeps_goal_off_argv_and_emits_durable_ids(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fikeya_runtime.cli as cli_module
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    loop = _FakeAutonomyLoop("Build the star animation")
+    monkeypatch.setattr(cli_module, "_build_project_loop", lambda *args, **kwargs: loop)
+    monkeypatch.setattr(socket.socket, "connect", _ORIGINAL_SOCKET_CONNECT)
+    monkeypatch.setattr(
+        "sys.stdin",
+        _ProtocolInput(
+            [
+                {
+                    "type": "start",
+                    "goal": "Build the star animation",
+                    "completionCriteria": ["The animation renders"],
+                },
+                {
+                    "type": "approval",
+                    "requestId": "approval_test",
+                    "decision": "allow_once",
+                },
+            ]
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "project",
+                "start",
+                str(workspace),
+                "--provider",
+                "local",
+                "--protocol-stdin",
+                "--json-lines",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    lines = [json.loads(line) for line in output.splitlines()]
+    assert lines[0]["requestId"] == "approval_test"
+    assert lines[1]["type"] == "project_result"
+    assert lines[1]["runId"] == "aut_test"
+    assert lines[1]["planId"] == "plan_test"
+    assert lines[1]["stage"] == "stopped"
+    assert lines[1]["nextAction"] == {
+        "action": "review_plan",
+        "planId": "plan_test",
+    }
+    assert "Build the star animation" not in output
+    assert loop.started == (
+        "Build the star animation",
+        ("The animation renders",),
+    )
+
+
+def test_project_resume_rejects_a_different_goal_before_mutating_state(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fikeya_runtime.cli as cli_module
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    loop = _FakeAutonomyLoop("Original exact goal")
+    monkeypatch.setattr(cli_module, "_build_project_loop", lambda *args, **kwargs: loop)
+    monkeypatch.setattr(
+        "sys.stdin",
+        _ProtocolInput(
+            [{"type": "resume", "runId": "aut_test", "goal": "Changed goal"}]
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "project",
+                "resume",
+                "aut_test",
+                "--workspace",
+                str(workspace),
+                "--provider",
+                "local",
+                "--protocol-stdin",
+                "--json-lines",
+            ]
+        )
+        == 2
+    )
+    assert loop.resumed is False
+    assert "does not match" in capsys.readouterr().err
+
+
+def test_project_show_and_cancel_expose_the_durable_record(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fikeya_runtime.cli as cli_module
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert main(["init", str(workspace), "--json"]) == 0
+    capsys.readouterr()
+    loop = _FakeAutonomyLoop("Original exact goal")
+    monkeypatch.setattr(cli_module, "_build_project_loop", lambda *args, **kwargs: loop)
+
+    assert (
+        main(
+            [
+                "project",
+                "show",
+                "aut_test",
+                "--workspace",
+                str(workspace),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["record"]["goalSha256"] == sha256_text("Original exact goal")
+    assert shown["history"][0]["revision"] == 1
+
+    assert (
+        main(
+            [
+                "project",
+                "cancel",
+                "aut_test",
+                "--workspace",
+                str(workspace),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    cancelled = json.loads(capsys.readouterr().out)
+    assert cancelled["record"]["stopReason"] == "person cancelled"
+    assert loop.cancelled is True
+
+
+def test_project_loop_wires_the_existing_planner_and_coding_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fikeya_runtime.cli as cli_module
+
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+    workspace, _ = cli_module.initialize_workspace(workspace_path)
+    provider_store = cli_module.ProviderStore(tmp_path / "home")
+    agent = object()
+    planner = object()
+    coding_runner = object()
+    loop = object()
+    monkeypatch.setattr(cli_module, "AgentRunner", lambda *args: agent)
+    monkeypatch.setattr(
+        cli_module,
+        "PlanProposalRunner",
+        lambda received: planner if received is agent else None,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "CodingAgentRunner",
+        lambda received_workspace, received_store: (
+            coding_runner
+            if received_workspace is workspace and received_store is provider_store
+            else None
+        ),
+    )
+
+    def autonomy(
+        received_workspace: object,
+        received_planner: object,
+        received_coding_runner: object,
+    ) -> object:
+        assert received_workspace is workspace
+        assert received_planner is planner
+        assert received_coding_runner is coding_runner
+        return loop
+
+    monkeypatch.setattr(cli_module, "AutonomousProjectLoop", autonomy)
+
+    assert (
+        cli_module._build_project_loop(
+            workspace,
+            provider_store,
+            memory_mode="off",
+        )
+        is loop
+    )
 
 
 def test_cli_init_and_provider_listing_make_no_network_calls(
