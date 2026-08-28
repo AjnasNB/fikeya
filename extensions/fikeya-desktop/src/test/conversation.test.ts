@@ -225,7 +225,21 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(source, /hasAttachments: attachmentReadCount > 0 \|\| imageAttachments\.length > 0 \|\| textFileAttachments\.length > 0/u);
 		assert.match(source, /runButton\.disabled = runBlocked \|\| attachmentReadCount > 0/u);
 		assert.match(source, /chatModeField\?\.addEventListener\('change', updateComposerMode\)/u);
+		assert.match(source, /executeAgentAction\(chatModeField\?\.value === 'plan' \? 'plan' : parallelAgentsEnabled \? 'multitask' : 'run'\)/u);
+		assert.match(source, /agentForm\.requestSubmit\(\)/u);
+		assert.doesNotMatch(source, /data-network-confirmation/u);
 		assert.doesNotMatch(source, /chatModeField\?\.addEventListener\('change', refresh/u);
+	});
+
+	test('keeps Project chat persistent and accepts Explorer resource drops across the surface', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /data-agent-surface/u);
+		assert.match(source, /attachDroppedResources/u);
+		assert.match(source, /ResourceURLs/u);
+		assert.match(source, /application\/vnd\.code\.uri-list/u);
+		assert.match(source, /this\.projectPanelRequired = true/u);
+		assert.match(source, /if \(this\.projectPanelRequired && !this\.disposed && !this\.panel\)/u);
+		assert.doesNotMatch(source, /data-layout-switch/u);
 	});
 
 	test('uses one accessible animated copy action instead of a floating button cluster', async () => {

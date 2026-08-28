@@ -87,7 +87,7 @@ describe('Fikeya webview message validation', () => {
 		}), undefined);
 	});
 
-	test('accepts bounded agent turns only with per-run network consent', () => {
+	test('accepts bounded agent turns only with explicit send authorization', () => {
 		const request = {
 			type: 'runAgent',
 			providerName: 'azure-primary',
@@ -236,6 +236,19 @@ describe('Fikeya webview message validation', () => {
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'workspace' }), { type: 'pickMentionFiles', source: 'workspace' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'computer' }), { type: 'pickMentionFiles', source: 'computer' });
 		assert.strictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'network' }), undefined);
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'attachDroppedResources',
+			resourceUris: ['file:///workspace/src/index.ts', 'file:///workspace/test']
+		}), {
+			type: 'attachDroppedResources',
+			resourceUris: ['file:///workspace/src/index.ts', 'file:///workspace/test']
+		});
+		assert.strictEqual(parseWebviewMessage({ type: 'attachDroppedResources', resourceUris: [] }), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'attachDroppedResources',
+			resourceUris: Array.from({ length: 33 }, (_, index) => `file:///workspace/${index}.ts`)
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'attachDroppedResources', resourceUris: [42] }), undefined);
 		const request = {
 			type: 'runAgent',
 			requestId: 'request_20260828',
