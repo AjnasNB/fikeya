@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Fikeya 0.1.0-beta.4 is the current public-beta source candidate. This document distinguishes:
+Fikeya 0.1.0-beta.5 is the current public-beta source candidate. This document distinguishes:
 
 - **Current enforcement:** behavior enforced in the integrated Desktop/runtime path today.
 - **Standalone enforcement:** behavior implemented and tested in a component that is not yet wired into the product path.
