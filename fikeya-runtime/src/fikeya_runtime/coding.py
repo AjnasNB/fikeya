@@ -349,6 +349,16 @@ class WorkspaceExecutionBroker:
                 },
             ),
             ToolDefinition(
+                "browser.assert_text",
+                "Require bounded visible page text before continuing the approved plan.",
+                {
+                    "type": "object",
+                    "required": ["text"],
+                    "properties": {"text": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
                 "browser.navigate",
                 "Navigate the isolated browser to one approved HTTP or HTTPS URL.",
                 {
@@ -548,6 +558,16 @@ class WorkspaceExecutionBroker:
                 call, required=frozenset({"url"}), optional=frozenset()
             )
             result = session.navigate(_required_string(arguments, "url"))
+        elif call.name == "browser.assert_text":
+            arguments = _exact_arguments(
+                call, required=frozenset({"text"}), optional=frozenset()
+            )
+            expected = _required_string(arguments, "text")
+            if len(expected.encode("utf-8")) > 4_096:
+                raise ValueError("Browser text assertion exceeds 4096 UTF-8 bytes.")
+            result = session.inspect("text")
+            if result.text is None or expected not in result.text:
+                raise ValueError("Expected browser text was not present.")
         elif call.name == "browser.snapshot":
             arguments = _exact_arguments(
                 call, required=frozenset(), optional=frozenset({"kind"})

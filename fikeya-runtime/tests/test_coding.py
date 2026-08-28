@@ -250,6 +250,7 @@ def test_coding_loop_inspects_edits_tests_and_returns_structured_outcome(
         (
             AgentMode.RESEARCH,
             {
+                "browser.assert_text",
                 "browser.click",
                 "browser.close",
                 "browser.navigate",
@@ -324,6 +325,17 @@ class _FakeBrowserSession:
             BrowserReceipt("navigate", url, "sha256:" + "1" * 64, 3)
         )
 
+    def inspect(self, _kind: str) -> BrowserActionResult:
+        return BrowserActionResult(
+            BrowserReceipt(
+                "inspect",
+                self.urls[-1] if self.urls else None,
+                "sha256:" + "4" * 64,
+                2,
+            ),
+            text="Simulation ready",
+        )
+
     def close(self) -> BrowserActionResult:
         self.closed = True
         return BrowserActionResult(
@@ -376,6 +388,23 @@ def test_build_mode_routes_browser_actions_and_records_content_minimal_receipts(
     assert session.urls == ["https://example.com/docs?section=runtime"]
     assert [receipt.name for receipt in broker.state.receipts] == [
         "browser.navigate"
+    ]
+    asserted = _run(
+        broker.execute(
+            ToolCall(
+                "browser:assert",
+                "browser.assert_text",
+                {"text": "Simulation ready"},
+            ),
+            CancellationToken(),
+            idempotency_key="browser-assertion",
+        ),
+        monkeypatch,
+    )
+    assert asserted.status == "ok"
+    assert [receipt.name for receipt in broker.state.receipts] == [
+        "browser.navigate",
+        "browser.assert_text",
     ]
     broker.close()
     assert session.closed is True

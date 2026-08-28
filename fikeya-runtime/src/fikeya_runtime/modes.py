@@ -36,6 +36,7 @@ _WORKSPACE_WRITE_TOOLS = frozenset(
 )
 _BROWSER_READ_TOOLS = frozenset(
     {
+        "browser.assert_text",
         "browser.navigate",
         "browser.snapshot",
         "browser.scroll",
