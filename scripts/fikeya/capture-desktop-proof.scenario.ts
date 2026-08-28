@@ -726,7 +726,9 @@ const scenario: Scenario = {
 					remove.click();
 					return true;
 				})()`);
-				if (!removed) throw new Error('The dropped README.md attachment could not be removed.');
+				if (!removed) {
+					throw new Error('The dropped README.md attachment could not be removed.');
+				}
 				await waitForFikeya<boolean>(code, `document.querySelectorAll('[data-composer-attachments] .composer-attachment').length === 0`, 'The dropped file attachment did not clear.', 10_000);
 				return 'Dropped README.md from the VS Code Explorer resource channel onto the full Project Chat surface and attached its bounded UTF-8 content.';
 			}
