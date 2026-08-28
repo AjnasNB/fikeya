@@ -116,12 +116,19 @@ if (runtimeHash !== pythonRuntimeReceipt.executableSha256) {
 	throw new Error('Bundled standalone Fikeya Runtime hash does not match its receipt.');
 }
 const declaredRuntimeLicenses = [
-	pythonRuntimeReceipt.pythonLicenseFile,
-	...pythonRuntimeReceipt.packages.flatMap(item => Array.isArray(item.licenseFiles) ? item.licenseFiles : [item.licenseFile])
+	{ path: pythonRuntimeReceipt.pythonLicenseFile, sha256: pythonRuntimeReceipt.pythonLicenseSha256 },
+	...pythonRuntimeReceipt.packages.flatMap(item => {
+		const files = Array.isArray(item.licenseFiles) ? item.licenseFiles : [item.licenseFile];
+		return files.map(licensePath => ({ path: licensePath, sha256: item.licenseSha256?.[licensePath] }));
+	})
 ];
-for (const licensePath of declaredRuntimeLicenses) {
-	if (typeof licensePath !== 'string' || !entries.has(`extension/${licensePath}`) || entries.get(`extension/${licensePath}`).length === 0) {
-		throw new Error(`Bundled standalone Fikeya Runtime license is missing: ${licensePath}`);
+for (const license of declaredRuntimeLicenses) {
+	if (typeof license.path !== 'string' || !entries.has(`extension/${license.path}`) || entries.get(`extension/${license.path}`).length === 0) {
+		throw new Error(`Bundled standalone Fikeya Runtime license is missing: ${license.path}`);
+	}
+	const digest = `sha256:${createHash('sha256').update(entries.get(`extension/${license.path}`)).digest('hex')}`;
+	if (license.sha256 !== digest) {
+		throw new Error(`Bundled standalone Fikeya Runtime license hash is invalid: ${license.path}`);
 	}
 }
 

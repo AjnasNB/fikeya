@@ -26,6 +26,35 @@ EXPECTED_PAYLOAD_SHA256 = (
 EXPECTED_EXECUTABLE_SHA256 = (
     "sha256:ce4635cd0e5dc0e21494542a701f347e91c1f1d821970578d97ed8df4ced50ef"
 )
+EXPECTED_WINDOWS_PACKAGES = {
+    "azure-core": "1.41.0",
+    "azure-identity": "1.25.3",
+    "certifi": "2026.7.22",
+    "cffi": "2.1.1",
+    "charset-normalizer": "3.5.1",
+    "chromium-headless-shell": EXPECTED_BROWSER_VERSION,
+    "cryptography": "50.0.0",
+    "greenlet": "3.5.5",
+    "idna": "3.19",
+    "jaraco.classes": "3.4.0",
+    "jaraco.context": "6.1.2",
+    "jaraco.functools": "4.6.0",
+    "keyring": "25.7.0",
+    "more-itertools": "11.1.0",
+    "msal": "1.38.0",
+    "msal-extensions": "1.3.1",
+    "playwright": EXPECTED_PLAYWRIGHT_VERSION,
+    "playwright-ffmpeg": "1011",
+    "playwright-winldd": "1007",
+    "pycparser": "3.0",
+    "pyee": "13.0.1",
+    "pyinstaller": "6.22.2",
+    "pyjwt": "2.13.0",
+    "pywin32-ctypes": "0.2.3",
+    "requests": "2.34.2",
+    "typing-extensions": "4.16.0",
+    "urllib3": "2.7.0",
+}
 MAX_ARCHIVE_ENTRY_BYTES = 256 * 1024 * 1024
 MAX_PAYLOAD_BYTES = 384 * 1024 * 1024
 MAX_PAYLOAD_FILES = 512
@@ -112,37 +141,59 @@ def load_browser_receipt(
 def verify_installed_licenses(receipt_path: Path, receipt: dict[str, object]) -> int:
     extension_root = receipt_path.parent.parent.resolve(strict=True)
     license_root = (extension_root / "runtime" / "licenses").resolve(strict=True)
-    declared = [receipt.get("pythonLicenseFile")]
+    python_version = receipt.get("pythonVersion")
+    if not isinstance(python_version, str):
+        raise TypeError("Installed runtime receipt has no Python version.")
+    try:
+        python_major_minor = tuple(int(part) for part in python_version.split(".")[:2])
+    except ValueError as error:
+        raise TypeError("Installed runtime receipt has an invalid Python version.") from error
+    expected_packages = dict(EXPECTED_WINDOWS_PACKAGES)
+    if python_major_minor < (3, 12):
+        expected_packages["backports.tarfile"] = "1.2.0"
+    declared = [
+        (
+            receipt.get("pythonLicenseFile"),
+            receipt.get("pythonLicenseSha256"),
+        )
+    ]
     packages = receipt.get("packages")
     if not isinstance(packages, list):
         raise TypeError("Installed runtime receipt has no package license manifest.")
-    package_names = set()
+    package_versions: dict[str, str] = {}
     for item in packages:
-        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("name"), str)
+            or not isinstance(item.get("version"), str)
+        ):
             raise TypeError("Installed runtime package license manifest is malformed.")
-        package_names.add(item["name"])
+        if item["name"] in package_versions:
+            raise RuntimeError("Installed runtime contains a duplicate package record.")
+        package_versions[item["name"]] = item["version"]
         license_files = item.get("licenseFiles")
+        if (
+            not isinstance(license_files, list)
+            or not license_files
+            or item.get("licenseFile") != license_files[0]
+            or not isinstance(item.get("licenseSha256"), dict)
+            or set(item["licenseSha256"]) != set(license_files)
+        ):
+            raise RuntimeError("Installed runtime package license record is incomplete.")
         declared.extend(
-            license_files
-            if isinstance(license_files, list)
-            else [item.get("licenseFile")]
+            (license_file, item["licenseSha256"].get(license_file))
+            for license_file in license_files
         )
-    required_packages = {
-        "chromium-headless-shell",
-        "greenlet",
-        "playwright",
-        "playwright-ffmpeg",
-        "playwright-winldd",
-        "pyee",
-        "typing-extensions",
-    }
-    if not required_packages.issubset(package_names):
-        raise RuntimeError(
-            "Installed runtime is missing browser package license records."
-        )
+    if package_versions != expected_packages:
+        raise RuntimeError("Installed runtime package inventory is incomplete.")
     checked = 0
-    for value in declared:
-        if not isinstance(value, str):
+    for value, expected_hash in declared:
+        if (
+            not isinstance(value, str)
+            or not isinstance(expected_hash, str)
+            or len(expected_hash) != 71
+            or not expected_hash.startswith("sha256:")
+        ):
             raise RuntimeError("Installed runtime contains an unsafe license path.")
         relative = PurePosixPath(value)
         if (
@@ -161,6 +212,8 @@ def verify_installed_licenses(receipt_path: Path, receipt: dict[str, object]) ->
             ) from error
         if not candidate.is_file() or candidate.stat().st_size == 0:
             raise RuntimeError("Installed runtime license is missing or empty.")
+        if sha256_file(candidate) != expected_hash:
+            raise RuntimeError("Installed runtime license hash does not match its receipt.")
         checked += 1
     return checked
 

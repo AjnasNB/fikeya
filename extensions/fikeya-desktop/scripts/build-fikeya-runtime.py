@@ -474,6 +474,7 @@ def copy_license_files(
     if not sources:
         raise RuntimeError(f"No license sources were supplied for {package_name}.")
     destinations: list[str] = []
+    license_hashes: dict[str, str] = {}
     for index, source in enumerate(sources):
         if not source.is_file():
             raise RuntimeError(
@@ -483,10 +484,13 @@ def copy_license_files(
         destination = license_root / package_name / f"{index:02d}-{safe_name}"
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        destinations.append(destination.relative_to(license_root.parent).as_posix())
+        relative = destination.relative_to(license_root.parent).as_posix()
+        destinations.append(relative)
+        license_hashes[relative] = sha256_file(destination)
     return {
         "licenseFile": destinations[0],
         "licenseFiles": destinations,
+        "licenseSha256": license_hashes,
         "metadataName": metadata_name,
         "name": package_name,
         "version": version,
@@ -665,6 +669,7 @@ def main() -> int:
         "pythonLicenseFile": python_license_destination.relative_to(
             build_root
         ).as_posix(),
+        "pythonLicenseSha256": sha256_file(python_license_destination),
     }
     receipt_path = build_root / "build-receipt.json"
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")

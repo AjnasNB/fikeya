@@ -65,6 +65,7 @@ if (pythonRuntimeBuildReceipt.target !== vsixTarget
 	|| pythonRuntimeBuildReceipt.schemaVersion !== 'fikeya.desktop-python-runtime-build.v1'
 	|| pythonRuntimeBuildReceipt.executable !== expectedRuntimeExecutable
 	|| pythonRuntimeBuildReceipt.pythonLicenseFile !== 'licenses/python/LICENSE.txt'
+	|| !/^sha256:[0-9a-f]{64}$/.test(pythonRuntimeBuildReceipt.pythonLicenseSha256 ?? '')
 	|| !Array.isArray(pythonRuntimeBuildReceipt.packages)) {
 	throw new Error('Standalone Fikeya Runtime build receipt does not match the requested VSIX target.');
 }
@@ -117,7 +118,10 @@ for (const item of pythonRuntimeBuildReceipt.packages) {
 	const buildLicenseFiles = Array.isArray(item?.licenseFiles) ? item.licenseFiles : [item?.licenseFile];
 	if (!item || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(item.name)
 		|| buildLicenseFiles.length === 0
-		|| buildLicenseFiles.some(licenseFile => !/^licenses\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(licenseFile))) {
+		|| buildLicenseFiles.some(licenseFile => !/^licenses\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(licenseFile))
+		|| !item.licenseSha256
+		|| Object.keys(item.licenseSha256).length !== buildLicenseFiles.length
+		|| buildLicenseFiles.some(licenseFile => !/^sha256:[0-9a-f]{64}$/.test(item.licenseSha256[licenseFile] ?? ''))) {
 		throw new Error('Standalone Fikeya Runtime build receipt contains an unsafe license path.');
 	}
 	if (packagedRuntimeNames.has(item.name)) {
@@ -125,16 +129,20 @@ for (const item of pythonRuntimeBuildReceipt.packages) {
 	}
 	packagedRuntimeNames.add(item.name);
 	const packagedLicenseFiles = [];
+	const packagedLicenseHashes = {};
 	for (const licenseFile of buildLicenseFiles) {
 		const packagedPath = path.join('runtime', 'licenses', item.name, path.basename(licenseFile));
 		await copyInto(path.join(runtimeBuildRoot, licenseFile), path.join(stagingRoot, packagedPath));
 		await copyInto(path.join(runtimeBuildRoot, licenseFile), path.join(extensionRoot, packagedPath));
-		packagedLicenseFiles.push(packagedPath.replaceAll('\\', '/'));
+		const normalizedPackagedPath = packagedPath.replaceAll('\\', '/');
+		packagedLicenseFiles.push(normalizedPackagedPath);
+		packagedLicenseHashes[normalizedPackagedPath] = item.licenseSha256[licenseFile];
 	}
 	packagedRuntimeLicenses.push({
 		...item,
 		licenseFile: packagedLicenseFiles[0],
-		licenseFiles: packagedLicenseFiles
+		licenseFiles: packagedLicenseFiles,
+		licenseSha256: packagedLicenseHashes
 	});
 }
 const pythonLicensePath = path.join('runtime', 'licenses', 'python', 'LICENSE.txt');

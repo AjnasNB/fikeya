@@ -174,24 +174,7 @@ class BrowserPackagingTests(unittest.TestCase):
             extension_root = Path(temporary_directory) / "fikeya-desktop"
             receipt_path = extension_root / "runtime" / "fikeya-runtime.json"
             receipt_path.parent.mkdir(parents=True)
-            required_packages = (
-                "chromium-headless-shell",
-                "greenlet",
-                "playwright",
-                "playwright-ffmpeg",
-                "playwright-winldd",
-                "pyee",
-                "typing-extensions",
-            )
-            packages = []
-            for index, name in enumerate(required_packages):
-                relative = f"runtime/licenses/{name}/{index:02d}-LICENSE"
-                license_path = extension_root / relative
-                license_path.parent.mkdir(parents=True)
-                license_path.write_text(f"license for {name}", encoding="utf-8")
-                packages.append(
-                    {"name": name, "licenseFile": relative, "licenseFiles": [relative]}
-                )
+            packages = write_package_licenses(extension_root)
             python_license = "runtime/licenses/python/LICENSE.txt"
             (extension_root / python_license).parent.mkdir(parents=True)
             (extension_root / python_license).write_text(
@@ -202,6 +185,10 @@ class BrowserPackagingTests(unittest.TestCase):
                 "executable": "runtime/fikeya-runtime.exe",
                 "packages": packages,
                 "pythonLicenseFile": python_license,
+                "pythonLicenseSha256": build_runtime.sha256_file(
+                    extension_root / python_license
+                ),
+                "pythonVersion": "3.12.10",
                 "schemaVersion": "fikeya.desktop-bundled-python-runtime.v1",
                 "target": "win32-x64",
             }
@@ -213,7 +200,9 @@ class BrowserPackagingTests(unittest.TestCase):
             )
 
             self.assertEqual(browser["revision"], "1234")
-            self.assertEqual(count, len(required_packages) + 1)
+            self.assertEqual(
+                count, len(test_installed_browser.EXPECTED_WINDOWS_PACKAGES) + 1
+            )
 
     def test_installed_receipt_rejects_parent_license_segments(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -224,32 +213,16 @@ class BrowserPackagingTests(unittest.TestCase):
             (extension_root / "runtime" / "outside.txt").write_text(
                 "not a license", encoding="utf-8"
             )
-            packages = []
-            for name in (
-                "chromium-headless-shell",
-                "greenlet",
-                "playwright",
-                "playwright-ffmpeg",
-                "playwright-winldd",
-                "pyee",
-                "typing-extensions",
-            ):
-                relative = f"runtime/licenses/{name}/LICENSE"
-                destination = extension_root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(f"license for {name}", encoding="utf-8")
-                packages.append(
-                    {
-                        "name": name,
-                        "licenseFile": relative,
-                        "licenseFiles": [relative],
-                    }
-                )
+            packages = write_package_licenses(extension_root)
             receipt = {
                 "browser": expected_browser_receipt(),
                 "executable": "runtime/fikeya-runtime.exe",
                 "packages": packages,
                 "pythonLicenseFile": "runtime/licenses/../outside.txt",
+                "pythonLicenseSha256": build_runtime.sha256_file(
+                    extension_root / "runtime" / "outside.txt"
+                ),
+                "pythonVersion": "3.12.10",
                 "schemaVersion": "fikeya.desktop-bundled-python-runtime.v1",
                 "target": "win32-x64",
             }
@@ -278,6 +251,29 @@ def expected_browser_receipt() -> dict[str, object]:
         "revision": test_installed_browser.EXPECTED_BROWSER_REVISION,
         "schemaVersion": "fikeya.desktop-browser-payload.v1",
     }
+
+
+def write_package_licenses(extension_root: Path) -> list[dict[str, object]]:
+    packages: list[dict[str, object]] = []
+    for index, (name, version) in enumerate(
+        sorted(test_installed_browser.EXPECTED_WINDOWS_PACKAGES.items())
+    ):
+        relative = f"runtime/licenses/{name}/{index:02d}-LICENSE"
+        license_path = extension_root / relative
+        license_path.parent.mkdir(parents=True, exist_ok=True)
+        license_path.write_text(f"license for {name}", encoding="utf-8")
+        packages.append(
+            {
+                "name": name,
+                "version": version,
+                "licenseFile": relative,
+                "licenseFiles": [relative],
+                "licenseSha256": {
+                    relative: build_runtime.sha256_file(license_path)
+                },
+            }
+        )
+    return packages
 
 
 if __name__ == "__main__":
