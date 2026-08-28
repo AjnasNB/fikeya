@@ -12,6 +12,7 @@ import os
 import re
 import tempfile
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -248,6 +249,7 @@ class WorkspaceExecutionBroker:
         self.mode_policy: ModePolicy = mode_policy(mode)
         self.allow_private_browser = allow_private_browser
         self._browser = browser_session
+        self._browser_executor: ThreadPoolExecutor | None = None
         self.maximum_process_timeout_seconds = maximum_process_timeout_seconds
         self._process_broker = ToolBroker(
             boundary=workspace.boundary,
@@ -481,7 +483,10 @@ class WorkspaceExecutionBroker:
             elif call.name == "process.run":
                 result = await asyncio.to_thread(self._run_process, call, cancellation)
             elif call.name.startswith("browser."):
-                result = await asyncio.to_thread(self._run_browser, call)
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    self._browser_worker(), self._run_browser, call
+                )
             else:
                 result = ToolResult(call.call_id, "error", "Unknown broker tool.")
         except (ApprovalError, FikeyaError, OSError, UnicodeError, ValueError) as error:
@@ -502,6 +507,27 @@ class WorkspaceExecutionBroker:
     def close(self) -> None:
         """Release optional browser resources owned by this broker."""
 
+        executor = self._browser_executor
+        if executor is None:
+            if self._browser is not None:
+                self._browser.close()
+                self._browser = None
+            return
+        try:
+            executor.submit(self._close_browser).result(timeout=30)
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+            self._browser_executor = None
+
+    def _browser_worker(self) -> ThreadPoolExecutor:
+        if self._browser_executor is None:
+            self._browser_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="fikeya-browser",
+            )
+        return self._browser_executor
+
+    def _close_browser(self) -> None:
         if self._browser is not None:
             self._browser.close()
             self._browser = None

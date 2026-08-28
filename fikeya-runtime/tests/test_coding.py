@@ -8,6 +8,7 @@ import json
 import socket
 import sqlite3
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -244,7 +245,6 @@ def test_coding_loop_inspects_edits_tests_and_returns_structured_outcome(
                 "workspace.list_files",
                 "workspace.read_file",
                 "workspace.search_text",
-                "process.run",
             },
         ),
         (
@@ -379,6 +379,73 @@ def test_build_mode_routes_browser_actions_and_records_content_minimal_receipts(
     ]
     broker.close()
     assert session.closed is True
+
+
+def test_browser_session_lifecycle_stays_on_one_dedicated_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fikeya_runtime.coding as coding_module
+
+    thread_ids: list[int] = []
+
+    class ThreadBoundBrowser:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.thread_id = threading.get_ident()
+            thread_ids.append(self.thread_id)
+
+        def _result(self, action: str) -> BrowserActionResult:
+            current = threading.get_ident()
+            assert current == self.thread_id
+            thread_ids.append(current)
+            return BrowserActionResult(
+                BrowserReceipt(
+                    action,  # type: ignore[arg-type]
+                    "https://example.com/",
+                    "sha256:" + "3" * 64,
+                    1,
+                )
+            )
+
+        def navigate(self, _url: str) -> BrowserActionResult:
+            return self._result("navigate")
+
+        def inspect(self, _kind: str) -> BrowserActionResult:
+            return self._result("inspect")
+
+        def close(self) -> BrowserActionResult:
+            return self._result("close")
+
+    monkeypatch.setattr(coding_module, "BrowserSession", ThreadBoundBrowser)
+    root = tmp_path / "thread-bound-browser"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    broker = WorkspaceExecutionBroker(workspace, mode=AgentMode.BUILD)
+
+    async def exercise() -> None:
+        await broker.execute(
+            ToolCall(
+                "browser:navigate",
+                "browser.navigate",
+                {"url": "https://example.com/"},
+            ),
+            CancellationToken(),
+            idempotency_key="threaded-browser-navigate",
+        )
+        await broker.execute(
+            ToolCall(
+                "browser:snapshot",
+                "browser.snapshot",
+                {"kind": "accessible"},
+            ),
+            CancellationToken(),
+            idempotency_key="threaded-browser-snapshot",
+        )
+
+    _run(exercise(), monkeypatch)
+    broker.close()
+    assert len(set(thread_ids)) == 1
+    assert thread_ids[0] != threading.get_ident()
 
 
 def test_denied_edit_leaves_the_file_unchanged(
