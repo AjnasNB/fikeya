@@ -716,6 +716,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 					this.refresh();
 				}
 				break;
+			case 'copyConversationMessage': {
+				const conversationMessage = this.state.conversation.find(candidate => candidate.id === message.messageId);
+				if (conversationMessage) {
+					await vscode.env.clipboard.writeText(conversationMessage.content);
+				}
+				break;
+			}
 			case 'copyText':
 				await vscode.env.clipboard.writeText(message.text);
 				break;
@@ -1376,12 +1383,6 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		for (const item of result.agents) {
 			const label = `${item.profile.displayName} · ${item.profile.providerName}`;
 			if (item.runtime.ok && item.runtime.value) {
-				conversation = appendConversationMessage(conversation, createConversationMessage(
-					'assistant',
-					item.runtime.value.output,
-					label,
-					item.status === 'completed' ? 'normal' : 'error'
-				));
 				const provider = this.state.providers.find(candidate => candidate.name === item.profile.providerName);
 				if (provider && item.status === 'completed') {
 					await captureCompletedFikeyaRun({
@@ -1412,7 +1413,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				providerName: vscode.l10n.t('{0} specialists → {1}', selectedProfiles.length, leadProviderName),
 				receiptsStatus: 'ready',
 				receipts: result.agents.flatMap(item => item.receipts),
-				failure: result.status === 'partial' ? vscode.l10n.t('Some advisory agents did not complete. Completed answers and receipts were retained.') : undefined
+				failure: result.status === 'partial' ? vscode.l10n.t('Some advisory agents did not complete. Their available evidence and receipts were retained for one lead answer.') : undefined
 			}
 		};
 		await this.persistConversation();
@@ -2447,9 +2448,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.message-attachment { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 4px 7px; border: 1px solid var(--vscode-widget-border); border-radius: 7px; color: var(--vscode-descriptionForeground); background: var(--vscode-editorWidget-background); font-size: 10px; }
 		.message-attachment strong { max-width: 220px; overflow: hidden; color: var(--vscode-foreground); text-overflow: ellipsis; white-space: nowrap; }
 		.message-attachment-path { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-		.message-actions { display: flex; justify-content: end; min-height: 24px; margin-top: 2px; }
-		.copy-message { display: grid; width: 26px; min-width: 26px; min-height: 24px; place-items: center; padding: 0; border-color: transparent; border-radius: 6px; opacity: .62; }
-		.copy-message:hover, .copy-message:focus-visible { opacity: 1; }
+		.message-actions { display: flex; min-height: 30px; align-items: center; justify-content: start; gap: 2px; margin-top: 1px; opacity: .66; transform: translateY(-2px); transition: opacity 140ms ease, transform 140ms ease; }
+		.user-message .message-actions { justify-content: end; }
+		.chat-message:hover .message-actions, .chat-message:focus-within .message-actions, .message-actions[data-active="true"] { opacity: 1; transform: translateY(0); }
+		.message-action { display: grid; width: 28px; min-width: 28px; min-height: 28px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 7px; color: var(--vscode-descriptionForeground); background: transparent; transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, transform 120ms ease; }
+		.message-action:hover { border-color: color-mix(in srgb, var(--vscode-widget-border) 74%, transparent); color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 88%, transparent); }
+		.message-action:active { transform: scale(.92); }
+		.message-action:focus-visible { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+		.message-action-icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+		.message-action .copied-icon { display: none; }
+		.message-action[data-copy-state="copied"] { color: var(--vscode-testing-iconPassed); }
+		.message-action[data-copy-state="copied"] .copy-icon { display: none; }
+		.message-action[data-copy-state="copied"] .copied-icon { display: block; animation: fikeya-action-confirm 180ms ease-out; }
 		.thinking-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-progressBar-background); animation: fikeya-pulse 1.2s ease-in-out infinite; }
 		.multi-agent-live { display: grid; width: min(100%, 560px); gap: 7px; padding: 9px 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editorWidget-background); }
 		.multi-agent-live > strong { font-size: 12px; }
@@ -2482,6 +2492,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.project-goal { width: 100%; }
 		.project-goal textarea { min-height: 64px; }
 		@keyframes fikeya-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+		@keyframes fikeya-action-confirm { 0% { opacity: 0; transform: scale(.65); } 100% { opacity: 1; transform: scale(1); } }
 			.agent-form { position: relative; z-index: 10; display: grid; width: calc(100% - 20px); max-width: 900px; gap: 0; margin: 0 auto 10px; padding: 8px; border: 1px solid var(--vscode-focusBorder); border-radius: 16px; background: var(--vscode-editor-background); box-shadow: 0 8px 26px color-mix(in srgb, var(--vscode-widget-shadow) 52%, transparent); transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
 			.agent-form.is-dropping { border-color: var(--vscode-button-background); box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-focusBorder) 38%, transparent), 0 12px 34px var(--vscode-widget-shadow); transform: translateY(-1px); }
 			.agent-form .composer textarea { min-height: 78px; max-height: 260px; border: 0; background: transparent; resize: none; }
@@ -2654,10 +2665,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			@media (max-width: ${fikeyaNarrowPanelMaximumWidth}px) { body[data-surface="editor"] .shell { padding-inline: 8px; } .masthead { padding-inline: 9px; } .workspace-label { max-width: 42%; } .mode-switcher { min-width: 0; grid-template-columns: 1fr; } .mode-switcher button { min-width: 0; padding-inline: 8px; } .run-strip, .statistics-grid { grid-template-columns: 1fr; } .run-metric.provider { grid-column: auto; } .agent-heading, .plan-heading { align-items: stretch; flex-direction: column; } .agent-heading-actions { justify-content: space-between; } .chat-plan-strip { grid-template-columns: 1fr; margin-inline: 8px; } .chat-plan-copy { grid-column: auto; } .chat-plan-strip button { width: 100%; } .chat-thread { min-height: 0; padding: 14px 10px; } .chat-message { max-width: 100%; } .message-meta { flex-wrap: wrap; } .message-meta time { margin-left: 0; } .agent-form { margin-inline: 8px; padding: 8px; } .control-grid { max-width: calc(100vw - 28px); padding: 8px; } .composer-actions { display: flex; } .composer-actions button { width: auto; } .agent-status, .run-details { margin-inline: 8px; } .receipt, .statistics-status dl { grid-template-columns: 1fr; } .table-scroll { overscroll-behavior-inline: contain; } .plan-step { grid-template-columns: 26px minmax(0, 1fr); } .plan-step-status { grid-column: 2; } .graph-controls { grid-template-columns: 1fr; } .graph-controls .actions { grid-column: 1; } .graph-viewport, .graph-canvas { min-height: 340px; } .graph-details { padding: 8px; } }
 		@media (max-height: 620px) { .chat-thread { gap: 10px; padding-block: 10px 8px; } .chat-empty { min-height: 0; place-content: start; } .prompt-suggestions { margin-top: 10px; } .agent-form { margin-bottom: 6px; } .composer textarea { min-height: 54px; max-height: 112px; } }
 		@media (max-width: 280px) { .provider-card { grid-template-columns: 1fr; } }
-		@media (prefers-reduced-motion: reduce) { .chat-thread { scroll-behavior: auto; } .thinking-dot { animation: none; opacity: 1; } }
+		@media (hover: none), (pointer: coarse) { .message-actions { opacity: 1; transform: none; } }
+		@media (prefers-reduced-motion: reduce) { .chat-thread { scroll-behavior: auto; } .thinking-dot, .message-action[data-copy-state="copied"] .copied-icon { animation: none; opacity: 1; } .message-actions, .message-action { transition: none; transform: none; } }
 	</style>
 </head>
-		<body data-surface="${surface}">
+		<body data-surface="${surface}" data-copied-label="${escapeHtml(vscode.l10n.t('Copied'))}">
 	<main class="shell">
 		<header class="masthead">
 			<div class="product-heading"><img class="product-mark" src="${logoUri}" alt=""><div><p class="eyebrow">${escapeHtml(strings.providerNeutralEditor)}</p><h1>${escapeHtml(strings.fikeya)}</h1></div><span class="workspace-label" title="${escapeHtml(strings.workspace)}">${escapeHtml(this.state.workspaceName)}</span></div>
@@ -2689,6 +2701,31 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			const command = layoutSwitch.value === 'project' ? 'fikeya.layout.project' : 'fikeya.layout.editor';
 			postUi('openCommand', { command });
 		});
+		const copiedLabel = document.body.dataset.copiedLabel || '';
+		const copyFeedbackTimers = new WeakMap();
+		const showCopiedState = button => {
+			const originalLabel = button.getAttribute('aria-label') || button.textContent || '';
+			const originalTitle = button.getAttribute('title') || originalLabel;
+			const originalText = button.matches('[data-copy-code]') ? button.textContent : '';
+			const existingTimer = copyFeedbackTimers.get(button);
+			if (existingTimer) clearTimeout(existingTimer);
+			button.dataset.copyState = 'copied';
+			button.setAttribute('aria-label', copiedLabel);
+			button.setAttribute('title', copiedLabel);
+			button.closest('.message-actions')?.setAttribute('data-active', 'true');
+			const status = button.closest('.message-actions')?.querySelector('[data-copy-status]');
+			if (status) status.textContent = copiedLabel;
+			if (button.matches('[data-copy-code]')) button.textContent = copiedLabel;
+			copyFeedbackTimers.set(button, setTimeout(() => {
+				delete button.dataset.copyState;
+				button.setAttribute('aria-label', originalLabel);
+				button.setAttribute('title', originalTitle);
+				button.closest('.message-actions')?.removeAttribute('data-active');
+				if (status) status.textContent = '';
+				if (button.matches('[data-copy-code]')) button.textContent = originalText;
+				copyFeedbackTimers.delete(button);
+			}, 1600));
+		};
 		const activePlanId = surfaceRoot?.dataset.planId || '';
 		const initialSurface = 'chat';
 		const workspaceModals = Array.from(document.querySelectorAll('[data-workspace-modal]'));
@@ -2899,12 +2936,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		document.querySelector('[data-conversation-clear]')?.addEventListener('click', () => postUi('clearConversation'));
 		document.querySelector('[data-conversation-restore]')?.addEventListener('click', () => postUi('restoreConversation'));
 		document.querySelectorAll('[data-copy-message]').forEach(button => button.addEventListener('click', () => {
-			const content = button.closest('.chat-message')?.querySelector('.message-content')?.textContent || '';
-			if (content) postUi('copyText', { text: content });
+			const messageId = button.dataset.copyMessage || '';
+			if (messageId) {
+				postUi('copyConversationMessage', { messageId });
+				showCopiedState(button);
+			}
 		}));
 		document.querySelectorAll('[data-copy-code]').forEach(button => button.addEventListener('click', () => {
 			const content = button.closest('.message-code')?.querySelector('code')?.textContent || '';
-			if (content) postUi('copyText', { text: content });
+			if (content) {
+				postUi('copyText', { text: content });
+				showCopiedState(button);
+			}
 		}));
 		document.querySelectorAll('[data-review-diff]').forEach(button => button.addEventListener('click', () => {
 			const content = button.closest('.message-code')?.querySelector('code')?.textContent || '';
@@ -4158,7 +4201,13 @@ function renderConversationMessage(message: FikeyaConversationMessage): string {
 			return `<span class="message-attachment"><span aria-hidden="true">${escapeHtml(icon)}</span><strong title="${escapeHtml(label)}">${escapeHtml(label)}</strong><span>${escapeHtml(formatByteCount(attachment.sizeBytes))}</span></span>`;
 		}).join('')}</div>`
 		: '';
-	return `<article class="chat-message ${className}" data-tone="${message.tone ?? 'normal'}"><div class="message-meta"><strong>${escapeHtml(roleLabel)}</strong>${provider}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatConversationTime(message.createdAt))}</time></div>${attachments}<div class="message-content">${content}</div><div class="message-actions"><button class="quiet copy-message" data-copy-message type="button" aria-label="${escapeHtml(vscode.l10n.t('Copy message'))}" title="${escapeHtml(vscode.l10n.t('Copy message'))}"><span aria-hidden="true">⧉</span></button></div></article>`;
+	const actions = message.role === 'notice' ? '' : renderConversationMessageActions(message.id);
+	return `<article class="chat-message ${className}" data-tone="${message.tone ?? 'normal'}"><div class="message-meta"><strong>${escapeHtml(roleLabel)}</strong>${provider}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatConversationTime(message.createdAt))}</time></div>${attachments}<div class="message-content">${content}</div>${actions}</article>`;
+}
+
+function renderConversationMessageActions(messageId: string): string {
+	const copyLabel = vscode.l10n.t('Copy message');
+	return `<div class="message-actions" role="toolbar" aria-label="${escapeHtml(vscode.l10n.t('Message actions'))}"><button class="message-action" data-copy-message="${escapeHtml(messageId)}" type="button" aria-label="${escapeHtml(copyLabel)}" title="${escapeHtml(copyLabel)}"><svg class="message-action-icon copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M5 13H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"></path></svg><svg class="message-action-icon copied-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-9"></path></svg></button><span class="sr-only" data-copy-status aria-live="polite"></span></div>`;
 }
 
 function renderChatRunOutcome(outcome: FikeyaCodingOutcome): string {

@@ -26,8 +26,8 @@ export function buildTeamLeadPrompt(task: string, advisors: readonly FikeyaTeamA
 		'Specialist findings:'
 	].join('\n');
 	let prompt = header;
-	for (const advisor of advisors) {
-		const sectionHeader = `\n\n## ${advisor.name} (${advisor.role})\n`;
+	for (const advisor of groupEquivalentAdvisorResults(advisors)) {
+		const sectionHeader = `\n\n## ${advisor.names.join(' + ')} (${advisor.roles.join(', ')})\n`;
 		const remaining = maximumLeadPromptBytes - reservedInstructionBytes - Buffer.byteLength(prompt + sectionHeader, 'utf8');
 		if (remaining <= 0) {
 			break;
@@ -45,6 +45,32 @@ export function buildTeamLeadPrompt(task: string, advisors: readonly FikeyaTeamA
 		'- State what changed, what was verified, and any remaining limitation.'
 	].join('\n');
 	return truncateUtf8(prompt, maximumLeadPromptBytes - Buffer.byteLength(instruction, 'utf8')) + instruction;
+}
+
+interface GroupedAdvisorResult {
+	readonly names: string[];
+	readonly roles: string[];
+	readonly output: string;
+}
+
+/** Collapses equivalent specialist findings before they consume another lead-model token. */
+function groupEquivalentAdvisorResults(advisors: readonly FikeyaTeamAdvisorResult[]): readonly GroupedAdvisorResult[] {
+	const grouped: GroupedAdvisorResult[] = [];
+	for (const advisor of advisors) {
+		const output = advisor.output.replace(/\r\n/g, '\n').trim();
+		const existing = grouped.find(candidate => candidate.output === output);
+		if (existing) {
+			if (!existing.names.includes(advisor.name)) {
+				existing.names.push(advisor.name);
+			}
+			if (!existing.roles.includes(advisor.role)) {
+				existing.roles.push(advisor.role);
+			}
+			continue;
+		}
+		grouped.push({ names: [advisor.name], roles: [advisor.role], output });
+	}
+	return grouped;
 }
 
 function truncateUtf8(value: string, maximumBytes: number): string {

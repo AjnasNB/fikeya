@@ -74,6 +74,9 @@ export function appendConversationMessage(
 		...message,
 		content: boundMessageContent(message.content)
 	};
+	if (boundedMessage.role === 'assistant' && hasAssistantDuplicateInCurrentTurn(messages, boundedMessage.content)) {
+		return messages;
+	}
 	const retained = [...messages.slice(-(maximumMessages - 1)), boundedMessage];
 	let totalCharacters = retained.reduce((total, item) => total + item.content.length, 0);
 	while (retained.length > 1 && totalCharacters > maximumConversationCharacters) {
@@ -81,6 +84,19 @@ export function appendConversationMessage(
 		totalCharacters -= removed?.content.length ?? 0;
 	}
 	return retained;
+}
+
+/** Prevents parallel providers or repeated completion events from rendering one answer twice. */
+function hasAssistantDuplicateInCurrentTurn(messages: readonly FikeyaConversationMessage[], content: string): boolean {
+	const lastUserIndex = messages.findLastIndex(message => message.role === 'user');
+	const comparableContent = normalizeComparableAnswer(content);
+	return messages.slice(lastUserIndex + 1).some(message =>
+		message.role === 'assistant' && normalizeComparableAnswer(message.content) === comparableContent
+	);
+}
+
+function normalizeComparableAnswer(content: string): string {
+	return content.replace(/\r\n/g, '\n').trim();
 }
 
 /**

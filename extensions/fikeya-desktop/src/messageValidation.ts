@@ -41,6 +41,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'planAction'; readonly action: 'review' | 'approve-all' | 'approve-step' | 'run' | 'resume' | 'cancel'; readonly stepId?: string }
 	| { readonly type: 'clearConversation' }
 	| { readonly type: 'restoreConversation' }
+	| { readonly type: 'copyConversationMessage'; readonly messageId: string }
 	| { readonly type: 'copyText'; readonly text: string }
 	| { readonly type: 'openFile'; readonly path: string }
 	| { readonly type: 'openExternal'; readonly url: string }
@@ -88,6 +89,7 @@ const maximumPromptBytes = 262_144;
 const maximumPlanSpecificationBytes = 1_048_576;
 const providerNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const requestIdPattern = /^[a-zA-Z0-9_-]{8,128}$/;
+const conversationMessageIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
 const supportedPlanTools = new Set([
 	'browser.assert_text',
@@ -165,6 +167,10 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'setComposerAttachmentState':
 			return typeof value.hasAttachments === 'boolean'
 				? { type: value.type, hasAttachments: value.hasAttachments }
+				: undefined;
+		case 'copyConversationMessage':
+			return typeof value.messageId === 'string' && conversationMessageIdPattern.test(value.messageId)
+				? { type: value.type, messageId: value.messageId }
 				: undefined;
 		case 'copyText':
 			return typeof value.text === 'string' && Buffer.byteLength(value.text, 'utf8') <= maximumPromptBytes
