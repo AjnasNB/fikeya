@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,13 +153,22 @@ class _FakeCodingRunner:
         self.modes: list[object] = []
 
     async def run(self, **kwargs: object) -> object:
-        self.prompts.append(str(kwargs["prompt"]))
+        prompt = str(kwargs["prompt"])
+        self.prompts.append(prompt)
         self.modes.append(kwargs["mode"])
         if not self.outputs:
             raise AssertionError("Unexpected coding audit call.")
         output = self.outputs.pop(0)
         if isinstance(output, Exception):
             raise output
+        match = re.search(
+            r'"requiredEvidenceSha256":"(sha256:[0-9a-f]{64})"', prompt
+        )
+        assert match is not None
+        value = json.loads(output)
+        for check in value["checks"]:
+            check["evidenceSha256"] = match.group(1)
+        output = json.dumps(value, separators=(",", ":"), sort_keys=True)
         return _FakeCodingResult(status="completed", output=output)
 
 

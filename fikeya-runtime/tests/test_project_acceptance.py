@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import re
 import socket
 import threading
 from dataclasses import dataclass
@@ -67,7 +68,7 @@ SCRIPT = """const button=document.querySelector('#launch');const status=document
 """
 
 
-def _site_plan() -> dict[str, object]:
+def _site_plan(browser_url: str | None = None) -> dict[str, object]:
     files = (("index.html", INDEX), ("styles.css", STYLES), ("app.js", SCRIPT))
     steps: list[dict[str, object]] = []
     for index, (path, content) in enumerate(files, start=1):
@@ -92,6 +93,44 @@ def _site_plan() -> dict[str, object]:
                 },
             }
         )
+    if browser_url is not None:
+        browser_calls: tuple[tuple[str, str, dict[str, object]], ...] = (
+            ("navigate", "browser.navigate", {"url": browser_url}),
+            (
+                "assert-ready",
+                "browser.assert_text",
+                {"text": "Simulation ready"},
+            ),
+            ("click-launch", "browser.click", {"selector": "#launch"}),
+            (
+                "assert-running",
+                "browser.assert_text",
+                {"text": "Simulation running"},
+            ),
+            (
+                "capture",
+                "browser.screenshot",
+                {"path": "artifacts/falling-star.png"},
+            ),
+            ("close", "browser.close", {}),
+        )
+        dependency = steps[-1]["stepId"]
+        for suffix, tool_name, arguments in browser_calls:
+            step_id = f"browser-{suffix}"
+            steps.append(
+                {
+                    "stepId": step_id,
+                    "title": f"Verify the site with {tool_name}",
+                    "dependsOn": [dependency],
+                    "toolCall": {
+                        "arguments": arguments,
+                        "callId": f"call-{step_id}",
+                        "name": tool_name,
+                    },
+                    "verify": {"expectedStatus": "ok"},
+                }
+            )
+            dependency = step_id
     return {"schemaVersion": 1, "title": "Build the falling-star site", "steps": steps}
 
 
@@ -117,11 +156,14 @@ def _audit(phase: AutonomyStage) -> str:
 
 
 class _Planner:
-    def __init__(self, plans: PlanService) -> None:
+    def __init__(self, plans: PlanService, browser_url: str | None = None) -> None:
         self.plans = plans
+        self.browser_url = browser_url
 
     def propose(self, **_kwargs: object) -> object:
-        return SimpleNamespace(plan=self.plans.create(_site_plan()))
+        return SimpleNamespace(
+            plan=self.plans.create(_site_plan(self.browser_url))
+        )
 
 
 @dataclass(frozen=True)
@@ -141,7 +183,17 @@ class _Auditor:
 
     async def run(self, **kwargs: object) -> object:
         self.modes.append(kwargs["mode"])
-        return _CodingResult("completed", _audit(self.phases.pop(0)))
+        prompt = str(kwargs["prompt"])
+        match = re.search(
+            r'"requiredEvidenceSha256":"(sha256:[0-9a-f]{64})"', prompt
+        )
+        assert match is not None
+        value = json.loads(_audit(self.phases.pop(0)))
+        for check in value["checks"]:
+            check["evidenceSha256"] = match.group(1)
+        return _CodingResult(
+            "completed", json.dumps(value, separators=(",", ":"), sort_keys=True)
+        )
 
 
 async def _approve_once(_request: dict[str, object]) -> ApprovalDecision:
@@ -222,27 +274,73 @@ def test_falling_star_site_is_browser_interactive_when_playwright_is_available(
         pytest.skip("optional Python Playwright dependency is not installed")
     root = tmp_path / "browser-site"
     root.mkdir()
-    (root / "index.html").write_text(INDEX, encoding="utf-8")
-    (root / "styles.css").write_text(STYLES, encoding="utf-8")
-    (root / "app.js").write_text(SCRIPT, encoding="utf-8")
+    try:
+        availability_probe = BrowserSession(root, allow_private=True)
+    except BrowserUnavailable as error:
+        pytest.skip(str(error))
+    else:
+        availability_probe.close()
     handler = partial(_QuietHandler, directory=str(root))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    browser = BrowserSession(root, allow_private=True)
     try:
+        workspace, _ = initialize_workspace(root)
+        plans = PlanService(workspace)
+        auditor = _Auditor()
+        loop = AutonomousProjectLoop(
+            workspace,
+            _Planner(
+                plans,
+                f"http://127.0.0.1:{server.server_port}/",
+            ),
+            auditor,
+            plans=plans,
+        )
+        goal = "Build and browser-verify an animated star falling toward Earth."
+        record = loop.start(goal)
+        options = ProviderOptions(
+            provider_name="fixture",
+            allow_network=False,
+            allow_private_browser=True,
+        )
+        paused = asyncio.run(
+            loop.advance(
+                record.run_id,
+                goal=goal,
+                provider=options,
+                cancellation=CancellationToken(),
+                approval_handler=_approve_once,
+            )
+        )
+        assert paused.plan_id is not None
+        plans.review(paused.plan_id)
+        plans.approve(paused.plan_id, approve_all=True)
+        loop.resume(record.run_id)
         try:
-            browser.navigate(f"http://127.0.0.1:{server.server_port}/")
+            completed = asyncio.run(
+                loop.advance(
+                    record.run_id,
+                    goal=goal,
+                    provider=options,
+                    cancellation=CancellationToken(),
+                    approval_handler=_approve_once,
+                )
+            )
         except BrowserUnavailable as error:
             pytest.skip(str(error))
-        assert "Simulation ready" in (browser.inspect("text").text or "")
-        browser.click("#launch")
-        assert "Simulation running" in (browser.inspect("text").text or "")
-        screenshot = browser.screenshot("artifacts/falling-star.png")
-        assert screenshot.screenshot_path == "artifacts/falling-star.png"
-        assert (root / screenshot.screenshot_path).is_file()
+        assert completed.stage is AutonomyStage.COMPLETED
+        assert completed.completion_evidence_ready
+        assert (root / "artifacts" / "falling-star.png").is_file()
+        executed = plans.store.load(paused.plan_id)
+        browser_receipts = [
+            step.execution
+            for step in executed.steps
+            if step.tool_call.name.startswith("browser.")
+        ]
+        assert all(receipt is not None for receipt in browser_receipts)
+        assert len(browser_receipts) == 6
     finally:
-        browser.close()
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)

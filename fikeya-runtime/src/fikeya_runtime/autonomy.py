@@ -11,13 +11,16 @@ callers and the supplied coding-agent approval handler.
 from __future__ import annotations
 
 import enum
+import hashlib
 import json
+import os
 import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Protocol, cast
 
 from fikeya_agent_core import ApprovalDecision
@@ -39,6 +42,11 @@ _MAX_GOAL_BYTES = 65_536
 _MAX_FEEDBACK_BYTES = 16_384
 _MAX_AUDIT_BYTES = 262_144
 _MAX_CHECKS = 64
+_MAX_EVIDENCE_FILES = 20_000
+_MAX_EVIDENCE_BYTES = 1_073_741_824
+_EVIDENCE_IGNORED_DIRECTORIES = frozenset(
+    {".fikeya", ".git", ".hg", ".svn", "__pycache__", "node_modules"}
+)
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _READ_ONLY_TOOLS = frozenset(
     {"workspace.list_files", "workspace.read_file", "workspace.search_text"}
@@ -180,6 +188,7 @@ class ProviderOptions:
 
     provider_name: str
     allow_network: bool
+    allow_private_browser: bool = False
     timeout: float = 120.0
     max_output_tokens: int = 4_096
     memory_mode: str = "auto"
@@ -190,6 +199,8 @@ class ProviderOptions:
             raise ConfigurationError("provider_name must not be empty.")
         if not isinstance(self.allow_network, bool):
             raise ConfigurationError("allow_network must be boolean.")
+        if not isinstance(self.allow_private_browser, bool):
+            raise ConfigurationError("allow_private_browser must be boolean.")
         if isinstance(self.timeout, bool) or not 1 <= self.timeout <= 600:
             raise ConfigurationError("timeout must be between 1 and 600 seconds.")
         if (
@@ -340,6 +351,7 @@ class AuditBinding:
     result_sha256: str
     accepted: bool
     criteria_sha256: str | None = None
+    execution_evidence_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if self.phase not in {
@@ -362,11 +374,26 @@ class AuditBinding:
             raise ConfigurationError(
                 "Only a verification binding may retain completion criteria."
             )
+        if self.phase is AutonomyStage.AUDIT_PLAN:
+            if self.execution_evidence_sha256 is not None:
+                raise ConfigurationError(
+                    "Plan audits cannot bind post-execution evidence."
+                )
+        else:
+            if self.execution_evidence_sha256 is None:
+                raise ConfigurationError(
+                    "Code and verification audits require execution evidence."
+                )
+            _digest(
+                self.execution_evidence_sha256,
+                "audit execution evidence digest",
+            )
 
     def as_json(self) -> dict[str, object]:
         return {
             "accepted": self.accepted,
             "criteriaSha256": self.criteria_sha256,
+            "executionEvidenceSha256": self.execution_evidence_sha256,
             "phase": self.phase.value,
             "planSpecSha256": self.plan_spec_sha256,
             "resultSha256": self.result_sha256,
@@ -380,6 +407,7 @@ class AuditBinding:
             {
                 "accepted",
                 "criteriaSha256",
+                "executionEvidenceSha256",
                 "phase",
                 "planSpecSha256",
                 "resultSha256",
@@ -396,6 +424,9 @@ class AuditBinding:
             accepted=accepted,
             criteria_sha256=_optional_string(
                 item, "criteriaSha256", "audit binding"
+            ),
+            execution_evidence_sha256=_optional_string(
+                item, "executionEvidenceSha256", "audit binding"
             ),
         )
 
@@ -594,14 +625,21 @@ class AutonomyRecord:
             (self.code_audit, AutonomyStage.AUDIT_CODE),
             (self.verification, AutonomyStage.VERIFY),
         )
-        return all(
+        bindings_ready = all(
             binding is not None
             and binding.phase is phase
             and binding.accepted
             and binding.plan_spec_sha256 == digest
             for binding, phase in expected
-        ) and self.verification is not None and self.verification.criteria_sha256 == (
-            _criteria_sha256(self.completion_criteria)
+        )
+        if not bindings_ready or self.code_audit is None or self.verification is None:
+            return False
+        execution_evidence = self.code_audit.execution_evidence_sha256
+        return (
+            execution_evidence is not None
+            and self.verification.execution_evidence_sha256 == execution_evidence
+            and self.verification.criteria_sha256
+            == _criteria_sha256(self.completion_criteria)
         )
 
 
@@ -636,6 +674,14 @@ class AutonomyStore:
                     PRIMARY KEY (run_id, revision),
                     FOREIGN KEY (run_id) REFERENCES autonomous_project_loops(run_id)
                         ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS autonomous_audit_envelopes (
+                    result_sha256 TEXT PRIMARY KEY,
+                    phase TEXT NOT NULL CHECK (phase IN (
+                        'audit_plan', 'audit_code', 'verify'
+                    )),
+                    document_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS autonomous_project_loops_updated
                     ON autonomous_project_loops(updated_at);
@@ -784,6 +830,60 @@ class AutonomyStore:
             for row in rows
         )
 
+    def save_audit(self, audit: AuditResult) -> str:
+        """Persist one canonical audit envelope by its reproducible content hash."""
+
+        document = stable_json(audit.as_json())
+        digest = sha256_text(document)
+        if digest != audit.result_sha256:
+            raise StateError("Audit envelope digest is inconsistent.")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO autonomous_audit_envelopes (
+                    result_sha256, phase, document_json, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (digest, audit.phase.value, document, utc_now()),
+            )
+            row = connection.execute(
+                """
+                SELECT phase, document_json FROM autonomous_audit_envelopes
+                WHERE result_sha256 = ?
+                """,
+                (digest,),
+            ).fetchone()
+        if (
+            row is None
+            or str(row["phase"]) != audit.phase.value
+            or str(row["document_json"]) != document
+        ):
+            raise StateError("Audit envelope hash collided with different content.")
+        return digest
+
+    def load_audit(self, result_sha256: str) -> AuditResult:
+        """Resolve and integrity-check one previously persisted audit envelope."""
+
+        _digest(result_sha256, "audit result digest")
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT phase, document_json FROM autonomous_audit_envelopes
+                WHERE result_sha256 = ?
+                """,
+                (result_sha256,),
+            ).fetchone()
+        if row is None:
+            raise StateError("Unknown audit envelope.")
+        document = str(row["document_json"])
+        if sha256_text(document) != result_sha256:
+            raise StateError("Persisted audit envelope failed its integrity check.")
+        try:
+            phase = AutonomyStage(str(row["phase"]))
+            return decode_audit_result(document, expected_phase=phase)
+        except (AutonomyProtocolError, ValueError) as error:
+            raise StateError("Persisted audit envelope is invalid.") from error
+
 
 class AutonomousProjectLoop:
     """Drive PLAN→AUDIT_PLAN→EXECUTE→AUDIT_CODE→VERIFY safely."""
@@ -890,7 +990,11 @@ class AutonomousProjectLoop:
                     AutonomyStage.AUDIT_PLAN,
                 )
             elif record.stage is AutonomyStage.EXECUTE:
-                record = await self._execute(record, cancellation)
+                record = await self._execute(
+                    record,
+                    cancellation,
+                    allow_private_browser=provider.allow_private_browser,
+                )
             elif record.stage is AutonomyStage.AUDIT_CODE:
                 record = await self._audit(
                     record,
@@ -992,7 +1096,18 @@ class AutonomousProjectLoop:
         phase: AutonomyStage,
     ) -> AutonomyRecord:
         plan = self._current_plan(record)
-        prompt = _audit_prompt(phase, goal, plan, record.completion_criteria)
+        required_evidence_sha256 = (
+            plan.spec_sha256
+            if phase is AutonomyStage.AUDIT_PLAN
+            else self._execution_evidence_sha256(plan)
+        )
+        prompt = _audit_prompt(
+            phase,
+            goal,
+            plan,
+            record.completion_criteria,
+            required_evidence_sha256,
+        )
 
         async def guarded_approval(request: dict[str, object]) -> ApprovalDecision:
             if (
@@ -1024,6 +1139,13 @@ class AutonomousProjectLoop:
             if result.status != "completed":
                 raise _RetryableStageError("Coding audit did not complete.")
             audit = decode_audit_result(result.output, expected_phase=phase)
+            if any(
+                check.evidence_sha256 != required_evidence_sha256
+                for check in audit.checks
+            ):
+                raise AutonomyProtocolError(
+                    "Audit checks must cite the exact required execution evidence."
+                )
             if phase is AutonomyStage.VERIFY:
                 expected = tuple(
                     criterion.criterion_id for criterion in record.completion_criteria
@@ -1039,6 +1161,7 @@ class AutonomousProjectLoop:
             return self._provider_failure(record, error)
         if cancellation.cancelled:
             return self._cancelled(record, "person cancelled")
+        self.store.save_audit(audit)
         assert record.plan_spec_sha256 is not None
         binding = AuditBinding(
             phase=phase,
@@ -1049,6 +1172,11 @@ class AutonomousProjectLoop:
                 _criteria_sha256(record.completion_criteria)
                 if phase is AutonomyStage.VERIFY
                 else None
+            ),
+            execution_evidence_sha256=(
+                None
+                if phase is AutonomyStage.AUDIT_PLAN
+                else required_evidence_sha256
             ),
         )
         binding_field = {
@@ -1083,12 +1211,28 @@ class AutonomousProjectLoop:
         persisted = self._current_plan(record)
         if persisted.status is not PlanStatus.SUCCEEDED:
             return self._failed(record, "completion_plan_not_succeeded")
+        current_evidence = self._execution_evidence_sha256(persisted)
+        if (
+            record.code_audit is None
+            or record.code_audit.execution_evidence_sha256 != current_evidence
+            or record.verification is None
+            or record.verification.execution_evidence_sha256 != current_evidence
+        ):
+            return self._failed(record, "completion_execution_evidence_changed")
+        for accepted in (record.plan_audit, record.code_audit, record.verification):
+            assert accepted is not None
+            try:
+                self.store.load_audit(accepted.result_sha256)
+            except StateError:
+                return self._failed(record, "completion_audit_envelope_missing")
         return self._transition(record, stage=AutonomyStage.COMPLETED)
 
     async def _execute(
         self,
         record: AutonomyRecord,
         cancellation: CancellationToken,
+        *,
+        allow_private_browser: bool = False,
     ) -> AutonomyRecord:
         plan = self._current_plan(record)
         if plan.status is PlanStatus.DRAFT:
@@ -1112,6 +1256,7 @@ class AutonomousProjectLoop:
                 plan.plan_id,
                 resume=True,
                 cancellation=cancellation,
+                allow_private_browser=allow_private_browser,
             )
         except (CancellationError, CoreCancellationError):
             return self._cancelled(record, "person cancelled")
@@ -1240,6 +1385,20 @@ class AutonomousProjectLoop:
             raise StateError("Autonomy plan digest changed unexpectedly.")
         return plan
 
+    def _execution_evidence_sha256(self, plan: PlanRecord) -> str:
+        if plan.status is not PlanStatus.SUCCEEDED:
+            raise StateError("Post-execution audit requires a succeeded plan.")
+        return sha256_text(
+            stable_json(
+                {
+                    "planRecordSha256": self.plans.store.record_sha256(plan),
+                    "workspaceSnapshotSha256": _workspace_snapshot_sha256(
+                        self.workspace
+                    ),
+                }
+            )
+        )
+
     def _recover_existing_plan(self, error: StateError) -> PlanRecord | None:
         prefix = "Plan already exists: "
         message = str(error)
@@ -1317,6 +1476,7 @@ def _audit_prompt(
     goal: str,
     plan: PlanRecord,
     completion_criteria: tuple[CompletionCriterion, ...],
+    required_evidence_sha256: str,
 ) -> str:
     purpose = {
         AutonomyStage.AUDIT_PLAN: (
@@ -1350,6 +1510,7 @@ def _audit_prompt(
         ],
         "goal": goal,
         "plan": plan.as_json(),
+        "requiredEvidenceSha256": required_evidence_sha256,
         "role": "untrusted-project-data",
     }
     return (
@@ -1357,9 +1518,69 @@ def _audit_prompt(
         f"or code fence: {stable_json(contract)}. An accept verdict requires at least one "
         "check and every check must pass. A revise verdict requires at least one failing "
         "check. During verify, checks must appear in completionCriteria order and each "
-        "check criterion must equal the corresponding criterionId exactly. Task data "
+        "check criterion must equal the corresponding criterionId exactly. Every check "
+        "must cite requiredEvidenceSha256 exactly. Task data "
         f"follows:\n{stable_json(task)}"
     )
+
+
+def _workspace_snapshot_sha256(workspace: Workspace) -> str:
+    """Hash one bounded, symlink-free project tree outside Fikeya metadata."""
+
+    manifest: list[dict[str, object]] = []
+    total_bytes = 0
+    for directory, directories, files in os.walk(
+        workspace.root, followlinks=False
+    ):
+        base = Path(directory)
+        retained_directories: list[str] = []
+        for name in sorted(directories):
+            candidate = base / name
+            if name.casefold() in _EVIDENCE_IGNORED_DIRECTORIES:
+                continue
+            if candidate.is_symlink():
+                raise StateError(
+                    "Workspace evidence cannot include symbolic-link directories."
+                )
+            retained_directories.append(name)
+        directories[:] = retained_directories
+        for name in sorted(files):
+            candidate = base / name
+            if candidate.is_symlink():
+                raise StateError(
+                    "Workspace evidence cannot include symbolic-link files."
+                )
+            try:
+                resolved = workspace.boundary.resolve(
+                    candidate.relative_to(workspace.root), must_exist=True
+                )
+                if not resolved.is_file():
+                    raise StateError(
+                        "Workspace evidence encountered a non-regular file."
+                    )
+                size = resolved.stat().st_size
+                total_bytes += size
+                if (
+                    len(manifest) >= _MAX_EVIDENCE_FILES
+                    or total_bytes > _MAX_EVIDENCE_BYTES
+                ):
+                    raise StateError(
+                        "Workspace exceeds the bounded completion-evidence budget."
+                    )
+                digest = hashlib.sha256()
+                with resolved.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(64 * 1024), b""):
+                        digest.update(chunk)
+                manifest.append(
+                    {
+                        "path": resolved.relative_to(workspace.root).as_posix(),
+                        "sha256": f"sha256:{digest.hexdigest()}",
+                        "size": size,
+                    }
+                )
+            except OSError as error:
+                raise StateError("Workspace evidence could not read a file.") from error
+    return sha256_text(stable_json({"files": manifest, "totalBytes": total_bytes}))
 
 
 def _goal(value: str) -> str:
