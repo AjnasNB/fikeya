@@ -629,6 +629,13 @@ class BrowserSession:
             raise BrowserSecurityError(
                 "Browser screenshot path must remain inside the workspace."
             ) from error
+        if any(
+            part.casefold() == ".fikeya"
+            for part in target.relative_to(self._boundary.root).parts
+        ):
+            raise BrowserSecurityError(
+                "Browser screenshots cannot modify Fikeya workspace metadata."
+            )
         value = self._driver.screenshot(timeout_ms=timeout)
         if len(value) > MAX_SCREENSHOT_BYTES:
             raise BrowserLimitError(

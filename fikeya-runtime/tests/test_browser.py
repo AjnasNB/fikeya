@@ -253,6 +253,8 @@ def test_screenshot_path_size_and_count_are_bounded(tmp_path: Path) -> None:
         browser.screenshot(tmp_path / "absolute.png")
     with pytest.raises(BrowserSecurityError, match=".png"):
         browser.screenshot("artifacts/page.jpg")
+    with pytest.raises(BrowserSecurityError, match="metadata"):
+        browser.screenshot(".FIKEYA/browser.png")
 
     driver.screenshot_bytes = PNG + b"x" * MAX_SCREENSHOT_BYTES
     with pytest.raises(BrowserLimitError, match=str(MAX_SCREENSHOT_BYTES)):
