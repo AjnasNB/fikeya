@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import socket
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +33,7 @@ from fikeya_runtime.util import sha256_bytes, sha256_text
 
 PUBLIC_ADDRESS = "93.184.216.34"
 PNG = b"\x89PNG\r\n\x1a\nfixture"
+_ORIGINAL_SOCKET_CONNECT = socket.socket.connect
 
 
 class FakeDriver:
@@ -318,7 +320,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
         return
 
 
-def test_playwright_local_fixture_when_browser_is_available(tmp_path: Path) -> None:
+def test_playwright_local_fixture_when_browser_is_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(socket.socket, "connect", _ORIGINAL_SOCKET_CONNECT)
     if importlib.util.find_spec("playwright") is None:
         pytest.skip("optional Python Playwright dependency is not installed")
 
