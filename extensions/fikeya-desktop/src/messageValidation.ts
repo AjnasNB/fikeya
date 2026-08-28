@@ -3,17 +3,22 @@
  *  Copyright (C) 2026 Fikeya contributors
  *--------------------------------------------------------------------------------------------*/
 
+import type { FikeyaUiNotification } from '@fikeya/protocol';
 import type { FikeyaPlanSpecification } from './runtime';
 import { agentComposerConstraints, FikeyaAgentMemoryMode, FikeyaAgentMode, isAgentComposerNumberValid } from './agentComposer';
+import { FikeyaTextFileInput, parseTextFileInputs } from './fileInputs';
+import { FikeyaImageInput, parseImageInputs } from './imageInputs';
 
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
+	| { readonly type: 'setComposerAttachmentState'; readonly hasAttachments: boolean }
+	| { readonly type: 'configureProviderProfile'; readonly providerId: string; readonly profileLabel: string; readonly baseUrl: string; readonly model: string; readonly secret?: string }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly allowNetwork: true }
-	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly prompt: string; readonly maxConcurrency: number; readonly allowNetwork: true }
-	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
+	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly leadProviderName: string; readonly prompt: string; readonly maxConcurrency: number; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
@@ -44,6 +49,8 @@ export type FikeyaCommand =
 	| 'fikeya.mode.lab'
 	| 'fikeya.view.usage'
 	| 'fikeya.view.setup'
+	| 'fikeya.layout.project'
+	| 'fikeya.layout.editor'
 	| 'workbench.action.files.openFolder';
 
 const allowedCommands: readonly FikeyaCommand[] = [
@@ -59,6 +66,8 @@ const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.mode.lab',
 	'fikeya.view.usage',
 	'fikeya.view.setup',
+	'fikeya.layout.project',
+	'fikeya.layout.editor',
 	'workbench.action.files.openFolder'
 ];
 
@@ -70,6 +79,7 @@ const supportedPlanTools = new Set(['process.run', 'workspace.list_files', 'work
 
 /** Parses one untrusted webview message into the small command surface the extension accepts. */
 export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | undefined {
+	value = unwrapUiNotification(value);
 	if (!isRecord(value) || typeof value.type !== 'string') {
 		return undefined;
 	}
@@ -92,6 +102,35 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'refreshStatistics':
 		case 'refreshMemory':
 			return { type: value.type };
+		case 'configureProviderProfile': {
+			if (!isProviderName(value.providerId)
+				|| typeof value.profileLabel !== 'string'
+				|| value.profileLabel.trim().length < 1
+				|| value.profileLabel.trim().length > 80
+				|| value.profileLabel.trim() !== value.profileLabel
+				|| typeof value.baseUrl !== 'string'
+				|| value.baseUrl.length > 4_096
+				|| value.baseUrl.trim() !== value.baseUrl
+				|| typeof value.model !== 'string'
+				|| value.model.trim().length < 1
+				|| value.model.trim().length > 160
+				|| value.model.trim() !== value.model
+				|| (value.secret !== undefined && (typeof value.secret !== 'string' || value.secret.length < 1 || value.secret.length > 16_384 || value.secret.trim() !== value.secret))) {
+				return undefined;
+			}
+			return {
+				type: value.type,
+				providerId: value.providerId,
+				profileLabel: value.profileLabel,
+				baseUrl: value.baseUrl,
+				model: value.model,
+				...(value.secret === undefined ? {} : { secret: value.secret })
+			};
+		}
+		case 'setComposerAttachmentState':
+			return typeof value.hasAttachments === 'boolean'
+				? { type: value.type, hasAttachments: value.hasAttachments }
+				: undefined;
 		case 'copyText':
 			return typeof value.text === 'string' && Buffer.byteLength(value.text, 'utf8') <= maximumPromptBytes
 				? { type: value.type, text: value.text }
@@ -124,6 +163,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		}
 		case 'runAgent':
 		case 'proposePlan': {
+			const images = parseImageInputs(value.images);
+			const files = parseTextFileInputs(value.files);
 			if (!isProviderName(value.providerName)
 				|| typeof value.prompt !== 'string'
 				|| value.prompt.trim().length === 0
@@ -134,6 +175,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| typeof value.contextMaxCharacters !== 'number'
 				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
 				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
+				|| images === undefined
+				|| files === undefined
 				|| (value.type === 'runAgent' && value.mode !== 'agent' && value.mode !== 'research')) {
 				return undefined;
 			}
@@ -143,6 +186,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				maxOutputTokens: value.maxOutputTokens,
 				contextMaxCharacters: value.contextMaxCharacters,
 				memoryMode: value.memoryMode as FikeyaAgentMemoryMode,
+				images,
+				files,
 				allowNetwork: true as const
 			};
 			return value.type === 'runAgent'
@@ -150,7 +195,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				: { type: 'proposePlan', ...request };
 		}
 		case 'runMultiAgent': {
-			if (typeof value.prompt !== 'string'
+			if (!isProviderName(value.leadProviderName)
+				|| typeof value.prompt !== 'string'
 				|| value.prompt.trim().length === 0
 				|| Buffer.byteLength(value.prompt, 'utf8') > maximumPromptBytes
 				|| value.allowNetwork !== true
@@ -158,6 +204,11 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| !Number.isSafeInteger(value.maxConcurrency)
 				|| value.maxConcurrency < 1
 				|| value.maxConcurrency > 8
+				|| typeof value.maxOutputTokens !== 'number'
+				|| !isAgentComposerNumberValid(value.maxOutputTokens, agentComposerConstraints.maxOutputTokens)
+				|| typeof value.contextMaxCharacters !== 'number'
+				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
+				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
 				|| !Array.isArray(value.selectedAgentIds)
 				|| value.selectedAgentIds.length < 1
 				|| value.selectedAgentIds.length > 16
@@ -168,8 +219,12 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 			return {
 				type: value.type,
 				selectedAgentIds: value.selectedAgentIds as string[],
+				leadProviderName: value.leadProviderName,
 				prompt: value.prompt,
 				maxConcurrency: value.maxConcurrency,
+				maxOutputTokens: value.maxOutputTokens,
+				contextMaxCharacters: value.contextMaxCharacters,
+				memoryMode: value.memoryMode as FikeyaAgentMemoryMode,
 				allowNetwork: true
 			};
 		}
@@ -331,6 +386,25 @@ function hasBoundedFiniteJsonEncoding(value: unknown, maximumBytes: number): boo
 
 function isProviderName(value: unknown): value is string {
 	return typeof value === 'string' && providerNamePattern.test(value);
+}
+
+function unwrapUiNotification(value: unknown): unknown {
+	if (!isRecord(value) || !('jsonrpc' in value || 'method' in value || 'params' in value)) {
+		return value;
+	}
+	const envelope = value as Partial<FikeyaUiNotification>;
+	if (envelope.jsonrpc !== '2.0'
+		|| typeof envelope.method !== 'string'
+		|| !envelope.method.startsWith('ui.')
+		|| !isRecord(envelope.params)
+		|| typeof envelope.params.type !== 'string') {
+		return undefined;
+	}
+	const action = envelope.method.slice(3);
+	if (envelope.params.type !== action) {
+		return undefined;
+	}
+	return envelope.params;
 }
 
 /** Escapes text before it is interpolated into a webview HTML document. */

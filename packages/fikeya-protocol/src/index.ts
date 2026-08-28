@@ -11,6 +11,46 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 export type FikeyaMode = 'editor' | 'agent' | 'terminal' | 'review';
 export type FikeyaLayout = 'studio' | 'agent-focus';
 
+export type FikeyaUiAction =
+	| 'cancelAgent'
+	| 'clearConversation'
+	| 'copyText'
+	| 'createPlan'
+	| 'newPlan'
+	| 'openCommand'
+	| 'openExternal'
+	| 'openFile'
+	| 'planAction'
+	| 'proposePlan'
+	| 'refreshMemory'
+	| 'refreshPlan'
+	| 'refreshProviders'
+	| 'refreshReceipts'
+	| 'refreshStatistics'
+	| 'removeProvider'
+	| 'restoreConversation'
+	| 'restorePlan'
+	| 'reviewDiff'
+	| 'runAgent'
+	| 'runMultiAgent'
+	| 'selectSurface'
+	| 'testProvider';
+
+export interface FikeyaUiAttachmentMetadata {
+	readonly kind: 'image' | 'text';
+	readonly name: string;
+	readonly mediaType: string;
+	readonly relativePath?: string;
+	readonly sizeBytes: number;
+}
+
+/** Canonical webview-to-host envelope used by both Fikeya desktop layouts. */
+export interface FikeyaUiNotification {
+	readonly jsonrpc: '2.0';
+	readonly method: `ui.${FikeyaUiAction}`;
+	readonly params: Readonly<Record<string, JsonValue>> & { readonly type: FikeyaUiAction };
+}
+
 export type LifecycleEventType =
 	| 'session.started'
 	| 'prompt.submitted'
@@ -150,6 +190,19 @@ export interface ResponseMessage {
 
 export type ProtocolMessage = NotificationMessage | RequestMessage | ResponseMessage;
 
+export function isFikeyaUiNotification(value: unknown): value is FikeyaUiNotification {
+	if (!isRecord(value)
+		|| value.jsonrpc !== '2.0'
+		|| typeof value.method !== 'string'
+		|| !value.method.startsWith('ui.')
+		|| !isRecord(value.params)
+		|| typeof value.params.type !== 'string') {
+		return false;
+	}
+	const action = value.method.slice(3);
+	return uiActions.has(action) && value.params.type === action;
+}
+
 export function isProtocolMessage(value: unknown): value is ProtocolMessage {
 	if (!isRecord(value) || value.jsonrpc !== '2.0') {
 		return false;
@@ -225,6 +278,32 @@ const lifecycleEventTypes: ReadonlySet<string> = new Set<LifecycleEventType>([
 	'summary.recorded',
 	'turn.completed',
 	'session.ended'
+]);
+
+const uiActions: ReadonlySet<string> = new Set<FikeyaUiAction>([
+	'cancelAgent',
+	'clearConversation',
+	'copyText',
+	'createPlan',
+	'newPlan',
+	'openCommand',
+	'openExternal',
+	'openFile',
+	'planAction',
+	'proposePlan',
+	'refreshMemory',
+	'refreshPlan',
+	'refreshProviders',
+	'refreshReceipts',
+	'refreshStatistics',
+	'removeProvider',
+	'restoreConversation',
+	'restorePlan',
+	'reviewDiff',
+	'runAgent',
+	'runMultiAgent',
+	'selectSurface',
+	'testProvider'
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -3,6 +3,9 @@
  *  Copyright (C) 2026 Fikeya contributors
  *--------------------------------------------------------------------------------------------*/
 
+import type { FikeyaTextFileInput } from './fileInputs';
+import type { FikeyaImageInput } from './imageInputs';
+
 export type FikeyaAgentMemoryMode = 'auto' | 'off' | 'required';
 export type FikeyaAgentMode = 'agent' | 'research';
 
@@ -13,6 +16,8 @@ export interface FikeyaAgentRequest {
 	readonly contextMaxCharacters: number;
 	readonly memoryMode: FikeyaAgentMemoryMode;
 	readonly mode: FikeyaAgentMode;
+	readonly images: readonly FikeyaImageInput[];
+	readonly files: readonly FikeyaTextFileInput[];
 	readonly allowNetwork: true;
 }
 
@@ -50,10 +55,12 @@ export async function invokeAgentRunRequest(
 		maxOutputTokens: number,
 		contextMaxCharacters: number,
 		memoryMode: FikeyaAgentMemoryMode,
-		mode: FikeyaAgentMode
+		mode: FikeyaAgentMode,
+		images: readonly FikeyaImageInput[],
+		files: readonly FikeyaTextFileInput[]
 	) => Promise<void>
 ): Promise<void> {
-	await invoke(request.providerName, request.prompt, request.maxOutputTokens, request.contextMaxCharacters, request.memoryMode, request.mode);
+	await invoke(request.providerName, request.prompt, request.maxOutputTokens, request.contextMaxCharacters, request.memoryMode, request.mode, request.images, request.files);
 }
 
 /** Keeps the visible conversation human-readable while giving Research mode a real bounded contract. */

@@ -5,7 +5,9 @@
 
 import { TextDocument, Position, LanguageService, TokenType, Range } from './languageModes.js';
 
-export interface LanguageRange extends Range {
+export interface LanguageRange {
+	start: Position;
+	end: Position;
 	languageId: string | undefined;
 	attributeValue?: boolean;
 }

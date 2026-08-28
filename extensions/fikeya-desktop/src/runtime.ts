@@ -8,6 +8,7 @@ import path from 'node:path';
 import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'node:util';
 import type { FikeyaProviderHistoryMessage } from './conversation';
+import { FikeyaImageInput, isImageInputs } from './imageInputs';
 
 const maximumOutputBytes = 1024 * 1024;
 const maximumAgentOutputBytes = 5 * 1024 * 1024;
@@ -109,7 +110,7 @@ export interface FikeyaToolOutcome {
 export interface FikeyaChangedFileOutcome {
 	readonly path: string;
 	readonly beforeSha256: string | null;
-	readonly afterSha256: string;
+	readonly afterSha256: string | null;
 }
 
 export interface FikeyaCodingOutcome {
@@ -433,6 +434,7 @@ export function startFikeyaAgentRun(
 	workspacePath: string,
 	approvalHandler: FikeyaAgentApprovalHandler,
 	history: readonly FikeyaProviderHistoryMessage[] = [],
+	images: readonly FikeyaImageInput[] = [],
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaAgentRunHandle {
@@ -446,7 +448,8 @@ export function startFikeyaAgentRun(
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
-		|| !isValidProviderHistory(history)) {
+		|| !isValidProviderHistory(history)
+		|| !isImageInputs(images)) {
 		return {
 			result: Promise.resolve(invalidLocalRequest()),
 			onProgress: () => () => undefined,
@@ -459,6 +462,7 @@ export function startFikeyaAgentRun(
 		workspacePath,
 		prompt,
 		history,
+		images,
 		approvalHandler,
 		agentTimeoutMilliseconds,
 		maximumAgentOutputBytes,
@@ -517,6 +521,7 @@ export function startFikeyaPlanProposal(
 	memoryMode: FikeyaMemoryMode,
 	workspacePath: string,
 	history: readonly FikeyaProviderHistoryMessage[] = [],
+	images: readonly FikeyaImageInput[] = [],
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaPlanProposalRunHandle {
@@ -530,14 +535,15 @@ export function startFikeyaPlanProposal(
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
-		|| !isValidProviderHistory(history)) {
+		|| !isValidProviderHistory(history)
+		|| !isImageInputs(images)) {
 		return { result: Promise.resolve(invalidLocalRequest()), cancel: () => undefined };
 	}
 	return startBoundedJsonCli(
 		buildPlanProposalArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
 		workspacePath,
 		parsePlanProposalView,
-		JSON.stringify({ protocol: 'fikeya.plan-request.v1', prompt, history }),
+		JSON.stringify({ protocol: 'fikeya.plan-request.v1', prompt, history, images }),
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
 		invocation,
@@ -889,12 +895,14 @@ function parseChangedFileOutcome(value: unknown): FikeyaChangedFileOutcome | und
 	const record = asRecord(value);
 	const filePath = strictBoundedString(record?.path, 4_096);
 	const beforeSha256 = nullableBoundedString(record?.beforeSha256, 71);
-	const afterSha256 = boundedString(record?.afterSha256, 71);
+	const afterSha256 = nullableBoundedString(record?.afterSha256, 71);
 	if (!record || !filePath || filePath.includes('\\') || filePath.startsWith('/')
 		|| filePath.split('/').includes('..')
 		|| beforeSha256 === undefined
 		|| (beforeSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(beforeSha256))
-		|| !afterSha256 || !/^sha256:[0-9a-f]{64}$/.test(afterSha256)) {
+		|| afterSha256 === undefined
+		|| (afterSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(afterSha256))
+		|| (beforeSha256 === null && afterSha256 === null)) {
 		return undefined;
 	}
 	return { path: filePath, beforeSha256, afterSha256 };
@@ -1964,6 +1972,7 @@ function startAgentProtocolCli(
 	workspacePath: string,
 	prompt: string,
 	history: readonly FikeyaProviderHistoryMessage[],
+	images: readonly FikeyaImageInput[],
 	approvalHandler: FikeyaAgentApprovalHandler,
 	timeoutMilliseconds: number,
 	outputLimitBytes: number,
@@ -2154,7 +2163,7 @@ function startAgentProtocolCli(
 			}).catch(() => finish({ ok: false, exitCode, failure: 'invalid-json' }));
 		});
 
-		void writeMessage({ type: 'start', prompt, history }).catch(() => stop('runtime-error'));
+		void writeMessage({ type: 'start', prompt, history, images }).catch(() => stop('runtime-error'));
 		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
 	});
 	return { result, onProgress: progressChannel.onProgress, cancel: () => cancelOperation() };

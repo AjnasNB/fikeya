@@ -5,6 +5,15 @@
 
 export type FikeyaConversationRole = 'user' | 'assistant' | 'notice';
 
+export interface FikeyaConversationAttachment {
+	readonly kind?: 'image' | 'text';
+	readonly name: string;
+	readonly mimeType: string;
+	readonly relativePath?: string;
+	readonly sizeBytes: number;
+	readonly sha256: string;
+}
+
 export interface FikeyaConversationMessage {
 	readonly id: string;
 	readonly role: FikeyaConversationRole;
@@ -12,6 +21,8 @@ export interface FikeyaConversationMessage {
 	readonly createdAt: string;
 	readonly providerName?: string;
 	readonly tone?: 'normal' | 'error';
+	/** Content-free metadata only. Raw attachment bytes are intentionally never persisted. */
+	readonly attachments?: readonly FikeyaConversationAttachment[];
 }
 
 /** Roles that are safe to send through a provider conversation protocol. */
@@ -176,6 +187,10 @@ function normalizeConversationMessage(value: unknown, redact: boolean): FikeyaCo
 		|| (value.tone !== undefined && value.tone !== 'normal' && value.tone !== 'error')) {
 		return undefined;
 	}
+	const attachments = normalizeAttachments(value.attachments);
+	if (attachments === undefined) {
+		return undefined;
+	}
 	const redactedContent = redact ? redactConversationContent(value.content) : value.content;
 	if (redactedContent.trim().length === 0) {
 		return undefined;
@@ -189,8 +204,61 @@ function normalizeConversationMessage(value: unknown, redact: boolean): FikeyaCo
 		content,
 		createdAt: value.createdAt,
 		...(providerName === undefined ? {} : { providerName }),
-		...(tone === undefined ? {} : { tone })
+		...(tone === undefined ? {} : { tone }),
+		...(attachments.length === 0 ? {} : { attachments })
 	};
+}
+
+function normalizeAttachments(value: unknown): readonly FikeyaConversationAttachment[] | undefined {
+	if (value === undefined) {
+		return [];
+	}
+	if (!Array.isArray(value) || value.length > 12) {
+		return undefined;
+	}
+	const attachments: FikeyaConversationAttachment[] = [];
+	for (const item of value) {
+		if (!isRecord(item)
+			|| Object.keys(item).some(key => !['kind', 'mimeType', 'name', 'relativePath', 'sha256', 'sizeBytes'].includes(key))
+			|| typeof item.name !== 'string'
+			|| item.name.length < 1
+			|| item.name.length > 160
+			|| (item.kind !== undefined && item.kind !== 'image' && item.kind !== 'text')
+			|| typeof item.mimeType !== 'string'
+			|| typeof item.sizeBytes !== 'number'
+			|| !Number.isSafeInteger(item.sizeBytes)
+			|| item.sizeBytes < 1
+			|| typeof item.sha256 !== 'string'
+			|| !/^sha256:[0-9a-f]{64}$/u.test(item.sha256)) {
+			return undefined;
+		}
+		const kind = item.kind ?? (/^image\/(?:gif|jpeg|png|webp)$/u.test(item.mimeType) ? 'image' : undefined);
+		const validImage = kind === 'image'
+			&& /^image\/(?:gif|jpeg|png|webp)$/u.test(item.mimeType)
+			&& item.sizeBytes <= 393_216
+			&& item.relativePath === undefined;
+		const validText = kind === 'text'
+			&& /^(?:text\/[a-z0-9.+-]+|application\/(?:json|ld\+json|javascript|sql|toml|xml|x-httpd-php|x-powershell|x-sh|x-yaml))$/u.test(item.mimeType)
+			&& item.sizeBytes <= 98_304
+			&& typeof item.relativePath === 'string'
+			&& item.relativePath.length >= 1
+			&& item.relativePath.length <= 512
+			&& !item.relativePath.includes('\\')
+			&& !item.relativePath.startsWith('/')
+			&& !item.relativePath.split('/').some(part => !part || part === '.' || part === '..');
+		if (!validImage && !validText) {
+			return undefined;
+		}
+		attachments.push({
+			...(item.kind === undefined ? {} : { kind }),
+			name: item.name,
+			mimeType: item.mimeType,
+			...(typeof item.relativePath === 'string' ? { relativePath: item.relativePath } : {}),
+			sizeBytes: item.sizeBytes,
+			sha256: item.sha256
+		});
+	}
+	return attachments;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

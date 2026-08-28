@@ -39,6 +39,7 @@ from .credentials import CredentialResolver
 from .errors import ApprovalError, FikeyaError
 from .events import EventType
 from .inference import (
+    InferenceImage,
     InferenceRequest,
     ProviderCallResult,
     ProviderExecutor,
@@ -92,6 +93,9 @@ _DEFAULT_ALLOWED_EXECUTABLES = frozenset(
 _IGNORED_DIRECTORIES = frozenset(
     {".fikeya", ".git", ".hg", ".svn", "__pycache__", "node_modules"}
 )
+_IGNORED_DIRECTORIES_CASEFOLDED = frozenset(
+    value.casefold() for value in _IGNORED_DIRECTORIES
+)
 _TEST_EXECUTABLES = frozenset(
     {
         "bun",
@@ -120,6 +124,10 @@ _MAX_FILE_BYTES = 1_048_576
 _MAX_LISTED_FILES = 1_000
 _MAX_SEARCH_RESULTS = 200
 _MAX_SEARCH_BYTES = 32 * 1024 * 1024
+_MAX_MUTATION_SCAN_FILES = 5_000
+_MAX_MUTATION_SCAN_FILE_BYTES = 16 * 1024 * 1024
+_MAX_MUTATION_SCAN_TOTAL_BYTES = 256 * 1024 * 1024
+_MAX_RECORDED_MUTATIONS = 1_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +160,7 @@ class ChangedFileReceipt:
 
     path: str
     before_sha256: str | None
-    after_sha256: str
+    after_sha256: str | None
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -384,7 +392,7 @@ class WorkspaceExecutionBroker:
         values: list[str] = []
         for root, directories, files in os.walk(directory, followlinks=False):
             directories[:] = sorted(
-                name for name in directories if name not in _IGNORED_DIRECTORIES
+                name for name in directories if not _is_ignored_directory(name)
             )
             for name in sorted(files):
                 candidate = Path(root) / name
@@ -445,7 +453,7 @@ class WorkspaceExecutionBroker:
         truncated = False
         for candidate in candidates:
             relative_path = candidate.relative_to(self.workspace.root)
-            if any(part in _IGNORED_DIRECTORIES for part in relative_path.parts):
+            if any(_is_ignored_directory(part) for part in relative_path.parts):
                 continue
             try:
                 path = self.workspace.boundary.resolve(relative_path, must_exist=True)
@@ -555,6 +563,9 @@ class WorkspaceExecutionBroker:
             raise ValueError(
                 f"timeoutSeconds must be between 0.1 and {self.maximum_process_timeout_seconds:g}."
             )
+        before_snapshot, before_snapshot_complete = _workspace_file_snapshot(
+            self.workspace
+        )
         request = ToolRequest(
             (executable, *values), cwd=cwd, timeout_seconds=float(timeout)
         )
@@ -567,6 +578,35 @@ class WorkspaceExecutionBroker:
             approval_token=token,
             cancellation_requested=lambda: cancellation.cancelled,
         )
+        after_snapshot, after_snapshot_complete = _workspace_file_snapshot(
+            self.workspace
+        )
+        mutated_paths = sorted(
+            path
+            for path in before_snapshot.keys() | after_snapshot.keys()
+            if before_snapshot.get(path) != after_snapshot.get(path)
+        )
+        recorded_mutations = mutated_paths[:_MAX_RECORDED_MUTATIONS]
+        for relative_path in recorded_mutations:
+            before_hash = before_snapshot.get(relative_path)
+            after_hash = after_snapshot.get(relative_path)
+            existing = self.state.changed_files.get(relative_path)
+            original_before = (
+                existing.before_sha256
+                if existing is not None
+                else f"sha256:{before_hash}" if before_hash is not None else None
+            )
+            final_after = (
+                f"sha256:{after_hash}" if after_hash is not None else None
+            )
+            if original_before == final_after:
+                self.state.changed_files.pop(relative_path, None)
+                continue
+            self.state.changed_files[relative_path] = ChangedFileReceipt(
+                path=relative_path,
+                before_sha256=original_before,
+                after_sha256=final_after,
+            )
         output = stable_json(
             {
                 "durationMs": outcome.duration_ms,
@@ -574,6 +614,13 @@ class WorkspaceExecutionBroker:
                 "stderr": outcome.stderr,
                 "stdout": outcome.stdout,
                 "truncated": outcome.truncated,
+                "workspaceMutations": {
+                    "complete": before_snapshot_complete
+                    and after_snapshot_complete
+                    and len(mutated_paths) <= _MAX_RECORDED_MUTATIONS,
+                    "paths": recorded_mutations,
+                    "truncated": len(mutated_paths) > _MAX_RECORDED_MUTATIONS,
+                },
             }
         )
         test = _is_test_command(executable, values)
@@ -593,7 +640,10 @@ class WorkspaceExecutionBroker:
         if not relative or relative == ".":
             raise ValueError("A file path is required.")
         path = self.workspace.boundary.resolve(relative, must_exist=must_exist)
-        if ".fikeya" in path.relative_to(self.workspace.root).parts:
+        if any(
+            part.casefold() == ".fikeya"
+            for part in path.relative_to(self.workspace.root).parts
+        ):
             raise ValueError("Fikeya metadata is not an editable project file.")
         return path
 
@@ -769,6 +819,7 @@ class CodingAgentRunner:
         memory_mode: str = "auto",
         context_max_characters: int = 12_000,
         history: tuple[ConversationTurn, ...] = (),
+        images: tuple[InferenceImage, ...] = (),
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
@@ -811,6 +862,12 @@ class CodingAgentRunner:
                 lambda: self.credentials.resolve(profile),
                 allow_network=allow_network,
                 timeout_seconds=timeout,
+                request_factory=lambda provider_prompt, provider_system, maximum_tokens: InferenceRequest(
+                    prompt=provider_prompt,
+                    system=provider_system,
+                    max_output_tokens=maximum_tokens,
+                    images=images,
+                ),
             )
             broker = WorkspaceExecutionBroker(
                 self.workspace,
@@ -1100,12 +1157,51 @@ def _candidate_files(root: Path) -> list[Path]:
     values: list[Path] = []
     for directory, directories, files in os.walk(root, followlinks=False):
         directories[:] = sorted(
-            name for name in directories if name not in _IGNORED_DIRECTORIES
+            name for name in directories if not _is_ignored_directory(name)
         )
         values.extend(Path(directory) / name for name in sorted(files))
         if len(values) >= _MAX_LISTED_FILES:
             break
     return values[:_MAX_LISTED_FILES]
+
+
+def _workspace_file_snapshot(workspace: Workspace) -> tuple[dict[str, str], bool]:
+    """Hash a bounded project view before and after an approved process execution."""
+
+    values: dict[str, str] = {}
+    scanned_bytes = 0
+    complete = True
+    for directory, directories, files in os.walk(workspace.root, followlinks=False):
+        directories[:] = sorted(
+            name for name in directories if not _is_ignored_directory(name)
+        )
+        for name in sorted(files):
+            if len(values) >= _MAX_MUTATION_SCAN_FILES:
+                return values, False
+            candidate = Path(directory) / name
+            try:
+                resolved = workspace.boundary.resolve(
+                    candidate.relative_to(workspace.root), must_exist=True
+                )
+                if not resolved.is_file():
+                    continue
+                size = resolved.stat().st_size
+                if (
+                    size > _MAX_MUTATION_SCAN_FILE_BYTES
+                    or scanned_bytes + size > _MAX_MUTATION_SCAN_TOTAL_BYTES
+                ):
+                    complete = False
+                    continue
+                relative = resolved.relative_to(workspace.root).as_posix()
+                values[relative] = _file_sha256(resolved)
+                scanned_bytes += size
+            except (FikeyaError, OSError, ValueError):
+                complete = False
+    return values, complete
+
+
+def _is_ignored_directory(name: str) -> bool:
+    return name.casefold() in _IGNORED_DIRECTORIES_CASEFOLDED
 
 
 def _is_test_command(executable: str, arguments: list[str]) -> bool:

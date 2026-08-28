@@ -78,7 +78,7 @@ await copyRequired('package.nls.json');
 await copyRequired('README.md');
 await copyRequired(path.join('media', 'fikeya.svg'));
 await copyRequired(path.join('themes', 'fikeya-dark-color-theme.json'));
-for (const file of ['extension.js', 'memory.js', 'messageValidation.js', 'runtime.js', 'sessionCapture.js']) {
+for (const file of ['extension.js', 'fileInputs.js', 'imageInputs.js', 'memory.js', 'messageValidation.js', 'runtime.js', 'sessionCapture.js']) {
 	await copyRequired(path.join('out', file));
 }
 await copyInto(path.join(repositoryRoot, 'fikeya-runtime', 'LICENSE'), path.join(stagingRoot, 'LICENSE'));

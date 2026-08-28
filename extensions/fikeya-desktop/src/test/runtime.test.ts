@@ -173,7 +173,7 @@ describe('Fikeya runtime protocol', () => {
 			}], 2);
 			const operation = startFikeyaAgentRun(
 				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', [], protocolInvocation, process.env
+				async () => 'deny_once', [], [], protocolInvocation, process.env
 			);
 
 			assert.deepStrictEqual(await operation.result, {
@@ -333,7 +333,7 @@ describe('Fikeya runtime protocol', () => {
 			const agentCapturePath = await writeCapturingProtocolFixture(workspacePath, 'agent', agentOutput);
 			const agentOperation = startFikeyaAgentRun(
 				'fixture-provider', 'Continue the work.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', history, protocolInvocation, process.env
+				async () => 'deny_once', history, [], protocolInvocation, process.env
 			);
 			const agentResult = await agentOperation.result;
 
@@ -341,18 +341,18 @@ describe('Fikeya runtime protocol', () => {
 			const proposalCapturePath = await writeCapturingProtocolFixture(workspacePath, 'plan', proposalOutput);
 			const proposalOperation = startFikeyaPlanProposal(
 				'fixture-provider', 'Create the next plan.', 256, 512, 'off', workspacePath,
-				history, protocolInvocation, process.env
+				history, [], protocolInvocation, process.env
 			);
 			const proposalResult = await proposalOperation.result;
 
 			const rejectedAgent = startFikeyaAgentRun(
 				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
 				async () => 'deny_once', Array.from({ length: 13 }, () => ({ role: 'user' as const, content: 'bounded' })),
-				protocolInvocation, process.env
+				[], protocolInvocation, process.env
 			);
 			const rejectedProposal = startFikeyaPlanProposal(
 				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
-				[{ role: 'assistant', content: 'History cannot begin with an assistant.' }], protocolInvocation, process.env
+				[{ role: 'assistant', content: 'History cannot begin with an assistant.' }], [], protocolInvocation, process.env
 			);
 
 			assert.deepStrictEqual({
@@ -363,9 +363,9 @@ describe('Fikeya runtime protocol', () => {
 				rejectedAgent: await rejectedAgent.result,
 				rejectedProposal: await rejectedProposal.result
 			}, {
-				agentPayload: { type: 'start', prompt: 'Continue the work.', history },
+				agentPayload: { type: 'start', prompt: 'Continue the work.', history, images: [] },
 				agentResult: { ok: true, failure: 'none' },
-				proposalPayload: { protocol: 'fikeya.plan-request.v1', prompt: 'Create the next plan.', history },
+				proposalPayload: { protocol: 'fikeya.plan-request.v1', prompt: 'Create the next plan.', history, images: [] },
 				proposalResult: { ok: true, failure: 'none' },
 				rejectedAgent: { ok: false, exitCode: null, failure: 'runtime-error' },
 				rejectedProposal: { ok: false, exitCode: null, failure: 'runtime-error' }
@@ -391,6 +391,7 @@ describe('Fikeya runtime protocol', () => {
 				'off',
 				workspacePath,
 				async () => 'deny_once',
+				[],
 				[],
 				protocolInvocation,
 				process.env
@@ -457,7 +458,7 @@ describe('Fikeya runtime protocol', () => {
 					await approvalRelease;
 					return 'deny_once';
 				},
-				[], protocolInvocation, process.env
+				[], [], protocolInvocation, process.env
 			);
 			await approvalReached;
 			const observed: unknown[] = [];
@@ -483,7 +484,7 @@ describe('Fikeya runtime protocol', () => {
 			]);
 			const malformedAgent = startFikeyaAgentRun(
 				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', [], protocolInvocation, process.env
+				async () => 'deny_once', [], [], protocolInvocation, process.env
 			);
 			const malformedAgentProgress: unknown[] = [];
 			malformedAgent.onProgress(event => malformedAgentProgress.push(event));
@@ -724,6 +725,10 @@ describe('Fikeya runtime protocol', () => {
 				afterSha256: `sha256:${'d'.repeat(64)}`,
 				beforeSha256: `sha256:${'b'.repeat(64)}`,
 				path: 'src/payment.ts'
+			}, {
+				afterSha256: null,
+				beforeSha256: `sha256:${'a'.repeat(64)}`,
+				path: 'src/removed.ts'
 			}],
 			plan: 'Inspect, edit, and verify the focused behavior.',
 			steps: 3,

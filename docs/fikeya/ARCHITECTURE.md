@@ -4,7 +4,7 @@ Fikeya is an AI code editor and coding-agent runtime first. Durable sessions and
 
 ## Status and reading guide
 
-Fikeya 0.1.0-beta.2 is the current public-beta source candidate. This document separates three different kinds of behavior:
+Fikeya 0.1.0-beta.4 is the current public-beta source candidate. This document separates three different kinds of behavior:
 
 - **Integrated now** is reachable through the current Desktop extension or `fikeya` CLI.
 - **Standalone component** has focused tests in this repository but is not yet connected to the Desktop/CLI product path.
@@ -46,7 +46,7 @@ The current runtime provides:
 - cooperative cancellation and resumable/forkable SQLite session primitives;
 - provider-reported usage or an explicit `unavailable` measurement;
 - content-free provider and Qarinah receipts;
-- a process-only `ToolBroker` that accepts an executable and argument vector, starts disabled, and requires an exact one-use approval before real execution; and
+- an integrated workspace broker for bounded list/read/search/hash-guarded edits plus a `ToolBroker` that accepts an executable and argument vector and requires an exact one-use approval before real execution; and
 - a structured plan execution broker for root-bound file, search, edit, write, and allowlisted process calls, with execution and verification receipts.
 
 Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Google Gemini, Hugging Face Inference Providers, Groq, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Vertex AI is available through the compatible profile with a regional endpoint and a short-lived Google Cloud token; automatic ADC refresh remains a release follow-up. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral identity token. HTTP quota failures are classified without retaining the provider body so the Desktop can offer a person-controlled handoff to another configured profile while retrieving the same workspace context again.
@@ -129,7 +129,7 @@ Privileged operations must remain outside the model process. The complete broker
 - cancellation and idempotency identifiers; and
 - exit status, affected paths, and evidence hashes.
 
-A future file broker must stage patches transactionally, validate stale context, show the proposed diff, and leave the worktree unchanged when rejected. That file/patch broker is not part of the current runtime slice.
+The current file broker validates stale context with expected SHA-256 values and writes atomically. A future transactional patch layer must stage complete multi-file changes, present one canonical diff, support rollback, and leave the worktree unchanged when rejected.
 
 ### Target browser and crawler execution
 
@@ -160,7 +160,7 @@ Provider-reported token counts and locally calculated estimates must remain dist
 10. Declared status, exit-code, output-hash, and file-hash expectations are evaluated and persisted as verification checks and an outcome hash.
 11. `plan show` exposes the current record and content-free proof receipt; a terminal success requires passed verification.
 
-The current integration is local and sequential. Transactional multi-file patch staging, generalized pause/retry, delegated worktrees, external sandbox backends, and complete ACP/MCP agent wiring remain target requirements rather than shipped plan behavior.
+The current integration is local. Team mode runs bounded read-only specialists concurrently and hands their findings to one selected approval-gated coding lead. Transactional multi-file patch staging, parallel writers in delegated worktrees, generalized pause/retry, external sandbox backends, and complete ACP/MCP product wiring remain target requirements rather than shipped behavior.
 
 ## Storage
 

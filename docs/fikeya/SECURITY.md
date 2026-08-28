@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Fikeya 0.1.0-beta.2 is the current public-beta source candidate. This document distinguishes:
+Fikeya 0.1.0-beta.4 is the current public-beta source candidate. This document distinguishes:
 
 - **Current enforcement:** behavior enforced in the integrated Desktop/runtime path today.
 - **Standalone enforcement:** behavior implemented and tested in a component that is not yet wired into the product path.
@@ -23,12 +23,12 @@ Model output, repository content, web content, plugins, MCP servers, ACP agents,
 ### Workspace and process boundary
 
 - Workspace initialization binds runtime state to one canonical root.
-- The current `ToolBroker` is process-only. It accepts an executable and argument array, never a raw shell string.
+- The integrated broker exposes bounded file listing, UTF-8 reads, literal search, hash-guarded replace/write operations, and one allowlisted process invocation. It accepts an executable and argument array, never a raw shell string.
 - Real process execution starts disabled and additionally requires an executable allowlist, an in-root working directory, and a short-lived one-use approval matching the exact canonical request.
 - Changing an argument, working directory, environment key, or request digest invalidates that approval.
 - Command interpreters, sensitive command arguments, sensitive environment names, unsafe inherited environment variables, and invalid timeouts are rejected by the broker boundary.
 
-The integrated runtime does **not** yet provide general read/write/patch file operations, transactional patch staging, disposable-worktree creation, or stale-diff validation.
+The integrated runtime provides canonical workspace file operations with SHA-256 preconditions and atomic replacement. Approved processes are scanned before and after execution so created, modified, and deleted project files enter the run receipt. It does **not** yet provide transactional multi-file patch staging, filesystem rollback, disposable-worktree creation, or a complete sandbox boundary.
 
 ### Provider network boundary
 

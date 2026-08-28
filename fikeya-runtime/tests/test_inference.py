@@ -10,15 +10,18 @@ import pytest
 
 from fikeya_runtime.errors import (
     CancellationError,
+    ConfigurationError,
     ProviderConnectivityError,
     ProviderError,
     ProviderHttpError,
 )
 from fikeya_runtime.inference import (
     CancellationToken,
+    InferenceImage,
     InferenceRequest,
     JsonResponse,
     ProviderExecutor,
+    parse_inference_images,
 )
 from fikeya_runtime.providers import ProviderKind, build_profile
 
@@ -86,7 +89,11 @@ def test_azure_responses_execution_normalizes_usage_and_url() -> None:
     result = ProviderExecutor(transport).execute(
         profile,
         "short-lived-token",
-        InferenceRequest("Summarize this change.", system="Be concise."),
+        InferenceRequest(
+            "Summarize this change.",
+            system="Be concise.",
+            images=(InferenceImage("screen.png", "image/png", "YQ==", 1),),
+        ),
         allow_network=True,
     )
 
@@ -99,6 +106,15 @@ def test_azure_responses_execution_normalizes_usage_and_url() -> None:
     assert call["url"] == "https://example.openai.azure.com/openai/v1/responses"
     assert call["headers"]["Authorization"] == "Bearer short-lived-token"
     assert call["payload"]["model"] == "deployment"
+    assert call["payload"]["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Summarize this change."},
+                {"type": "input_image", "image_url": "data:image/png;base64,YQ=="},
+            ],
+        }
+    ]
     assert result.request_sha256.startswith("sha256:")
     assert result.response_sha256.startswith("sha256:")
 
@@ -114,7 +130,10 @@ def test_chat_completions_handles_missing_usage_honestly() -> None:
     result = ProviderExecutor(transport).execute(
         profile,
         None,
-        InferenceRequest("Inspect this repository."),
+        InferenceRequest(
+            "Inspect this repository.",
+            images=(InferenceImage("screen.webp", "image/webp", "YQ==", 1),),
+        ),
         allow_network=True,
     )
 
@@ -122,6 +141,13 @@ def test_chat_completions_handles_missing_usage_honestly() -> None:
     assert result.text == "local answer"
     assert result.usage.measurement == "unavailable"
     assert result.usage.input_tokens is None
+    assert transport.calls[0]["payload"]["messages"][-1]["content"] == [
+        {"type": "text", "text": "Inspect this repository."},
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/webp;base64,YQ=="},
+        },
+    ]
 
 
 def test_execution_requires_opt_in_and_honors_preflight_cancellation() -> None:
@@ -235,6 +261,7 @@ def test_anthropic_messages_execution_uses_native_contract_and_usage() -> None:
             "Review the patch.",
             system="Return only verified findings.",
             max_output_tokens=512,
+            images=(InferenceImage("diff.png", "image/png", "YQ==", 1),),
         ),
         allow_network=True,
     )
@@ -245,7 +272,22 @@ def test_anthropic_messages_execution_uses_native_contract_and_usage() -> None:
     assert call["headers"]["anthropic-version"] == "2023-06-01"
     assert call["payload"] == {
         "max_tokens": 512,
-        "messages": [{"content": "Review the patch.", "role": "user"}],
+        "messages": [
+            {
+                "content": [
+                    {"type": "text", "text": "Review the patch."},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "YQ==",
+                        },
+                    },
+                ],
+                "role": "user",
+            }
+        ],
         "model": "claude-example",
         "system": "Return only verified findings.",
     }
@@ -254,3 +296,40 @@ def test_anthropic_messages_execution_uses_native_contract_and_usage() -> None:
     assert result.usage.input_tokens == 87
     assert result.usage.output_tokens == 18
     assert result.usage.cached_input_tokens == 12
+
+
+def test_image_envelope_rejects_inconsistent_or_unbounded_data() -> None:
+    assert parse_inference_images(
+        [
+            {
+                "base64Data": "YQ==",
+                "mimeType": "image/png",
+                "name": "screen.png",
+                "sizeBytes": 1,
+            }
+        ]
+    ) == (InferenceImage("screen.png", "image/png", "YQ==", 1),)
+
+    with pytest.raises(ConfigurationError, match="size or base64"):
+        parse_inference_images(
+            [
+                {
+                    "base64Data": "YQ==",
+                    "mimeType": "image/png",
+                    "name": "screen.png",
+                    "sizeBytes": 2,
+                }
+            ]
+        )
+    with pytest.raises(ConfigurationError, match="at most"):
+        parse_inference_images(
+            [
+                {
+                    "base64Data": "YQ==",
+                    "mimeType": "image/png",
+                    "name": f"screen-{index}.png",
+                    "sizeBytes": 1,
+                }
+                for index in range(5)
+            ]
+        )

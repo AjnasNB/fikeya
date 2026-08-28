@@ -158,6 +158,7 @@ try {
 		workspaceRoot,
 		async () => 'deny_once',
 		[],
+		[],
 		invocation,
 		packagedEnvironment
 	).result;

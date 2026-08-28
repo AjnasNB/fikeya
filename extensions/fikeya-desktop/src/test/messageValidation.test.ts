@@ -11,6 +11,8 @@ import { escapeHtml, parseWebviewMessage } from '../messageValidation';
 describe('Fikeya webview message validation', () => {
 	test('accepts the bounded local conversation reset action', () => {
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'clearConversation' }), { type: 'clearConversation' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'setComposerAttachmentState', hasAttachments: true }), { type: 'setComposerAttachmentState', hasAttachments: true });
+		assert.strictEqual(parseWebviewMessage({ type: 'setComposerAttachmentState', hasAttachments: 'yes' }), undefined);
 	});
 
 	test('validates message actions without accepting paths or schemes outside the workspace boundary', () => {
@@ -45,6 +47,8 @@ describe('Fikeya webview message validation', () => {
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.mode.research' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.usage' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.setup' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.layout.project' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.layout.editor' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.files.openFolder' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'workbench.action.terminal.sendSequence' }),
 			parseWebviewMessage({ type: 'selectMode', mode: 'review' }),
@@ -55,6 +59,8 @@ describe('Fikeya webview message validation', () => {
 			{ type: 'openCommand', command: 'fikeya.mode.research' },
 			{ type: 'openCommand', command: 'fikeya.view.usage' },
 			{ type: 'openCommand', command: 'fikeya.view.setup' },
+			{ type: 'openCommand', command: 'fikeya.layout.project' },
+			{ type: 'openCommand', command: 'fikeya.layout.editor' },
 			{ type: 'openCommand', command: 'workbench.action.files.openFolder' },
 			undefined,
 			undefined,
@@ -66,6 +72,19 @@ describe('Fikeya webview message validation', () => {
 		assert.strictEqual(escapeHtml(`<script data-value="x">'&</script>`), '&lt;script data-value=&quot;x&quot;&gt;&#39;&amp;&lt;/script&gt;');
 	});
 
+	test('accepts the canonical shared UI notification envelope', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			jsonrpc: '2.0',
+			method: 'ui.openCommand',
+			params: { type: 'openCommand', command: 'fikeya.configureProvider' }
+		}), { type: 'openCommand', command: 'fikeya.configureProvider' });
+		assert.strictEqual(parseWebviewMessage({
+			jsonrpc: '2.0',
+			method: 'ui.openFile',
+			params: { type: 'openCommand', path: 'src/index.ts' }
+		}), undefined);
+	});
+
 	test('accepts bounded agent turns only with per-run network consent', () => {
 		const request = {
 			type: 'runAgent',
@@ -74,6 +93,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			images: [],
 			mode: 'research',
 			allowNetwork: true
 		};
@@ -84,6 +104,8 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			images: [],
+			files: [],
 			mode: 'research',
 			allowNetwork: true
 		});
@@ -94,6 +116,8 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
+			images: [],
+			files: [],
 			allowNetwork: true
 		});
 
@@ -105,6 +129,68 @@ describe('Fikeya webview message validation', () => {
 			contextMaxCharacters: 12_000,
 			memoryMode: 'required',
 			allowNetwork: false
+		}), undefined);
+	});
+
+	test('accepts only canonical bounded image attachments', () => {
+		const request = {
+			type: 'runAgent',
+			providerName: 'openrouter-primary',
+			prompt: 'Explain this screenshot.',
+			maxOutputTokens: 1024,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
+			mode: 'agent',
+			allowNetwork: true,
+			images: [{
+				dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+				name: 'screen.png',
+				sizeBytes: 8
+			}]
+		};
+		const parsed = parseWebviewMessage(request);
+		assert.ok(parsed && parsed.type === 'runAgent');
+		assert.deepStrictEqual(parsed.images, [{
+			base64Data: 'iVBORw0KGgo=',
+			mimeType: 'image/png',
+			name: 'screen.png',
+			sizeBytes: 8
+		}]);
+		assert.strictEqual(parseWebviewMessage({ ...request, images: [{ ...request.images[0], sizeBytes: 7 }] }), undefined);
+		assert.strictEqual(parseWebviewMessage({ ...request, images: Array.from({ length: 5 }, () => request.images[0]) }), undefined);
+	});
+
+	test('accepts only bounded canonical UTF-8 text-file attachments', () => {
+		const text = 'export const answer = 42;\n';
+		const file = {
+			name: 'answer.ts',
+			relativePath: 'src/answer.ts',
+			mimeType: 'text/plain',
+			text,
+			sizeBytes: Buffer.byteLength(text, 'utf8')
+		};
+		const request = {
+			type: 'runAgent',
+			providerName: 'openrouter-primary',
+			prompt: 'Review the attached code.',
+			maxOutputTokens: 1024,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
+			mode: 'agent',
+			allowNetwork: true,
+			images: [],
+			files: [file]
+		};
+		const parsed = parseWebviewMessage(request);
+		assert.ok(parsed && parsed.type === 'runAgent');
+		assert.deepStrictEqual(parsed.files, [file]);
+		assert.strictEqual(parseWebviewMessage({
+			...request,
+			files: [{ ...file, name: '.env', relativePath: '.env' }]
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			...request,
+			files: [{ ...file, relativePath: '../answer.ts' }]
 		}), undefined);
 	});
 
@@ -144,35 +230,55 @@ describe('Fikeya webview message validation', () => {
 		assert.deepStrictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Review the same change independently.',
 			maxConcurrency: 2,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), {
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer', 'test-researcher'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Review the same change independently.',
 			maxConcurrency: 2,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		});
 		assert.strictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer', 'security-reviewer'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Duplicate selection.',
 			maxConcurrency: 2,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), undefined);
 		assert.strictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'No consent.',
 			maxConcurrency: 1,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: false
 		}), undefined);
 		assert.strictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer'],
+			leadProviderName: 'openrouter-primary',
 			prompt: 'Too much parallelism.',
 			maxConcurrency: 9,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
 			allowNetwork: true
 		}), undefined);
 	});
@@ -290,5 +396,38 @@ describe('Fikeya webview message validation', () => {
 			{ type: 'refreshStatistics' },
 			{ type: 'refreshMemory' }
 		]);
+	});
+
+	test('accepts a bounded provider profile without normalizing credentials', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: 'DeepSeek work',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat',
+			secret: 'secret-value'
+		}), {
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: 'DeepSeek work',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat',
+			secret: 'secret-value'
+		});
+		assert.strictEqual(parseWebviewMessage({
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: 'DeepSeek work',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat',
+			secret: ' leaked '
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'configureProviderProfile',
+			providerId: 'deepseek',
+			profileLabel: '',
+			baseUrl: 'https://api.deepseek.com/v1',
+			model: 'deepseek-chat'
+		}), undefined);
 	});
 });

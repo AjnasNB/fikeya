@@ -110,7 +110,7 @@ assert(html.includes('inspect measured token and verification receipts'), 'Measu
 assert(html.includes('The product target is lower billed input tokens on matched coding tasks, not an unqualified savings claim.'), 'Matched-task token target boundary is missing');
 assert(html.includes('Windows will continue to show an unknown-publisher warning until the installer is Authenticode-signed with a trusted certificate.'), 'Authenticode release gate is missing');
 assert(!html.includes('reproducible VSIX packaging'), 'Unproven cross-platform reproducibility claim is present');
-assert(html.includes('Fikeya 0.1.0-beta.2 source candidate · Desktop, VS Code extension, and CLI'), 'Current source candidate status is missing');
+assert(html.includes('Fikeya 0.1.0-beta.4 source candidate · Desktop, VS Code extension, and CLI'), 'Current source candidate status is missing');
 assert(!html.includes('stable release available'), 'The site must not claim a stable release before the release gates pass');
 assert(html.includes('src="/qarinah-standalone-graph.png"'), 'Standalone Qarinah graph capture is missing');
 assert(html.includes('src="/fikeya-desktop-beta-editor.jpg"'), 'Real editor capture is missing');
@@ -226,12 +226,12 @@ const signedUpdate = {
 	...updateManifest,
 	enabled: true,
 	version: '2222222222222222222222222222222222222222',
-	productVersion: 'v0.1.0-beta.2',
+	productVersion: 'v0.1.0-beta.3',
 	authenticodeSubject: 'CN=Ajnas N B',
 	timestamped: true,
 	assets: {
 		'win32-x64-user': {
-			url: 'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.2/FikeyaSetup-0.1.0-beta.2-win32-x64.exe',
+			url: 'https://github.com/AjnasNB/fikeya/releases/download/v0.1.0-beta.3/FikeyaSetup-0.1.0-beta.3-win32-x64.exe',
 			sha256: 'a'.repeat(64)
 		}
 	}
@@ -242,7 +242,7 @@ const signedUpdateResponse = await worker.fetch(new Request('https://fikeya.com/
 assert(signedUpdateResponse.status === 200, 'A valid signed update manifest must return an update');
 const signedUpdatePayload = await signedUpdateResponse.json();
 assert(signedUpdatePayload.version === signedUpdate.version, 'Update response commit is incorrect');
-assert(signedUpdatePayload.productVersion === '0.1.0-beta.2', 'Update response product version is incorrect');
+assert(signedUpdatePayload.productVersion === '0.1.0-beta.3', 'Update response product version is incorrect');
 const unsignedUpdateResponse = await worker.fetch(new Request('https://fikeya.com/api/update/win32-x64-user/stable/1111111111111111111111111111111111111111'), {
 	ASSETS: { fetch: async () => Response.json({ ...signedUpdate, authenticodeSubject: '' }) }
 });

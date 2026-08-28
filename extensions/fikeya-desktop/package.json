@@ -2,7 +2,7 @@
 	"name": "fikeya-desktop",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "0.1.0-beta.2",
+	"version": "0.1.0-beta.4",
 	"publisher": "fikeya",
 	"license": "AGPL-3.0-or-later",
 	"repository": {
@@ -38,7 +38,7 @@
 	"main": "./out/extension",
 	"contributes": {
 		"viewsContainers": {
-			"activitybar": [
+			"secondarySidebar": [
 				{
 					"id": "fikeya",
 					"icon": "media/fikeya.svg",
@@ -62,6 +62,18 @@
 				"title": "%command.open.title%",
 				"category": "%command.category%",
 				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "fikeya.layout.project",
+				"title": "%command.layout.project.title%",
+				"category": "%command.category%",
+				"icon": "$(layout-centered)"
+			},
+			{
+				"command": "fikeya.layout.editor",
+				"title": "%command.layout.editor.title%",
+				"category": "%command.category%",
+				"icon": "$(layout-sidebar-right)"
 			},
 			{
 				"command": "fikeya.configureProvider",
@@ -154,6 +166,12 @@
 					"default": false,
 					"scope": "resource",
 					"description": "%configuration.chat.persistWorkspaceHistory.description%"
+				},
+				"fikeya.agent.autoSaveWorkspaceEdits": {
+					"type": "boolean",
+					"default": true,
+					"scope": "resource",
+					"description": "%configuration.agent.autoSaveWorkspaceEdits.description%"
 				}
 			}
 		},
@@ -184,30 +202,40 @@
 		"menus": {
 			"editor/title": [
 				{
-					"command": "fikeya.open",
+					"command": "fikeya.layout.editor",
+					"when": "activeWebviewPanelId == fikeya.workspace",
 					"group": "navigation@20"
 				}
 			],
 			"view/title": [
 				{
-					"command": "fikeya.runDoctor",
+					"command": "fikeya.layout.project",
 					"when": "view == fikeya.dashboard",
 					"group": "navigation@1"
+				},
+				{
+					"command": "fikeya.runDoctor",
+					"when": "view == fikeya.dashboard",
+					"group": "navigation@2"
 				}
 			]
 		}
 	},
 	"scripts": {
+		"build:protocol": "npm ci --ignore-scripts --prefix ../../packages/fikeya-protocol && npm run build --prefix ../../packages/fikeya-protocol",
+		"precompile": "npm run build:protocol",
 		"compile": "tsc --project ./tsconfig.json",
 		"watch": "tsc --project ./tsconfig.json --watch",
+		"pretypecheck": "npm run build:protocol",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/fileInputs.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js ./out/test/teamLead.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",
 		"package:vsix": "npm run build:vsix && npm run check:vsix && npm run test:isolated-vsix"
 	},
 	"devDependencies": {
+		"@fikeya/protocol": "file:../../packages/fikeya-protocol",
 		"@types/node": "24.x",
 		"@vscode/vsce": "3.9.2",
 		"esbuild": "0.28.1",

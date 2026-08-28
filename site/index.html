@@ -52,7 +52,7 @@
 			<section class="hero" id="top">
 				<div class="shell hero-layout">
 					<div class="hero-copy">
-						<p class="release-line"><span aria-hidden="true"></span>Fikeya 0.1.0-beta.2 source candidate · Desktop, VS Code extension, and CLI</p>
+						<p class="release-line"><span aria-hidden="true"></span>Fikeya 0.1.0-beta.4 source candidate · Desktop, VS Code extension, and CLI</p>
 						<h1>Build with your model.<span>Spend fewer tokens.</span></h1>
 						<p class="hero-summary">Fikeya selects task-relevant project evidence instead of replaying the whole repository on every turn. Bring your own provider, approve tools, run code, and inspect measured token and verification receipts. The product target is lower billed input tokens on matched coding tasks, not an unqualified savings claim.</p>
 						<div class="hero-actions">
@@ -161,11 +161,11 @@
 					<div class="section-intro compact">
 						<p class="eyebrow">Bring your own key or local model</p>
 						<h2>Use the model that fits the job.</h2>
-						<p>Fikeya keeps provider metadata inspectable and credential bytes in the operating-system keyring. Use OpenAI API models, including Codex-capable models available to your API account, Azure OpenAI, Anthropic, Gemini, Vertex AI, Hugging Face Inference Providers, Groq, OpenRouter, NVIDIA NIM, Ollama, or another OpenAI-compatible endpoint.</p>
+						<p>Fikeya keeps provider metadata inspectable and credential bytes in the operating-system keyring. Use OpenAI API models, including Codex-capable models available to your API account, Azure OpenAI, Azure AI Foundry compatible endpoints, Anthropic, Gemini, Vertex AI, Hugging Face, Groq, OpenRouter, NVIDIA NIM, DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, Amazon Bedrock, Ollama, a local no-auth server, or another OpenAI-compatible endpoint.</p>
 						<p class="scope-note">Bring your own API credential or local model. Fikeya does not reuse a ChatGPT, Codex, Claude, Gemini, or other consumer subscription as API access. Vertex uses a short-lived Google Cloud token today; automatic ADC refresh is a release follow-up.</p>
 						<p class="scope-note">You choose the exact profile and model. If a provider returns a quota or rate-limit response, Fikeya can ask to continue with another configured model or remember an "always switch" preference while recompiling the same task-relevant Qarinah context.</p>
 						<ul class="provider-badges" aria-label="Supported provider paths">
-							<li>OpenAI / Codex models</li><li>Azure OpenAI</li><li>Anthropic</li><li>Google Gemini</li><li>Vertex AI</li><li>Hugging Face</li><li>Groq</li><li>OpenRouter</li><li>NVIDIA NIM</li><li>Ollama</li><li>OpenAI compatible</li>
+							<li>OpenAI / Codex models</li><li>Azure OpenAI / Foundry</li><li>Anthropic</li><li>Google Gemini / Vertex</li><li>OpenRouter</li><li>NVIDIA NIM</li><li>Hugging Face</li><li>Groq</li><li>DeepSeek</li><li>Mistral / xAI</li><li>Together / Fireworks</li><li>Cerebras</li><li>Amazon Bedrock</li><li>Ollama / local</li><li>OpenAI compatible</li>
 						</ul>
 						<pre class="provider-cli"><code>fikeya provider configure work \
 			  --kind google-gemini \
