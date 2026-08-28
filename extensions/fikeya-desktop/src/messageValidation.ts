@@ -9,6 +9,15 @@ import { agentComposerConstraints, FikeyaAgentMemoryMode, FikeyaAgentMode, isAge
 import { FikeyaTextFileInput, parseTextFileInputs } from './fileInputs';
 import { FikeyaImageInput, parseImageInputs } from './imageInputs';
 
+export const fikeyaComposerModes = ['ask', 'plan', 'build', 'review', 'research'] as const;
+export type FikeyaComposerMode = typeof fikeyaComposerModes[number];
+export type FikeyaAgentComposerMode = Exclude<FikeyaComposerMode, 'plan'>;
+
+/** Maps the validated composer intent onto the narrower mode contract the current runtime accepts. */
+export function runtimeModeForComposerMode(mode: FikeyaAgentComposerMode): FikeyaAgentMode {
+	return mode === 'research' ? 'research' : 'agent';
+}
+
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
@@ -16,9 +25,9 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'configureProviderProfile'; readonly providerId: string; readonly profileLabel: string; readonly baseUrl: string; readonly model: string; readonly secret?: string }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
-	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly leadProviderName: string; readonly prompt: string; readonly maxConcurrency: number; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
-	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: FikeyaAgentComposerMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
+	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly leadProviderName: string; readonly prompt: string; readonly composerMode: FikeyaAgentComposerMode; readonly maxConcurrency: number; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: 'plan'; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
@@ -177,7 +186,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
 				|| images === undefined
 				|| files === undefined
-				|| (value.type === 'runAgent' && value.mode !== 'agent' && value.mode !== 'research')) {
+				// Runtime mode is derived below so untrusted UI code cannot select a different execution contract.
+				|| value.mode !== undefined) {
 				return undefined;
 			}
 			const request = {
@@ -190,9 +200,20 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				files,
 				allowNetwork: true as const
 			};
-			return value.type === 'runAgent'
-				? { type: 'runAgent', ...request, mode: value.mode as FikeyaAgentMode }
-				: { type: 'proposePlan', ...request };
+			if (value.type === 'runAgent') {
+				if (!isFikeyaAgentComposerMode(value.composerMode)) {
+					return undefined;
+				}
+				return {
+					type: 'runAgent',
+					...request,
+					composerMode: value.composerMode,
+					mode: runtimeModeForComposerMode(value.composerMode)
+				};
+			}
+			return value.composerMode === 'plan'
+				? { type: 'proposePlan', ...request, composerMode: 'plan' }
+				: undefined;
 		}
 		case 'runMultiAgent': {
 			if (!isProviderName(value.leadProviderName)
@@ -209,6 +230,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				|| typeof value.contextMaxCharacters !== 'number'
 				|| !isAgentComposerNumberValid(value.contextMaxCharacters, agentComposerConstraints.contextMaxCharacters)
 				|| (value.memoryMode !== 'auto' && value.memoryMode !== 'off' && value.memoryMode !== 'required')
+				|| !isFikeyaAgentComposerMode(value.composerMode)
 				|| !Array.isArray(value.selectedAgentIds)
 				|| value.selectedAgentIds.length < 1
 				|| value.selectedAgentIds.length > 16
@@ -221,6 +243,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				selectedAgentIds: value.selectedAgentIds as string[],
 				leadProviderName: value.leadProviderName,
 				prompt: value.prompt,
+				composerMode: value.composerMode,
 				maxConcurrency: value.maxConcurrency,
 				maxOutputTokens: value.maxOutputTokens,
 				contextMaxCharacters: value.contextMaxCharacters,
@@ -386,6 +409,10 @@ function hasBoundedFiniteJsonEncoding(value: unknown, maximumBytes: number): boo
 
 function isProviderName(value: unknown): value is string {
 	return typeof value === 'string' && providerNamePattern.test(value);
+}
+
+function isFikeyaAgentComposerMode(value: unknown): value is FikeyaAgentComposerMode {
+	return value === 'ask' || value === 'build' || value === 'review' || value === 'research';
 }
 
 function unwrapUiNotification(value: unknown): unknown {
