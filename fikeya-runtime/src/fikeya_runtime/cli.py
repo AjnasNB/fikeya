@@ -889,6 +889,15 @@ def _run_project(args: argparse.Namespace) -> int:
     else:
         raise AssertionError("argparse accepted an unknown project command")
 
+    _emit_protocol_message(
+        {
+            "type": "project_started",
+            "runId": record.run_id,
+            "stage": record.stage.value,
+            "revision": record.revision,
+        }
+    )
+
     async def approve(request: dict[str, object]) -> ApprovalDecision:
         _emit_protocol_message(request)
         response = await asyncio.to_thread(_read_protocol_message, 65_536)

@@ -85,6 +85,7 @@ class _FakeAutonomyRecord:
         self.plan_id = "plan_test"
         self.goal_sha256 = sha256_text(goal)
         self.stage = SimpleNamespace(value=stage)
+        self.revision = 1
         self.stop_reason = stop_reason
         self.can_resume = can_resume
 
@@ -212,12 +213,18 @@ def test_project_start_keeps_goal_off_argv_and_emits_durable_ids(
     )
     output = capsys.readouterr().out
     lines = [json.loads(line) for line in output.splitlines()]
-    assert lines[0]["requestId"] == "approval_test"
-    assert lines[1]["type"] == "project_result"
-    assert lines[1]["runId"] == "aut_test"
-    assert lines[1]["planId"] == "plan_test"
-    assert lines[1]["stage"] == "stopped"
-    assert lines[1]["nextAction"] == {
+    assert lines[0] == {
+        "type": "project_started",
+        "runId": "aut_test",
+        "stage": "plan",
+        "revision": 1,
+    }
+    assert lines[1]["requestId"] == "approval_test"
+    assert lines[2]["type"] == "project_result"
+    assert lines[2]["runId"] == "aut_test"
+    assert lines[2]["planId"] == "plan_test"
+    assert lines[2]["stage"] == "stopped"
+    assert lines[2]["nextAction"] == {
         "action": "review_plan",
         "planId": "plan_test",
     }
