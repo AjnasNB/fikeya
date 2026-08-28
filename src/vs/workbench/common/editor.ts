@@ -880,7 +880,13 @@ export const enum EditorInputCapabilities {
 	 * click, or close commands. Callers with an explicit lifecycle
 	 * requirement can force the editor to close.
 	 */
-	CannotClose = 1 << 13
+	CannotClose = 1 << 13,
+
+	/**
+	 * Signals that the active editor owns the complete editor surface and the
+	 * surrounding group title should not be rendered while it is active.
+	 */
+	HideEditorTitle = 1 << 14
 }
 
 export type IUntypedEditorInput = IResourceEditorInput | ITextResourceEditorInput | IUntitledTextResourceEditorInput | IResourceDiffEditorInput | IResourceMultiDiffEditorInput | IResourceSideBySideEditorInput | IResourceMergeEditorInput;

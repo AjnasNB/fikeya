@@ -548,6 +548,8 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 	}
 
 	private updateTitleContainer(): void {
+		const hideTitle = this.activeEditor?.hasCapability(EditorInputCapabilities.HideEditorTitle) === true;
+		this.titleContainer.style.display = hideTitle ? 'none' : '';
 		this.titleContainer.classList.toggle('tabs', this.groupsView.partOptions.showTabs === 'multiple');
 		this.titleContainer.classList.toggle('show-file-icons', this.groupsView.partOptions.showIcons);
 	}
@@ -616,6 +618,12 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 
 		// Focus
 		this._register(this.onDidFocus(() => this.onDidGainFocus()));
+
+		// Full-surface editors can own the editor area without a native tab strip.
+		this._register(this.onDidActiveEditorChange(() => {
+			this.updateTitleContainer();
+			this.relayout();
+		}));
 	}
 
 	private onDidGroupModelChange(e: IGroupModelChangeEvent): void {
@@ -946,7 +954,9 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 	}
 
 	get titleHeight(): IEditorGroupTitleHeight {
-		return this.titleControl.getHeight();
+		return this.activeEditor?.hasCapability(EditorInputCapabilities.HideEditorTitle)
+			? { total: 0, offset: 0 }
+			: this.titleControl.getHeight();
 	}
 
 	notifyIndexChanged(newIndex: number): void {
@@ -2192,7 +2202,7 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 
 		// Title control
 		const borderColor = this.getColor(EDITOR_GROUP_HEADER_BORDER) || this.getColor(contrastBorder);
-		if (!isEmpty && borderColor) {
+		if (!isEmpty && !this.activeEditor?.hasCapability(EditorInputCapabilities.HideEditorTitle) && borderColor) {
 			this.titleContainer.classList.add('title-border-bottom');
 			this.titleContainer.style.setProperty('--title-border-bottom-color', borderColor);
 		} else {
@@ -2234,10 +2244,13 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 		this.element.classList.toggle('max-height-478px', height <= 478);
 
 		// Keep title content full-width while the editor pane follows the content inset.
-		const titleControlSize = this.titleControl.layout({
-			container: new Dimension(width, height),
-			available: new Dimension(width, height - this.editorPane.minimumHeight)
-		});
+		const hideTitle = this.activeEditor?.hasCapability(EditorInputCapabilities.HideEditorTitle) === true;
+		const titleControlSize = hideTitle
+			? new Dimension(width, 0)
+			: this.titleControl.layout({
+				container: new Dimension(width, height),
+				available: new Dimension(width, height - this.editorPane.minimumHeight)
+			});
 
 		// Update progress bar location
 		this.progressBar.getContainer().style.top = `${Math.max(this.titleHeight.offset - 2, 0)}px`;
