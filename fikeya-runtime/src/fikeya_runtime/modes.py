@@ -100,10 +100,10 @@ MODE_POLICIES: dict[AgentMode, ModePolicy] = {
     ),
     AgentMode.REVIEW: ModePolicy(
         mode=AgentMode.REVIEW,
-        summary="Audit code and run approved checks without editing project files.",
-        tools=_WORKSPACE_READ_TOOLS | {"process.run"},
+        summary="Audit code and existing evidence without changing the workspace.",
+        tools=_WORKSPACE_READ_TOOLS,
         may_mutate_workspace=False,
-        may_run_processes=True,
+        may_run_processes=False,
         may_interact_with_web_pages=False,
     ),
     AgentMode.RESEARCH: ModePolicy(
@@ -129,4 +129,3 @@ def mode_policy(value: AgentMode | str) -> ModePolicy:
     except (TypeError, ValueError) as error:
         raise ConfigurationError(f"Unsupported Fikeya agent mode: {value!r}.") from error
     return MODE_POLICIES[mode]
-

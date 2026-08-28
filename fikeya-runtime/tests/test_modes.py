@@ -27,7 +27,7 @@ def test_only_build_mode_can_modify_workspace_files() -> None:
 
 def test_process_and_browser_access_are_explicit() -> None:
     assert mode_policy(AgentMode.BUILD).allows("process.run")
-    assert mode_policy(AgentMode.REVIEW).allows("process.run")
+    assert not mode_policy(AgentMode.REVIEW).allows("process.run")
     assert not mode_policy(AgentMode.ASK).allows("process.run")
     assert mode_policy(AgentMode.RESEARCH).allows("browser.snapshot")
     assert not mode_policy(AgentMode.PLAN).allows("browser.snapshot")
