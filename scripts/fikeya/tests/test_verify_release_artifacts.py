@@ -224,8 +224,9 @@ def _build_release(root: Path, *, include_installer: bool = False) -> ReleaseIde
             '$agentCore = Get-OneWheel "fikeya_agent_core-"',
             '$runtime = Get-OneWheel "fikeya_runtime-"',
             '$interop = Get-OneWheel "fikeya_interop-"',
-            '$runtimeRequirement = "fikeya-runtime[azure]"',
-            '& python -c "import azure.identity"',
+            '$runtimeRequirement = "fikeya-runtime[azure,browser]"',
+            '& python -m playwright install chromium-headless-shell',
+            '& python -c "import azure.identity; import playwright"',
             "",
         ]
     )

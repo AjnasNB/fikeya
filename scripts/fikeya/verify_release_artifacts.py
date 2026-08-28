@@ -335,11 +335,13 @@ def _verify_cli_bundle(
                 f"{cli_path.name} installer does not resolve the {distribution} wheel."
             )
     if (
-        "fikeya-runtime[azure]" not in installer_text
+        "fikeya-runtime[azure,browser]" not in installer_text
         or "import azure.identity" not in installer_text
+        or "import playwright" not in installer_text
+        or "playwright install chromium-headless-shell" not in installer_text
     ):
         raise ReleaseVerificationError(
-            f"{cli_path.name} installer does not prove Azure CLI support."
+            f"{cli_path.name} installer does not prove Azure and browser CLI support."
         )
 
 

@@ -22,6 +22,7 @@ if (-not $smokeRoot.StartsWith($buildPrefix, [System.StringComparison]::OrdinalI
 }
 
 New-Item -ItemType Directory -Path $smokeRoot | Out-Null
+$previousBrowserCache = $env:PLAYWRIGHT_BROWSERS_PATH
 try {
 	$bundleRoot = Join-Path $smokeRoot "bundle"
 	$venvRoot = Join-Path $smokeRoot "venv"
@@ -44,13 +45,20 @@ try {
 	}
 	$python = Join-Path $venvRoot "Scripts\python.exe"
 	$fikeya = Join-Path $venvRoot "Scripts\fikeya.exe"
+	$browserCache = Join-Path $smokeRoot "playwright-browsers"
+	New-Item -ItemType Directory -Path $browserCache | Out-Null
+	$env:PLAYWRIGHT_BROWSERS_PATH = $browserCache
 	& $installer -PythonCommand $python
 	if ($LASTEXITCODE -ne 0) {
-		throw "Could not install the shipped Fikeya wheels with Azure support."
+		throw "Could not install the shipped Fikeya wheels with Azure and browser support."
 	}
 	& $python -c "import azure.identity"
 	if ($LASTEXITCODE -ne 0) {
 		throw "The shipped Fikeya CLI does not include its Azure runtime dependency."
+	}
+	& $python -c "import playwright"
+	if ($LASTEXITCODE -ne 0) {
+		throw "The shipped Fikeya CLI does not include its Playwright runtime dependency."
 	}
 
 	$reportedVersion = @(& $fikeya --version)
@@ -72,6 +80,23 @@ try {
 		throw "Installed Fikeya coding smoke receipt is incomplete."
 	}
 
+	$browserSmokeRoot = Join-Path $smokeRoot "browser"
+	New-Item -ItemType Directory -Path $browserSmokeRoot | Out-Null
+	$browserReceiptText = @(& $python `
+		(Join-Path $PSScriptRoot "test_installed_cli_browser.py") `
+		--fikeya $fikeya `
+		--workspace $browserSmokeRoot `
+		--browser-cache $browserCache) -join "`n"
+	if ($LASTEXITCODE -ne 0) {
+		throw "Installed Fikeya CLI browser smoke failed."
+	}
+	$browserReceipt = $browserReceiptText | ConvertFrom-Json
+	if ($browserReceipt.schemaVersion -cne "fikeya.installed-cli-browser-smoke.v1" `
+		-or $browserReceipt.planStatus -cne "succeeded" `
+		-or $browserReceipt.privateHostConsent -cne "explicit") {
+		throw "Installed Fikeya CLI browser smoke receipt is incomplete."
+	}
+
 	[ordered]@{
 		ok = $true
 		publicVersion = $PublicVersion
@@ -80,8 +105,14 @@ try {
 		approvals = @($receipt.approvals)
 		changedFile = $receipt.changedFile
 		sessionStatus = $receipt.sessionStatus
+		browserPlanStatus = $browserReceipt.planStatus
 	} | ConvertTo-Json -Compress | Write-Output
 } finally {
+	if ($null -eq $previousBrowserCache) {
+		Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH -ErrorAction SilentlyContinue
+	} else {
+		$env:PLAYWRIGHT_BROWSERS_PATH = $previousBrowserCache
+	}
 	if (Test-Path -LiteralPath $smokeRoot) {
 		Remove-Item -LiteralPath $smokeRoot -Recurse -Force
 	}

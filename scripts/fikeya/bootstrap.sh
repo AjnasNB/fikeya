@@ -105,9 +105,10 @@ fi
 
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_NO_INPUT=1
-printf '%s\n' '[2/5] Installing Fikeya Agent Core and Runtime with the Azure identity extra'
+printf '%s\n' '[2/5] Installing Fikeya Agent Core and Runtime with Azure identity and browser support'
 "$RUNTIME_PYTHON" -m pip install --no-input --disable-pip-version-check \
-	--constraint "$CONSTRAINTS" "$AGENT_CORE_SOURCE" "$RUNTIME_SOURCE[azure]"
+	--constraint "$CONSTRAINTS" "$AGENT_CORE_SOURCE" "$RUNTIME_SOURCE[azure,browser]"
+"$RUNTIME_PYTHON" -m playwright install chromium-headless-shell
 
 export npm_config_cache=$CACHE_PATH/npm-cache
 printf '%s\n' '[3/5] Installing the locked Fikeya protocol dependencies'
