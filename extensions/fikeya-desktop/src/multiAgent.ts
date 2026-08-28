@@ -109,7 +109,9 @@ const defaultDependencies: FikeyaMultiAgentDependencies = {
 		profile.memoryMode,
 		workspacePath,
 		approvalHandler,
-		history
+		history,
+		[],
+		'ask'
 	),
 	loadAgentReceipts: loadFikeyaAgentReceipts,
 	now: () => Date.now(),

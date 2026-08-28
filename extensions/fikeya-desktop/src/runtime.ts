@@ -74,6 +74,7 @@ export interface FikeyaAgentUsage {
 }
 
 export type FikeyaMemoryMode = 'auto' | 'off' | 'required';
+export type FikeyaExecutionMode = 'ask' | 'build' | 'review' | 'research';
 
 export interface FikeyaAgentMemory {
 	readonly status: 'off' | 'unavailable' | 'used';
@@ -435,6 +436,7 @@ export function startFikeyaAgentRun(
 	approvalHandler: FikeyaAgentApprovalHandler,
 	history: readonly FikeyaProviderHistoryMessage[] = [],
 	images: readonly FikeyaImageInput[] = [],
+	mode: FikeyaExecutionMode = 'build',
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaAgentRunHandle {
@@ -448,6 +450,7 @@ export function startFikeyaAgentRun(
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
+		|| !['ask', 'build', 'review', 'research'].includes(mode)
 		|| !isValidProviderHistory(history)
 		|| !isImageInputs(images)) {
 		return {
@@ -458,7 +461,7 @@ export function startFikeyaAgentRun(
 	}
 
 	const operation = startAgentProtocolCli(
-		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
+		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode, mode),
 		workspacePath,
 		prompt,
 		history,
@@ -661,7 +664,8 @@ export function buildAgentRunArguments(
 	providerName: string,
 	maxOutputTokens: number,
 	contextMaxCharacters: number,
-	memoryMode: FikeyaMemoryMode
+	memoryMode: FikeyaMemoryMode,
+	mode: FikeyaExecutionMode = 'build'
 ): readonly string[] {
 	return [
 		'agent',
@@ -677,6 +681,8 @@ export function buildAgentRunArguments(
 		String(contextMaxCharacters),
 		'--memory',
 		memoryMode,
+		'--mode',
+		mode,
 		'--json-lines'
 	];
 }

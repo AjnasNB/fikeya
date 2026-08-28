@@ -173,7 +173,7 @@ describe('Fikeya runtime protocol', () => {
 			}], 2);
 			const operation = startFikeyaAgentRun(
 				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', [], [], protocolInvocation, process.env
+				async () => 'deny_once', [], [], 'build', protocolInvocation, process.env
 			);
 
 			assert.deepStrictEqual(await operation.result, {
@@ -314,10 +314,10 @@ describe('Fikeya runtime protocol', () => {
 
 	test('keeps prompt content out of agent process arguments', () => {
 		const prompt = 'private prompt content';
-		const args = buildAgentRunArguments('openrouter-primary', 2048, 12_000, 'auto');
+		const args = buildAgentRunArguments('openrouter-primary', 2048, 12_000, 'auto', 'review');
 		assert.deepStrictEqual(args.slice(0, 7), ['agent', 'execute', '.', '--provider', 'openrouter-primary', '--protocol-stdin', '--allow-network']);
 		assert.ok(!args.includes(prompt));
-		assert.deepStrictEqual(args.slice(-5), ['--context-max-characters', '12000', '--memory', 'auto', '--json-lines']);
+		assert.deepStrictEqual(args.slice(-7), ['--context-max-characters', '12000', '--memory', 'auto', '--mode', 'review', '--json-lines']);
 		assert.ok(args.includes('--context-max-characters'));
 		assert.ok(args.includes('--json-lines'));
 	});
@@ -333,7 +333,7 @@ describe('Fikeya runtime protocol', () => {
 			const agentCapturePath = await writeCapturingProtocolFixture(workspacePath, 'agent', agentOutput);
 			const agentOperation = startFikeyaAgentRun(
 				'fixture-provider', 'Continue the work.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', history, [], protocolInvocation, process.env
+				async () => 'deny_once', history, [], 'build', protocolInvocation, process.env
 			);
 			const agentResult = await agentOperation.result;
 
@@ -348,7 +348,7 @@ describe('Fikeya runtime protocol', () => {
 			const rejectedAgent = startFikeyaAgentRun(
 				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
 				async () => 'deny_once', Array.from({ length: 13 }, () => ({ role: 'user' as const, content: 'bounded' })),
-				[], protocolInvocation, process.env
+				[], 'build', protocolInvocation, process.env
 			);
 			const rejectedProposal = startFikeyaPlanProposal(
 				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
@@ -393,6 +393,7 @@ describe('Fikeya runtime protocol', () => {
 				async () => 'deny_once',
 				[],
 				[],
+				'build',
 				protocolInvocation,
 				process.env
 			);
@@ -458,7 +459,7 @@ describe('Fikeya runtime protocol', () => {
 					await approvalRelease;
 					return 'deny_once';
 				},
-				[], [], protocolInvocation, process.env
+				[], [], 'build', protocolInvocation, process.env
 			);
 			await approvalReached;
 			const observed: unknown[] = [];
@@ -484,7 +485,7 @@ describe('Fikeya runtime protocol', () => {
 			]);
 			const malformedAgent = startFikeyaAgentRun(
 				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', [], [], protocolInvocation, process.env
+				async () => 'deny_once', [], [], 'build', protocolInvocation, process.env
 			);
 			const malformedAgentProgress: unknown[] = [];
 			malformedAgent.onProgress(event => malformedAgentProgress.push(event));

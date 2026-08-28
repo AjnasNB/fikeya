@@ -159,6 +159,7 @@ try {
 		async () => 'deny_once',
 		[],
 		[],
+		'build',
 		invocation,
 		packagedEnvironment
 	).result;
