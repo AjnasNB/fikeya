@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from fikeya_agent_core import AgentNoProgressError
-from fikeya_runtime.cli import main
+from fikeya_runtime.cli import _parser, main
 from fikeya_runtime.errors import ProviderConnectivityError, SecretStoreUnavailable
 
 _ORIGINAL_SOCKET_CONNECT = socket.socket.connect
@@ -22,6 +22,36 @@ def test_cli_reports_the_installed_version(capsys: object) -> None:
 
     assert exit_info.value.code == 0
     assert capsys.readouterr().out == "fikeya 0.1.0b4\n"
+
+
+def test_agent_execute_mode_defaults_to_build_and_accepts_review() -> None:
+    parser = _parser()
+    default = parser.parse_args(
+        [
+            "agent",
+            "execute",
+            ".",
+            "--provider",
+            "local",
+            "--protocol-stdin",
+            "--json-lines",
+        ]
+    )
+    review = parser.parse_args(
+        [
+            "agent",
+            "execute",
+            ".",
+            "--provider",
+            "local",
+            "--protocol-stdin",
+            "--mode",
+            "review",
+            "--json-lines",
+        ]
+    )
+    assert default.mode == "build"
+    assert review.mode == "review"
 
 
 class _ProtocolInput:

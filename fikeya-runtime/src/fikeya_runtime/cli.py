@@ -31,6 +31,7 @@ from .errors import (
     SecretStoreUnavailable,
 )
 from .inference import MAX_REQUEST_BYTES, CancellationToken, parse_inference_images
+from .modes import AgentMode
 from .planning import (
     PLAN_PROPOSAL_PROTOCOL,
     PLAN_REQUEST_PROTOCOL,
@@ -183,6 +184,12 @@ def _parser() -> argparse.ArgumentParser:
     agent_execute.add_argument("--allow-network", action="store_true")
     agent_execute.add_argument("--timeout", type=float, default=60.0)
     agent_execute.add_argument("--max-output-tokens", type=int, default=1_024)
+    agent_execute.add_argument(
+        "--mode",
+        choices=[mode.value for mode in AgentMode],
+        default=AgentMode.BUILD.value,
+        help="Apply the matching deny-by-default tool boundary.",
+    )
     agent_execute.add_argument(
         "--memory",
         choices=("auto", "off", "required"),
@@ -851,6 +858,7 @@ def _run_coding_agent(
                     context_max_characters=args.context_max_characters,
                     history=history,
                     images=images,
+                    mode=args.mode,
                 )
             )
     except ProviderConnectivityError as error:
