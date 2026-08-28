@@ -5,12 +5,20 @@
 
 import * as vscode from 'vscode';
 import { createHash, randomBytes } from 'crypto';
-import { relative, resolve } from 'path';
+import { basename, relative, resolve } from 'path';
 import { FikeyaAgentProfile, FikeyaAgentProfileStore, FikeyaAgentRole } from './agentProfiles';
 import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderPrompt, FikeyaAgentMode, invokeAgentRunRequest } from './agentComposer';
 import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscriptions } from './azureDiscovery';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
-import { appendTextFilesToPrompt, FikeyaTextFileInput } from './fileInputs';
+import {
+	appendTextFilesToPrompt,
+	FikeyaTextFileInput,
+	isAllowedTextFileName,
+	maximumTextFileBytes,
+	maximumTextFileCount,
+	maximumTotalTextFileBytes,
+	parseTextFileInputs
+} from './fileInputs';
 import { escapeHtml, FikeyaAgentComposerMode, FikeyaComposerMode, parseWebviewMessage, runtimeModeForComposerMode } from './messageValidation';
 import { FikeyaImageInput } from './imageInputs';
 import { renderSafeMarkdown } from './markdown';
@@ -158,6 +166,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.chat.toggle', () => provider.toggleChatPane()));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.layout.project', () => provider.openWorkspacePanel('chat')));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.layout.editor', () => provider.openEditorLayout('chat')));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.chat.attachFiles', async (resource?: vscode.Uri, selectedResources?: readonly vscode.Uri[]) => {
+		await provider.attachExplorerFiles(resource, selectedResources);
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.configureProvider', async () => {
 		await provider.configureProvider();
 	}));
@@ -202,7 +213,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	if (hostCapabilities.isFikeyaProduct) {
 		const startupMode = vscode.workspace.getConfiguration('fikeya').get<string>('startupMode', 'project');
 		if (startupMode === 'project') {
-			provider.openWorkspacePanel('chat');
+			void provider.openWorkspacePanel('chat');
 		} else if (startupMode === 'editor') {
 			void provider.openEditorLayout('chat');
 		}
@@ -235,6 +246,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private activeProjectRunId: string | undefined;
 	private planCancellationInProgress = false;
 	private composerHasTransientAttachments = false;
+	private lastAcceptedComposerRequestId: string | undefined;
+	private pendingComposerFiles: readonly FikeyaTextFileInput[] = [];
 	private previousConversation: readonly FikeyaConversationMessage[] | undefined;
 	private readonly agentProfileStore: FikeyaAgentProfileStore;
 	private lastSourceDocument: vscode.Uri | undefined;
@@ -302,7 +315,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			binding?.dispose();
 		});
 		this.viewBinding = vscode.Disposable.from(messageSubscription, disposeSubscription);
-		this.initializeSurface();
+		this.initializeSurface(webviewView.webview);
 	}
 
 	public async focusEditor(): Promise<void> {
@@ -330,7 +343,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 	public async openDefaultLayout(mode: FikeyaWorkspaceMode = 'chat'): Promise<void> {
 		if (this.hostCapabilities.isFikeyaProduct) {
-			this.openWorkspacePanel(mode);
+			await this.openWorkspacePanel(mode);
 			return;
 		}
 		await this.openEditorLayout(mode);
@@ -349,18 +362,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 	}
 
-	public openWorkspacePanel(mode: FikeyaWorkspaceMode = 'chat'): void {
+	public async openWorkspacePanel(mode: FikeyaWorkspaceMode = 'chat'): Promise<void> {
 		this.state = { ...this.state, activeMode: mode };
-		void vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+		await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
 		if (this.panel) {
-			this.refresh();
-			this.panel.reveal(undefined, false);
+			this.refresh(this.panel.webview);
+			this.panel.reveal(vscode.ViewColumn.Active, false);
 			return;
 		}
 
 		this.panelBinding?.dispose();
 		const viewColumn = this.hostCapabilities.isFikeyaProduct
-			? vscode.ViewColumn.One
+			? vscode.ViewColumn.Active
 			: vscode.ViewColumn.Beside;
 		const panel = vscode.window.createWebviewPanel(
 			FikeyaWebviewViewProvider.panelViewType,
@@ -385,7 +398,28 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			binding?.dispose();
 		});
 		this.panelBinding = vscode.Disposable.from(messageSubscription, disposeSubscription);
-		this.initializeSurface();
+		this.initializeSurface(panel.webview);
+	}
+
+	public async attachExplorerFiles(resource?: vscode.Uri, selectedResources?: readonly vscode.Uri[]): Promise<void> {
+		const candidates = selectedResources?.length ? selectedResources : resource ? [resource] : [];
+		if (candidates.length === 0) {
+			await this.pickMentionFiles('workspace');
+			return;
+		}
+		if (candidates.length > maximumTextFileCount) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Select no more than 10 files for one message.'));
+			return;
+		}
+		const files = await this.readMentionFiles(candidates);
+		if (files.length === 0) {
+			return;
+		}
+		this.pendingComposerFiles = files;
+		await this.openEditorLayout('chat');
+		if (this.view) {
+			await this.deliverPendingComposerFiles(this.view.webview);
+		}
 	}
 
 	public dispose(): void {
@@ -412,14 +446,129 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 	private bindWebview(webview: vscode.Webview): vscode.Disposable {
 		return webview.onDidReceiveMessage(value => {
-			void this.handleWebviewMessage(value).catch(() => {
+			void this.handleWebviewMessage(value, webview).catch(() => {
 				void vscode.window.showErrorMessage(vscode.l10n.t('Fikeya could not process that action. Try again or run doctor.'));
 			});
 		});
 	}
 
-	private initializeSurface(): void {
-		this.refresh();
+	private acceptComposerRequest(requestId?: string): void {
+		this.composerHasTransientAttachments = false;
+		this.lastAcceptedComposerRequestId = requestId;
+	}
+
+	private async rejectComposerRequest(webview: vscode.Webview, requestId: string | undefined, message: string): Promise<void> {
+		if (!requestId) {
+			return;
+		}
+		await webview.postMessage({ type: 'fikeya.composerRequestRejected', requestId, message });
+	}
+
+	private async deliverPendingComposerFiles(webview: vscode.Webview): Promise<void> {
+		if (this.pendingComposerFiles.length === 0) {
+			return;
+		}
+		const files = this.pendingComposerFiles;
+		this.pendingComposerFiles = [];
+		await webview.postMessage({ type: 'fikeya.composerFilesPicked', files });
+	}
+
+	private async pickMentionFiles(source: 'workspace' | 'computer', target?: vscode.Webview): Promise<void> {
+		let uris: readonly vscode.Uri[] | undefined;
+		if (source === 'workspace') {
+			const workspaceFiles = (await vscode.workspace.findFiles(
+				'**/*',
+				'**/{.git,.fikeya,.venv,node_modules,dist,build,out,coverage}/**',
+				1_000
+			)).filter(uri => uri.scheme === 'file' && isAllowedTextFileName(basename(uri.fsPath)));
+			const picked = await vscode.window.showQuickPick(
+				workspaceFiles.map(uri => ({
+					label: vscode.workspace.asRelativePath(uri, false).replaceAll('\\', '/'),
+					description: vscode.workspace.getWorkspaceFolder(uri)?.name,
+					uri
+				})),
+				{
+					canPickMany: true,
+					matchOnDescription: true,
+					placeHolder: vscode.l10n.t('Mention up to 10 workspace files'),
+					title: vscode.l10n.t('Add workspace files to this message')
+				}
+			);
+			uris = picked?.map(item => item.uri);
+		} else {
+			uris = await vscode.window.showOpenDialog({
+				canSelectFiles: true,
+				canSelectFolders: false,
+				canSelectMany: true,
+				defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+				filters: { [vscode.l10n.t('Text and code files')]: ['txt', 'md', 'json', 'jsonc', 'js', 'jsx', 'ts', 'tsx', 'py', 'go', 'rs', 'java', 'cs', 'cpp', 'c', 'h', 'html', 'css', 'scss', 'xml', 'yaml', 'yml', 'toml', 'ini', 'sql', 'sh', 'ps1'] },
+				openLabel: vscode.l10n.t('Mention files'),
+				title: vscode.l10n.t('Add files from this computer')
+			});
+		}
+		if (!uris || uris.length === 0) {
+			return;
+		}
+		if (uris.length > maximumTextFileCount) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Select no more than 10 files for one message.'));
+			return;
+		}
+		const files = await this.readMentionFiles(uris);
+		if (files.length === 0) {
+			return;
+		}
+		if (target) {
+			await target.postMessage({ type: 'fikeya.composerFilesPicked', files });
+			return;
+		}
+		this.pendingComposerFiles = files;
+		await this.openEditorLayout('chat');
+	}
+
+	private async readMentionFiles(uris: readonly vscode.Uri[]): Promise<readonly FikeyaTextFileInput[]> {
+		const inputs: FikeyaTextFileInput[] = [];
+		let totalBytes = 0;
+		for (const uri of uris) {
+			if (uri.scheme !== 'file' || inputs.length >= maximumTextFileCount) {
+				continue;
+			}
+			const name = basename(uri.fsPath);
+			if (!isAllowedTextFileName(name)) {
+				void vscode.window.showWarningMessage(vscode.l10n.t('{0} was skipped because only supported text/code files can be mentioned. Credential and key files are blocked.', name));
+				continue;
+			}
+			try {
+				const stat = await vscode.workspace.fs.stat(uri);
+				if ((stat.type & vscode.FileType.File) === 0 || stat.size < 1 || stat.size > maximumTextFileBytes || totalBytes + stat.size > maximumTotalTextFileBytes) {
+					void vscode.window.showWarningMessage(vscode.l10n.t('{0} was skipped because mentioned text files are limited to 96 KB each and 384 KB total.', name));
+					continue;
+				}
+				const bytes = await vscode.workspace.fs.readFile(uri);
+				const text = Buffer.from(bytes).toString('utf8');
+				if (text.includes('\u0000') || !Buffer.from(text, 'utf8').equals(Buffer.from(bytes))) {
+					void vscode.window.showWarningMessage(vscode.l10n.t('{0} was skipped because it is not canonical UTF-8 text.', name));
+					continue;
+				}
+				const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+				const relativePath = workspaceFolder
+					? relative(workspaceFolder.uri.fsPath, uri.fsPath).replaceAll('\\', '/')
+					: `external/${createHash('sha256').update(uri.fsPath).digest('hex').slice(0, 8)}/${name}`;
+				inputs.push({ name, relativePath, mimeType: 'text/plain', text, sizeBytes: bytes.byteLength });
+				totalBytes += bytes.byteLength;
+			} catch {
+				void vscode.window.showWarningMessage(vscode.l10n.t('{0} could not be read and was not attached.', name));
+			}
+		}
+		const parsed = parseTextFileInputs(inputs);
+		if (!parsed) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('The selected file set did not pass Fikeya attachment validation.'));
+			return [];
+		}
+		return parsed;
+	}
+
+	private initializeSurface(webview?: vscode.Webview): void {
+		this.refresh(webview);
 		if (this.state.providersStatus === 'not-loaded') {
 			void this.refreshProviders(false);
 		}
@@ -437,13 +586,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 	}
 
-	private async handleWebviewMessage(value: unknown): Promise<void> {
+	private async handleWebviewMessage(value: unknown, source: vscode.Webview): Promise<void> {
 		const message = parseWebviewMessage(value);
 		if (!message) {
 			return;
 		}
 
 		switch (message.type) {
+			case 'webviewReady':
+				await this.deliverPendingComposerFiles(source);
+				break;
+			case 'pickMentionFiles':
+				await this.pickMentionFiles(message.source, source);
+				break;
 			case 'openCommand':
 				await vscode.commands.executeCommand(message.command);
 				break;
@@ -462,23 +617,52 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			case 'removeProvider':
 				await this.removeProvider(message.providerName);
 				break;
-			case 'runAgent':
-				this.composerHasTransientAttachments = false;
+			case 'runAgent': {
+				let accepted = false;
 				await invokeAgentRunRequest(message, async (providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, images, files) => {
-					await this.runAgent(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, message.composerMode, images, files);
+					await this.runAgent(providerName, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, mode, message.composerMode, images, files, new Set(), projectProviderHistory(this.state.conversation), () => {
+						accepted = true;
+						this.acceptComposerRequest(message.requestId);
+					});
 				});
+				if (!accepted) {
+					await this.rejectComposerRequest(source, message.requestId, vscode.l10n.t('Fikeya could not start this run. Check the selected model, workspace, and active tasks.'));
+				}
 				break;
-			case 'runMultiAgent':
-				await this.runMultiAgent(message.selectedAgentIds, message.leadProviderName, message.prompt, message.composerMode, message.maxConcurrency, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode);
+			}
+			case 'runMultiAgent': {
+				let accepted = false;
+				await this.runMultiAgent(message.selectedAgentIds, message.leadProviderName, message.prompt, message.composerMode, message.maxConcurrency, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode, () => {
+					accepted = true;
+					this.acceptComposerRequest(message.requestId);
+				});
+				if (!accepted) {
+					await this.rejectComposerRequest(source, message.requestId, vscode.l10n.t('Fikeya could not start the parallel run. Review the selected agents and active tasks.'));
+				}
 				break;
-			case 'proposePlan':
-				this.composerHasTransientAttachments = false;
-				await this.proposePlan(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode, message.images, message.files);
+			}
+			case 'proposePlan': {
+				let accepted = false;
+				await this.proposePlan(message.providerName, message.prompt, message.maxOutputTokens, message.contextMaxCharacters, message.memoryMode, message.images, message.files, () => {
+					accepted = true;
+					this.acceptComposerRequest(message.requestId);
+				});
+				if (!accepted) {
+					await this.rejectComposerRequest(source, message.requestId, vscode.l10n.t('Fikeya could not start the plan proposal. Check the selected model and active tasks.'));
+				}
 				break;
-			case 'startProject':
-				this.composerHasTransientAttachments = false;
-				await this.startProject(message.providerName, message.goal);
+			}
+			case 'startProject': {
+				let accepted = false;
+				await this.startProject(message.providerName, message.goal, () => {
+					accepted = true;
+					this.acceptComposerRequest(message.requestId);
+				});
+				if (!accepted) {
+					await this.rejectComposerRequest(source, message.requestId, vscode.l10n.t('Fikeya could not start the project. Resolve the current project or provider state and try again.'));
+				}
 				break;
+			}
 			case 'projectAction':
 				await this.runProjectAction(message.action, message.goal, message.providerName);
 				break;
@@ -952,7 +1136,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		images: readonly FikeyaImageInput[] = [],
 		files: readonly FikeyaTextFileInput[] = [],
 		attemptedProviderNames: ReadonlySet<string> = new Set(),
-		providerHistory = projectProviderHistory(this.state.conversation)
+		providerHistory = projectProviderHistory(this.state.conversation),
+		onAccepted?: () => void
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
@@ -982,6 +1167,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			}
 		};
 		await this.persistConversation();
+		onAccepted?.();
 		this.refresh();
 		const operation = startFikeyaAgentRun(
 			providerName,
@@ -1112,7 +1298,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		maxConcurrency: number,
 		maxOutputTokens: number,
 		contextMaxCharacters: number,
-		memoryMode: FikeyaMemoryMode
+		memoryMode: FikeyaMemoryMode,
+		onAccepted?: () => void
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const selectedProfiles = this.state.agentProfiles.filter(profile => selectedAgentIds.includes(profile.id));
@@ -1152,6 +1339,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			}
 		};
 		await this.persistConversation();
+		onAccepted?.();
 		this.refresh();
 
 		const operation = startFikeyaMultiAgentRun({
@@ -1263,7 +1451,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		contextMaxCharacters: number,
 		memoryMode: FikeyaMemoryMode,
 		images: readonly FikeyaImageInput[] = [],
-		files: readonly FikeyaTextFileInput[] = []
+		files: readonly FikeyaTextFileInput[] = [],
+		onAccepted?: () => void
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
@@ -1283,6 +1472,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			}
 		};
 		await this.persistConversation();
+		onAccepted?.();
 		this.refresh();
 		const operation = startFikeyaPlanProposal(
 			providerName,
@@ -1500,7 +1690,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			?? this.context.workspaceState.get<string>(FikeyaWebviewViewProvider.currentProjectKey);
 	}
 
-	private async startProject(providerName: string, goal: string): Promise<void> {
+	private async startProject(providerName: string, goal: string, onAccepted?: () => void): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
 		if (!workspacePath || !profile || this.activeAgentRun || this.activeMultiAgentRun
@@ -1527,6 +1717,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			agent: { status: 'idle', receiptsStatus: 'idle', receipts: [] }
 		};
 		await this.persistConversation();
+		onAccepted?.();
 		this.refresh();
 		const operation = startFikeyaProject(
 			'start', providerName, goal, workspacePath,
@@ -2017,20 +2208,20 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		void vscode.window.showInformationMessage(command === 'doctor' ? vscode.l10n.t('Fikeya doctor completed.') : vscode.l10n.t('Fikeya workspace initialized.'));
 	}
 
-	private refresh(): void {
-		if (this.composerHasTransientAttachments) {
+	private refresh(forceWebview?: vscode.Webview): void {
+		if (this.composerHasTransientAttachments && !forceWebview) {
 			return;
 		}
-		if (this.view) {
+		if (this.view && (!forceWebview || forceWebview === this.view.webview)) {
 			this.view.webview.html = this.getHtml(this.view.webview, 'sidebar');
 		}
-		if (this.panel) {
+		if (this.panel && (!forceWebview || forceWebview === this.panel.webview)) {
 			this.panel.webview.html = this.getHtml(this.panel.webview, 'editor');
 		}
 	}
 
 	private getHtml(webview: vscode.Webview, surface: 'sidebar' | 'editor'): string {
-		const nonce = randomBytes(16).toString('base64');
+		const nonce = randomBytes(16).toString('hex');
 		const strings = getWebviewStrings();
 		const providerCards = renderProviderCards(this.state, strings);
 		const planOperationInProgress = this.activePlanRun !== undefined || this.planCancellationInProgress;
@@ -2061,7 +2252,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const usageSurface = `${statisticsSurface}${this.state.agent.outcome ? `<section class="card">${renderCodingOutcome(this.state.agent.outcome, strings)}</section>` : ''}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
 		const closeOverlay = `<button class="quiet overlay-close" data-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">${escapeHtml(vscode.l10n.t('Close'))}</button>`;
 		const currentLayout = surface === 'editor' ? 'project' : 'editor';
-		const chatWorkspace = `<div class="active-surface" data-initial-modal="${initialModal}" data-plan-id="${escapeHtml(this.state.plan.record?.planId ?? '')}">
+		const chatWorkspace = `<div class="active-surface" data-initial-modal="${initialModal}" data-plan-id="${escapeHtml(this.state.plan.record?.planId ?? '')}" data-accepted-request-id="${escapeHtml(this.lastAcceptedComposerRequestId ?? '')}">
 			<nav class="workspace-navigation" aria-label="${escapeHtml(vscode.l10n.t('Fikeya workspace'))}">
 				<div class="workspace-current"><img class="workspace-mark" src="${logoUri}" alt=""><strong>${escapeHtml(vscode.l10n.t('Fikeya Chat'))}</strong><span class="workspace-label" title="${escapeHtml(this.state.workspaceName)}">${escapeHtml(this.state.workspaceName)}</span></div>
 				<label class="layout-switch"><span class="sr-only">${escapeHtml(vscode.l10n.t('Workspace view'))}</span><select data-layout-switch aria-label="${escapeHtml(vscode.l10n.t('Workspace view'))}" title="${escapeHtml(vscode.l10n.t('Switch workspace view'))}"><option value="project"${currentLayout === 'project' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Project UI'))}</option><option value="editor"${currentLayout === 'editor' ? ' selected' : ''}>${escapeHtml(vscode.l10n.t('Editor + Chat'))}</option></select></label>
@@ -2088,7 +2279,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const sidebarContent = chatWorkspace;
 		const editorContent = chatWorkspace;
 
-		return `<!DOCTYPE html>
+		return String.raw`<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
@@ -2322,11 +2513,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			.composer-actions { margin-left: auto; flex-wrap: nowrap; justify-content: end; }
 			.composer-actions button { display: grid; width: 32px; min-width: 32px; min-height: 30px; place-items: center; padding: 0; border-radius: 999px; font-size: 17px; line-height: 1; }
 			.composer-icon { display: grid; width: 30px; min-width: 30px; min-height: 30px; place-items: center; padding: 0; border-color: transparent; }
-			.composer-attach { position: relative; }
-			.composer-attach > summary { display: grid; width: 30px; min-width: 30px; min-height: 30px; place-items: center; border: 1px solid transparent; border-radius: 999px; cursor: pointer; font-size: 17px; list-style: none; }
-			.composer-attach > summary::-webkit-details-marker { display: none; }
-			.composer-attach[open] > summary { border-color: var(--vscode-focusBorder); background: var(--vscode-toolbar-hoverBackground); }
-			.composer-attach-menu { position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 34; display: grid; width: 190px; gap: 1px; padding: 5px; border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border)); border-radius: 9px; background: var(--vscode-menu-background); box-shadow: 0 8px 24px var(--vscode-widget-shadow); }
+			.composer-attach, .composer-mention { position: relative; }
+			.composer-attach > summary, .composer-mention > summary { display: grid; width: 30px; min-width: 30px; min-height: 30px; place-items: center; border: 1px solid transparent; border-radius: 999px; cursor: pointer; font-size: 17px; list-style: none; }
+			.composer-attach > summary::-webkit-details-marker, .composer-mention > summary::-webkit-details-marker { display: none; }
+			.composer-attach[open] > summary, .composer-mention[open] > summary { border-color: var(--vscode-focusBorder); background: var(--vscode-toolbar-hoverBackground); }
+			.composer-attach-menu { position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 34; display: grid; width: 210px; gap: 1px; padding: 5px; border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border)); border-radius: 9px; background: var(--vscode-menu-background); box-shadow: 0 8px 24px var(--vscode-widget-shadow); }
 			.composer-attach-menu button { min-height: 30px; border: 0; color: var(--vscode-menu-foreground); background: transparent; text-align: left; }
 			.composer-attach-menu button:hover { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
 			.composer-route { position: relative; }
@@ -2477,6 +2668,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	<script id="fikeya-memory-graph-data" type="application/json" nonce="${nonce}">${memoryGraphData}</script>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
+		document.addEventListener('submit', event => event.preventDefault(), true);
 		const persistedState = vscode.getState() || {};
 		const postUi = (type, payload = {}) => vscode.postMessage({
 			jsonrpc: '2.0',
@@ -2485,8 +2677,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		});
 		const persistUiState = patch => vscode.setState({ ...(vscode.getState() || {}), ...patch });
 		const surfaceRoot = document.querySelector('[data-initial-modal]');
+		const acceptedComposerRequestId = surfaceRoot?.dataset.acceptedRequestId || '';
+		if (acceptedComposerRequestId && persistedState.pendingComposerRequestId === acceptedComposerRequestId) {
+			persistedState.chatDraft = '';
+			persistedState.pendingComposerRequestId = '';
+			persistUiState({ chatDraft: '', pendingComposerRequestId: '' });
+		}
 		const layoutSwitch = document.querySelector('[data-layout-switch]');
 		layoutSwitch?.addEventListener('change', () => {
+			layoutSwitch.disabled = true;
 			const command = layoutSwitch.value === 'project' ? 'fikeya.layout.project' : 'fikeya.layout.editor';
 			postUi('openCommand', { command });
 		});
@@ -2748,7 +2947,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			hasAttachments: attachmentReadCount > 0 || imageAttachments.length > 0 || textFileAttachments.length > 0
 		});
 		const imageLimits = { count: 4, each: 393216, total: 524288 };
-		const textFileLimits = { count: 8, each: 98304, total: 393216 };
+		const textFileLimits = { count: 10, each: 98304, total: 393216 };
 		const textFileExtensions = new Set([
 			'.bash', '.bat', '.c', '.cc', '.cfg', '.cjs', '.cmd', '.conf', '.cpp', '.cs', '.css', '.cts', '.dart',
 			'.fish', '.fs', '.fsx', '.go', '.h', '.hpp', '.htm', '.html', '.ini', '.java', '.js', '.json', '.jsonc',
@@ -2892,12 +3091,32 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return { name: file.name, relativePath, mimeType: 'text/plain', text, sizeBytes: file.size };
 		};
 		const addTextFiles = async items => {
-			if (textFileAttachments.length + items.length > textFileLimits.count) throw new Error('Attach up to eight text files per message.');
+			if (textFileAttachments.length + items.length > textFileLimits.count) throw new Error('Attach up to ten text files per message.');
 			const normalized = [];
 			for (const item of items) normalized.push(await normalizeTextFile(item));
 			const total = [...textFileAttachments, ...normalized].reduce((sum, candidate) => sum + candidate.sizeBytes, 0);
 			if (total > textFileLimits.total) throw new Error('Text files must use 384 KB or less in total.');
+			const knownPaths = new Set(textFileAttachments.map(candidate => candidate.relativePath));
+			textFileAttachments = [...textFileAttachments, ...normalized.filter(candidate => !knownPaths.has(candidate.relativePath))];
+		};
+		const addMentionedFiles = files => {
+			const incoming = Array.isArray(files) ? files : [];
+			const knownPaths = new Set(textFileAttachments.map(candidate => candidate.relativePath));
+			const normalized = incoming.filter(file => file && typeof file.name === 'string' && typeof file.relativePath === 'string' && typeof file.text === 'string' && file.mimeType === 'text/plain' && Number.isSafeInteger(file.sizeBytes) && file.sizeBytes > 0 && file.sizeBytes <= textFileLimits.each && new TextEncoder().encode(file.text).byteLength === file.sizeBytes && !knownPaths.has(file.relativePath));
+			if (textFileAttachments.length + normalized.length > textFileLimits.count || [...textFileAttachments, ...normalized].reduce((sum, file) => sum + file.sizeBytes, 0) > textFileLimits.total) {
+				setComposerStatus('Mention up to ten text files using 384 KB or less in total.');
+				return;
+			}
 			textFileAttachments = [...textFileAttachments, ...normalized];
+			if (promptField && normalized.length > 0) {
+				const mentions = normalized.map(file => '@' + file.relativePath).join(' ');
+				const before = promptField.value;
+				promptField.value = /(^|\s)@$/.test(before) ? before.replace(/@$/, mentions + ' ') : before + (before && !/\s$/.test(before) ? ' ' : '') + mentions + ' ';
+				promptField.dispatchEvent(new Event('input', { bubbles: true }));
+			}
+			renderAttachments();
+			setComposerStatus(normalized.length + (normalized.length === 1 ? ' file mentioned.' : ' files mentioned.'));
+			promptField?.focus();
 		};
 		const addAttachmentItems = async items => {
 			if (promptField?.disabled) return;
@@ -2958,6 +3177,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return selectedItems(transfer?.files);
 		};
 		const attachmentDetails = agentForm?.querySelector('.composer-attach');
+		agentForm?.querySelector('[data-mention-workspace]')?.addEventListener('click', event => {
+			event.currentTarget.closest('details')?.removeAttribute('open');
+			postUi('pickMentionFiles', { source: 'workspace' });
+		});
+		agentForm?.querySelector('[data-mention-computer]')?.addEventListener('click', event => {
+			event.currentTarget.closest('details')?.removeAttribute('open');
+			postUi('pickMentionFiles', { source: 'computer' });
+		});
 		attachFilesButton?.addEventListener('click', () => {
 			attachmentDetails?.removeAttribute('open');
 			attachmentInput?.click();
@@ -3013,6 +3240,26 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				.catch(error => setComposerStatus(error instanceof Error ? error.message : 'Dropped files could not be read.'));
 		});
 		if (promptField && typeof persistedState.chatDraft === 'string') promptField.value = persistedState.chatDraft;
+		promptField?.addEventListener('input', event => {
+			if (event instanceof InputEvent && event.inputType === 'insertText' && event.data === '@' && /(^|\s)@$/.test(promptField.value.slice(0, promptField.selectionStart ?? promptField.value.length))) {
+				postUi('pickMentionFiles', { source: 'workspace' });
+			}
+		});
+		window.addEventListener('message', event => {
+			const message = event.data;
+			if (message?.type === 'fikeya.composerFilesPicked') {
+				addMentionedFiles(message.files);
+				return;
+			}
+			if (message?.type === 'fikeya.composerRequestRejected' && message.requestId === (vscode.getState() || {}).pendingComposerRequestId) {
+				persistUiState({ pendingComposerRequestId: '' });
+				setComposerStatus(typeof message.message === 'string' ? message.message : 'Fikeya could not start this request.');
+				if (runButton) runButton.disabled = !promptField?.value.trim();
+				if (planButton) planButton.disabled = false;
+				promptField?.focus();
+			}
+		});
+		postUi('webviewReady');
 		if (chatModeField && ['ask', 'plan', 'build', 'review', 'research'].includes(persistedState.chatMode)) chatModeField.value = persistedState.chatMode;
 		if (providerField && Array.from(providerField.options).some(option => option.value === persistedState.chatProvider)) providerField.value = persistedState.chatProvider;
 		const persistedAgentIds = Array.isArray(persistedState.chatAgentIds) ? persistedState.chatAgentIds : [];
@@ -3150,12 +3397,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				setRunButtonsDisabled(true);
 				hideNetworkConfirmation();
 				networkConsent.checked = false;
-				imageAttachments = [];
-				textFileAttachments = [];
-				renderAttachments();
-				persistUiState({ chatDraft: '' });
+				const requestId = typeof crypto.randomUUID === 'function'
+					? crypto.randomUUID().replaceAll('-', '')
+					: 'req_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
+				persistUiState({ chatDraft: promptField?.value || '', pendingComposerRequestId: requestId });
 				const actionType = action === 'project' ? 'startProject' : action === 'plan' ? 'proposePlan' : action === 'multitask' ? 'runMultiAgent' : 'runAgent';
-				postUi(actionType, request);
+				postUi(actionType, { ...request, requestId });
 			};
 			agentForm.addEventListener('submit', event => {
 				event.preventDefault();
@@ -3163,6 +3410,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			});
 			planButton?.addEventListener('click', () => {
 				executeAgentAction('plan');
+			});
+			runButton.addEventListener('click', () => {
+				executeAgentAction(chatModeField?.value === 'plan' ? 'project' : parallelAgentsEnabled ? 'multitask' : 'run');
 			});
 			document.querySelector('[data-audited-project-run]')?.addEventListener('click', () => executeAgentAction('project'));
 			document.querySelector('[data-draft-plan-only]')?.addEventListener('click', () => executeAgentAction('plan'));
@@ -3864,12 +4114,13 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 			<p class="composer-mode-help" id="composer-mode-help" data-composer-mode-help role="status">${escapeHtml(initialComposerDefinition.behavior)}</p>
 			<div class="composer-bar">
 				<details class="composer-attach"><summary aria-label="${escapeHtml(vscode.l10n.t('Attach files or images'))}" title="${escapeHtml(vscode.l10n.t('Attach, paste, or drop files'))}"><span aria-hidden="true">＋</span></summary><div class="composer-attach-menu"><button data-attach-files type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Files or images'))}</button><button data-attach-folder type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Folder'))}</button></div></details>
+				<details class="composer-mention"><summary aria-label="${escapeHtml(vscode.l10n.t('Mention files'))}" title="${escapeHtml(vscode.l10n.t('Mention up to 10 files'))}"><span aria-hidden="true">@</span></summary><div class="composer-attach-menu"><button data-mention-workspace type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Workspace files'))}</button><button data-mention-computer type="button"${controlsDisabled ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('Files from this computer'))}</button></div></details>
 				<label class="field composer-mode"><span class="sr-only">${escapeHtml(vscode.l10n.t('Mode'))}</span><select name="chatMode" aria-label="${escapeHtml(vscode.l10n.t('Chat mode'))}" aria-describedby="composer-mode-help"${controlsDisabled ? ' disabled' : ''}>${composerModeOptions}</select></label>
 				<button class="composer-icon" data-audited-project-run type="button"${controlsDisabled ? ' disabled' : ''} aria-label="${escapeHtml(vscode.l10n.t('Run as an audited project'))}" title="${escapeHtml(vscode.l10n.t('Run as an audited project'))}"><span aria-hidden="true">◎</span></button>
 				<label class="field inline-field" data-single-provider><span class="sr-only">${escapeHtml(strings.provider)}</span><select name="providerName" aria-label="${escapeHtml(vscode.l10n.t('Model provider'))}" title="${escapeHtml(vscode.l10n.t('Choose a model'))}"${providerControlsDisabled ? ' disabled' : ''}>${providerOptions}</select></label>
 				<details class="agent-picker" data-agent-picker hidden><summary>${escapeHtml(vscode.l10n.t('Agents'))}<span data-agent-count>0</span></summary><div class="agent-picker-menu"><strong>${escapeHtml(vscode.l10n.t('Parallel advisory agents'))}</strong><p class="muted">${escapeHtml(vscode.l10n.t('Select independent planning, research, or review agents. Approvals remain serialized.'))}</p>${agentProfileOptions}<label class="field"><span>${escapeHtml(vscode.l10n.t('Maximum parallel agents'))}</span><select name="maxConcurrency"${controlsDisabled ? ' disabled' : ''}><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option></select></label><button class="secondary" data-command="fikeya.configureAgents" type="button">${escapeHtml(vscode.l10n.t('Configure agents'))}</button></div></details>
 				<details class="composer-route"><summary aria-label="${escapeHtml(vscode.l10n.t('Model, context, and chat actions'))}" title="${escapeHtml(vscode.l10n.t('More'))}">•••</summary><div class="composer-route-menu"><div class="composer-menu-controls"><label class="field"><span>${escapeHtml(strings.contextMode)}</span><select name="memoryMode"${controlsDisabled ? ' disabled' : ''}><option value="${agentComposerDefaults.memoryMode}">${escapeHtml(strings.contextAuto)}</option><option value="required">${escapeHtml(strings.contextRequired)}</option><option value="off">${escapeHtml(strings.contextOff)}</option></select></label><label class="field"><span>${escapeHtml(strings.contextBudget)}</span><input name="contextMaxCharacters" type="number" min="${agentComposerConstraints.contextMaxCharacters.minimum}" max="${agentComposerConstraints.contextMaxCharacters.maximum}" step="${agentComposerConstraints.contextMaxCharacters.step}" value="${agentComposerDefaults.contextMaxCharacters}"${controlsDisabled ? ' disabled' : ''} required></label><label class="field"><span>${escapeHtml(strings.maximumOutputTokens)}</span><input name="maxOutputTokens" type="number" min="${agentComposerConstraints.maxOutputTokens.minimum}" max="${agentComposerConstraints.maxOutputTokens.maximum}" step="${agentComposerConstraints.maxOutputTokens.step}" value="${agentComposerDefaults.maxOutputTokens}"${controlsDisabled ? ' disabled' : ''} required></label></div><nav aria-label="${escapeHtml(vscode.l10n.t('Chat actions'))}"><button data-provider-modal-open type="button">${escapeHtml(vscode.l10n.t('Configure models'))}</button><button data-parallel-toggle type="button" aria-pressed="false">${escapeHtml(vscode.l10n.t('Parallel advisory agents'))}</button><button data-command="fikeya.mode.editor" type="button">${escapeHtml(vscode.l10n.t('Focus editor'))}</button><button data-command="fikeya.mode.terminal" type="button">${escapeHtml(vscode.l10n.t('Terminal'))}</button><button data-command="fikeya.mode.review" type="button">${escapeHtml(vscode.l10n.t('Review changes'))}</button><button data-modal-open="context" type="button">${escapeHtml(vscode.l10n.t('Context graph'))}</button><button data-modal-open="usage" type="button">${escapeHtml(vscode.l10n.t('Usage and receipts'))}</button><button data-modal-open="setup" type="button">${escapeHtml(vscode.l10n.t('Models and setup'))}</button><button data-conversation-clear type="button"${interactionBlocked || state.conversation.length === 0 ? ' disabled' : ''}>${escapeHtml(vscode.l10n.t('New chat'))}</button></nav></div></details>
-				<div class="actions composer-actions">${!workspaceReady ? `<button data-command="workbench.action.files.openFolder" type="button" aria-label="${escapeHtml(vscode.l10n.t('Open a folder'))}" title="${escapeHtml(vscode.l10n.t('Open a folder'))}"><span aria-hidden="true">↗</span></button>` : state.providers.length === 0 ? `<button data-provider-modal-open type="button" aria-label="${escapeHtml(vscode.l10n.t('Configure a model'))}" title="${escapeHtml(vscode.l10n.t('Add model'))}"><span aria-hidden="true">＋</span></button>` : `<button data-agent-run type="submit"${controlsDisabled ? ' disabled' : ''} aria-label="${escapeHtml(vscode.l10n.t('Send message'))}" title="${escapeHtml(vscode.l10n.t('Send message'))}"><span aria-hidden="true">↑</span></button>`}${stopControl}</div>
+				<div class="actions composer-actions">${!workspaceReady ? `<button data-command="workbench.action.files.openFolder" type="button" aria-label="${escapeHtml(vscode.l10n.t('Open a folder'))}" title="${escapeHtml(vscode.l10n.t('Open a folder'))}"><span aria-hidden="true">↗</span></button>` : state.providers.length === 0 ? `<button data-provider-modal-open type="button" aria-label="${escapeHtml(vscode.l10n.t('Configure a model'))}" title="${escapeHtml(vscode.l10n.t('Add model'))}"><span aria-hidden="true">＋</span></button>` : `<button data-agent-run type="button"${controlsDisabled ? ' disabled' : ''} aria-label="${escapeHtml(vscode.l10n.t('Send message'))}" title="${escapeHtml(vscode.l10n.t('Send message'))}"><span aria-hidden="true">↑</span></button>`}${stopControl}</div>
 			</div>
 			<div class="network-confirmation" data-network-confirmation hidden role="group" aria-label="${escapeHtml(vscode.l10n.t('Confirm provider access'))}"><div class="network-confirmation-copy"><strong>${escapeHtml(vscode.l10n.t('Send this message to the selected model?'))}</strong><span>${escapeHtml(vscode.l10n.t('The prompt and any attached files or images are sent for this message only. Tool calls still require their own approval.'))}</span></div><div class="actions"><button data-network-confirm type="button">${escapeHtml(vscode.l10n.t('Send once'))}</button><button class="secondary" data-network-cancel type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button></div></div>
 			<input data-network-consent type="checkbox" hidden aria-hidden="true" tabindex="-1">
