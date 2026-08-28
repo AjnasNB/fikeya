@@ -254,7 +254,6 @@ def test_coding_loop_inspects_edits_tests_and_returns_structured_outcome(
                 "browser.click",
                 "browser.close",
                 "browser.navigate",
-                "browser.screenshot",
                 "browser.scroll",
                 "browser.snapshot",
                 "browser.type",

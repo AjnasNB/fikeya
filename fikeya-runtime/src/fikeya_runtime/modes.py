@@ -40,11 +40,11 @@ _BROWSER_READ_TOOLS = frozenset(
         "browser.navigate",
         "browser.snapshot",
         "browser.scroll",
-        "browser.screenshot",
         "browser.wait",
         "browser.close",
     }
 )
+_BROWSER_ARTIFACT_TOOLS = frozenset({"browser.screenshot"})
 _BROWSER_INTERACTION_TOOLS = frozenset(
     {
         "browser.click",
@@ -92,6 +92,7 @@ MODE_POLICIES: dict[AgentMode, ModePolicy] = {
             _WORKSPACE_READ_TOOLS
             | _WORKSPACE_WRITE_TOOLS
             | _BROWSER_READ_TOOLS
+            | _BROWSER_ARTIFACT_TOOLS
             | _BROWSER_INTERACTION_TOOLS
             | {"process.run"}
         ),
