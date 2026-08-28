@@ -269,8 +269,10 @@ test('Electron proof executes and verifies a bounded two-agent Multitask batch',
 	assert.match(scenario, /\.message-content/u);
 	assert.match(scenario, /\.multi-agent-live/u);
 	assert.match(scenario, /status\.toLowerCase\(\)\.includes\('completed'\)/u);
-	assert.match(scenario, /results\.every\(item => item\.content ===/u);
-	assert.equal(captureProviderExpectedRequestCount, 25);
+	assert.match(scenario, /specialistAnswerCount === 0/u);
+	assert.match(scenario, /currentTurnAnswers\.length === 1/u);
+	assert.match(scenario, /one canonical/u);
+	assert.equal(captureProviderExpectedRequestCount, 28);
 });
 
 test('Electron Chat proof mentions a bounded workspace file through the native picker', async () => {

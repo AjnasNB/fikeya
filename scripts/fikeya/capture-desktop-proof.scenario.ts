@@ -57,6 +57,8 @@ interface ChatState {
 	readonly chatVisible: boolean;
 	readonly assistant: string;
 	readonly provider: string;
+	readonly messageActionCount: number;
+	readonly copyState: string;
 	readonly usage: Readonly<Record<string, string>>;
 	readonly usageBasis: string;
 	readonly modes: readonly string[];
@@ -72,10 +74,11 @@ interface MultitaskState {
 	readonly status: string;
 	readonly selectedAgents: number;
 	readonly messageCount: number;
-	readonly results: readonly {
+	readonly answer: {
 		readonly label: string;
 		readonly content: string;
-	}[];
+	};
+	readonly specialistAnswerCount: number;
 }
 
 interface MultitaskLiveState {
@@ -607,7 +610,11 @@ const scenario: Scenario = {
 					throw new Error('The real Chat composer could not submit the deterministic provider turn.');
 				}
 				const state = await waitForFikeya<ChatState>(code, `(() => {
-					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim();
+					const latestAssistant = Array.from(document.querySelectorAll('.assistant-message')).at(-1);
+					const assistant = latestAssistant?.querySelector('.message-content')?.textContent?.trim();
+					const messageActions = latestAssistant?.querySelectorAll('.message-actions .message-action') ?? [];
+					const copyAction = latestAssistant?.querySelector('[data-copy-message]');
+					copyAction?.click();
 					const providerField = document.querySelector('[data-agent-form] [name="providerName"]');
 					const modeField = document.querySelector('[data-agent-form] [name="chatMode"]');
 					const selectedProvider = providerField?.options?.[providerField.selectedIndex]?.textContent?.trim();
@@ -622,6 +629,8 @@ const scenario: Scenario = {
 					const value = {
 						assistant,
 						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden,
+						messageActionCount: messageActions.length,
+						copyState: copyAction?.dataset.copyState ?? '',
 						modes: Array.from(modeField?.options ?? []).map(option => option.value),
 						provider: selectedProvider,
 						usage: metrics,
@@ -630,6 +639,8 @@ const scenario: Scenario = {
 					return value.chatVisible
 						&& value.modes.join(',') === 'ask,plan,build,review,research'
 						&& value.assistant === ${JSON.stringify(providerOutput)}
+						&& value.messageActionCount === 1
+						&& value.copyState === 'copied'
 						&& value.provider === ${JSON.stringify(`${providerName} | fikeya-proof-model`)}
 						&& value.usage['Input Tokens'] === '60'
 						&& value.usage['Cached Input Tokens'] === '12'
@@ -823,21 +834,28 @@ const scenario: Scenario = {
 						${JSON.stringify(`Proof Planner · ${providerName}`)},
 						${JSON.stringify(`Proof Reviewer · ${providerName}`)}
 					]);
-					const results = Array.from(document.querySelectorAll('.assistant-message')).map(message => ({
+					const messages = Array.from(document.querySelectorAll('.chat-message'));
+					const specialistAnswerCount = messages.map(message => message.querySelector('.message-meta span')?.textContent?.trim() ?? '')
+						.filter(label => expectedLabels.has(label)).length;
+					const lastUserIndex = messages.findLastIndex(message => message.classList.contains('user-message'));
+					const currentTurnAnswers = messages.slice(lastUserIndex + 1).filter(message => message.classList.contains('assistant-message')).map(message => ({
 						label: message.querySelector('.message-meta span')?.textContent?.trim() ?? '',
 						content: message.querySelector('.message-content')?.textContent?.trim() ?? ''
-					})).filter(item => expectedLabels.has(item.label));
+					}));
+					const answer = currentTurnAnswers[0];
 					const status = document.querySelector('.composer-status')?.textContent?.trim() ?? '';
 					const selectedAgents = document.querySelectorAll('[data-agent-picker] input[name="selectedAgentId"]:checked').length;
 					const messageCount = Number(document.querySelector('[data-chat-thread]')?.getAttribute('data-message-count') ?? '0');
 					const complete = status.toLowerCase().includes('completed')
 						&& selectedAgents === 2
 						&& messageCount >= 5
-						&& results.length === 2
-						&& results.every(item => item.content === ${JSON.stringify(providerOutput)});
-					return complete ? { status, selectedAgents, messageCount, results } : false;
-				})()`, 'The bounded Multitask batch did not render two completed, provider-labelled advisory results.', 120_000);
-				return `Observed ${live.heading}, then completed a bounded ${completed.selectedAgents}-agent Multitask batch through the UI; ${completed.results.map(item => item.label).join(' and ')} each rendered the exact verified provider result.`;
+						&& specialistAnswerCount === 0
+						&& currentTurnAnswers.length === 1
+						&& answer?.label === ${JSON.stringify(providerName)}
+						&& answer.content === ${JSON.stringify(providerOutput)};
+					return complete ? { status, selectedAgents, messageCount, answer, specialistAnswerCount } : false;
+				})()`, 'The bounded Multitask batch did not collapse specialist evidence into one lead answer.', 120_000);
+				return `Observed ${live.heading}, then completed a bounded ${completed.selectedAgents}-agent Multitask batch through the UI; specialist evidence produced one canonical ${completed.answer.label} answer with no duplicate specialist messages.`;
 			}
 		},
 		{

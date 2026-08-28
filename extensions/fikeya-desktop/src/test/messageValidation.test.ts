@@ -16,6 +16,8 @@ describe('Fikeya webview message validation', () => {
 	});
 
 	test('validates message actions without accepting paths or schemes outside the workspace boundary', () => {
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'copyConversationMessage', messageId: 'chat-1234-abcd' }), { type: 'copyConversationMessage', messageId: 'chat-1234-abcd' });
+		assert.strictEqual(parseWebviewMessage({ type: 'copyConversationMessage', messageId: '../chat' }), undefined);
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'copyText', text: 'copy me' }), { type: 'copyText', text: 'copy me' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'reviewDiff', content: '@@ -1 +1 @@\n-old\n+new' }), { type: 'reviewDiff', content: '@@ -1 +1 @@\n-old\n+new' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'openFile', path: 'src/index.ts' }), { type: 'openFile', path: 'src/index.ts' });

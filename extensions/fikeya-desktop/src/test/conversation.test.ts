@@ -47,6 +47,23 @@ describe('Fikeya live conversation state', () => {
 		assert.ok(messages.reduce((total, item) => total + item.content.length, 0) <= 960_000);
 	});
 
+	test('renders an identical assistant answer only once within one user turn', () => {
+		let messages: readonly FikeyaConversationMessage[] = [
+			{ ...message(1, 'Inspect the project.'), role: 'user' }
+		];
+		messages = appendConversationMessage(messages, { ...message(2, 'One canonical answer.'), providerName: 'planner' });
+		messages = appendConversationMessage(messages, { ...message(4, 'One canonical answer.\r\n'), providerName: 'reviewer' });
+		assert.deepStrictEqual(messages.map(item => [item.role, item.content, item.providerName]), [
+			['user', 'Inspect the project.', undefined],
+			['assistant', 'One canonical answer.', 'planner']
+		]);
+
+		messages = appendConversationMessage(messages, { ...message(3, 'Ask again.'), role: 'user' });
+		messages = appendConversationMessage(messages, { ...message(6, 'One canonical answer.'), providerName: 'lead' });
+		assert.strictEqual(messages.length, 4, 'a later user turn may legitimately receive the same answer');
+		assert.strictEqual(messages.at(-1)?.providerName, 'lead');
+	});
+
 	test('round-trips a redacted bounded workspace snapshot after restart', () => {
 		const messages: readonly FikeyaConversationMessage[] = [
 			{ ...message(1, 'Inspect src/index.ts with sk-or-v1-1234567890abcdefgh.'), providerName: 'openrouter-main' },
@@ -209,6 +226,17 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(source, /runButton\.disabled = runBlocked \|\| attachmentReadCount > 0/u);
 		assert.match(source, /chatModeField\?\.addEventListener\('change', updateComposerMode\)/u);
 		assert.doesNotMatch(source, /chatModeField\?\.addEventListener\('change', refresh/u);
+	});
+
+	test('uses one accessible animated copy action instead of a floating button cluster', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /role="toolbar" aria-label=/u);
+		assert.match(source, /data-copy-message="\$\{escapeHtml\(messageId\)\}"/u);
+		assert.match(source, /postUi\('copyConversationMessage', \{ messageId \}\)/u);
+		assert.match(source, /data-copy-state="copied"/u);
+		assert.match(source, /@keyframes fikeya-action-confirm/u);
+		assert.match(source, /@media \(prefers-reduced-motion: reduce\)/u);
+		assert.doesNotMatch(source, /class="quiet copy-message"/u);
 	});
 
 	test('shows accessible autonomous stages with cancel and durable-plan resume actions', async () => {
