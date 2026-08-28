@@ -28,6 +28,8 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: FikeyaAgentComposerMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
 	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly leadProviderName: string; readonly prompt: string; readonly composerMode: FikeyaAgentComposerMode; readonly maxConcurrency: number; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
 	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: 'plan'; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
+	| { readonly type: 'startProject'; readonly providerName: string; readonly goal: string; readonly allowNetwork: true }
+	| { readonly type: 'projectAction'; readonly action: 'refresh' | 'resume' | 'cancel'; readonly goal?: string; readonly providerName?: string }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
 	| { readonly type: 'newPlan' }
@@ -266,6 +268,30 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				memoryMode: value.memoryMode as FikeyaAgentMemoryMode,
 				allowNetwork: true
 			};
+		}
+		case 'startProject':
+			return isProviderName(value.providerName)
+				&& typeof value.goal === 'string'
+				&& value.goal.trim().length > 0
+				&& Buffer.byteLength(value.goal.trim(), 'utf8') <= 65_536
+				&& value.allowNetwork === true
+				? { type: value.type, providerName: value.providerName, goal: value.goal.trim(), allowNetwork: true }
+				: undefined;
+		case 'projectAction': {
+			if (value.action === 'refresh' || value.action === 'cancel') {
+				return value.goal === undefined && value.providerName === undefined ? { type: value.type, action: value.action } : undefined;
+			}
+			if (value.action === 'resume') {
+				if (!isProviderName(value.providerName)) {
+					return undefined;
+				}
+				return value.goal === undefined
+					? { type: value.type, action: value.action, providerName: value.providerName }
+					: typeof value.goal === 'string' && value.goal.trim().length > 0 && Buffer.byteLength(value.goal.trim(), 'utf8') <= 65_536
+						? { type: value.type, action: value.action, goal: value.goal.trim(), providerName: value.providerName }
+						: undefined;
+			}
+			return undefined;
 		}
 		case 'createPlan': {
 			const specification = parsePlanSpecification(value.specification);

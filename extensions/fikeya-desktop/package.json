@@ -228,7 +228,7 @@
 		"watch": "tsc --project ./tsconfig.json --watch",
 		"pretypecheck": "npm run build:protocol",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/fileInputs.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js ./out/test/teamLead.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/fileInputs.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js ./out/test/surface.test.js ./out/test/teamLead.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",

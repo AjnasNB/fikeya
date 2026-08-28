@@ -229,6 +229,29 @@ describe('Fikeya webview message validation', () => {
 		assert.match(buildAgentProviderPrompt('research', 'Where is the parser?'), /Distinguish project evidence from inference/u);
 	});
 
+	test('accepts bounded audited-project lifecycle messages without attachments or argv content', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'startProject',
+			providerName: 'azure-primary',
+			goal: '  Build and verify the complete project.  ',
+			allowNetwork: true
+		}), {
+			type: 'startProject',
+			providerName: 'azure-primary',
+			goal: 'Build and verify the complete project.',
+			allowNetwork: true
+		});
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'projectAction', action: 'refresh' }), { type: 'projectAction', action: 'refresh' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'projectAction', action: 'resume', providerName: 'azure-primary', goal: '  Build and verify. ' }), { type: 'projectAction', action: 'resume', providerName: 'azure-primary', goal: 'Build and verify.' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'projectAction', action: 'cancel' }), { type: 'projectAction', action: 'cancel' });
+		assert.strictEqual(parseWebviewMessage({ type: 'startProject', providerName: 'azure-primary', goal: 'No consent', allowNetwork: false }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'startProject', providerName: '../escape', goal: 'Goal', allowNetwork: true }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'resume', providerName: 'azure-primary', goal: '' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'resume', goal: 'Goal' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'cancel', goal: 'unexpected' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'delete' }), undefined);
+	});
+
 	test('derives the runtime seam from the five bounded composer modes', () => {
 		assert.deepStrictEqual(fikeyaComposerModes, ['ask', 'plan', 'build', 'review', 'research']);
 		assert.deepStrictEqual([

@@ -3,6 +3,8 @@
  *  Copyright (C) 2026 Fikeya contributors
  *--------------------------------------------------------------------------------------------*/
 
+import type { FikeyaProjectNextAction, FikeyaProjectStage, FikeyaProjectView } from './runtime';
+
 export type FikeyaPlanStageId = 'draft' | 'review' | 'approval' | 'execute' | 'verify';
 export type FikeyaPlanStageStatus = 'pending' | 'active' | 'complete' | 'attention';
 
@@ -54,6 +56,27 @@ export interface FikeyaChatPlanSummary {
 	readonly step?: FikeyaChatPlanSummaryInput['steps'][number];
 	readonly stepKind: 'current' | 'next' | 'final';
 	readonly totalSteps: number;
+}
+
+export interface FikeyaDurableProjectHistoryItem {
+	readonly revision: number;
+	readonly stage: FikeyaProjectStage;
+	readonly createdAt: string;
+	readonly documentSha256: string;
+	readonly current: boolean;
+}
+
+export interface FikeyaDurableProjectPresentation {
+	readonly runId: string;
+	readonly planId: string | null;
+	readonly currentStage: FikeyaProjectStage;
+	readonly currentRevision: number;
+	readonly history: readonly FikeyaDurableProjectHistoryItem[];
+	readonly nextAction: FikeyaProjectNextAction['action'] | null;
+	readonly nextActionId: string | null;
+	readonly terminal: boolean;
+	readonly canCancel: boolean;
+	readonly requiresExactGoal: boolean;
 }
 
 const stageIds: readonly FikeyaPlanStageId[] = ['draft', 'review', 'approval', 'execute', 'verify'];
@@ -133,6 +156,32 @@ export function buildChatPlanSummary(plan: FikeyaChatPlanSummaryInput): FikeyaCh
 		step: current ?? plan.steps.find(step => step.status === 'pending') ?? plan.steps[0],
 		stepKind: current ? 'current' : 'next',
 		totalSteps: plan.steps.length
+	};
+}
+
+/**
+ * Projects the exact durable project record into UI state. The history is intentionally not
+ * expanded into inferred lifecycle stages: every visible stage must have a signed record entry.
+ */
+export function buildDurableProjectPresentation(view: FikeyaProjectView): FikeyaDurableProjectPresentation {
+	const terminal = view.stage === 'completed' || view.stage === 'failed'
+		|| (view.stage === 'stopped' && view.record.resumeStage === null);
+	return {
+		runId: view.runId,
+		planId: view.planId,
+		currentStage: view.stage,
+		currentRevision: view.record.revision,
+		history: view.history.map(entry => ({
+			...entry,
+			current: entry.revision === view.record.revision && entry.stage === view.stage
+		})),
+		nextAction: view.nextAction?.action ?? null,
+		nextActionId: view.nextAction
+			? view.nextAction.action === 'resume_project' ? view.nextAction.runId : view.nextAction.planId
+			: null,
+		terminal,
+		canCancel: !terminal,
+		requiresExactGoal: view.nextAction?.action === 'resume_project'
 	};
 }
 
