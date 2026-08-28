@@ -7,6 +7,7 @@
 	"view.dashboard.contextualTitle": "Fikeya Chat",
 	"command.category": "Fikeya",
 	"command.open.title": "Open Fikeya Chat",
+	"command.chat.toggle.title": "Toggle Fikeya Chat",
 	"command.layout.project.title": "Switch to Project UI",
 	"command.layout.editor.title": "Switch to Editor UI",
 	"command.configureProvider.title": "Configure Provider",
@@ -22,7 +23,8 @@
 	"command.mode.lab.title": "Open Context Graph",
 	"command.view.usage.title": "Open Local Usage",
 	"command.view.setup.title": "Open Setup",
-	"configuration.chat.openAtStartup.description": "Open the chat-first Fikeya workspace when Fikeya Desktop starts and on the first VS Code extension activation.",
+	"configuration.startupMode.description": "Choose the first surface shown by Fikeya Desktop. Project UI is the default Codex-style coding-agent workspace.",
+	"configuration.chat.openAtStartup.description": "Open Fikeya Chat once when this extension is first activated in VS Code or another compatible editor.",
 	"configuration.chat.persistWorkspaceHistory.description": "Persist a bounded, credential-redacted copy of Fikeya Chat messages in this workspace. Disabled by default; when disabled, Chat remains process-local.",
 	"configuration.agent.autoSaveWorkspaceEdits.description": "Save dirty file-backed documents inside the current Fikeya workspace before an agent run so tools operate on the latest editor contents. Files outside the workspace and untitled documents are never saved by this setting."
 }

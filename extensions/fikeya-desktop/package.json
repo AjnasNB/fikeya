@@ -27,6 +27,7 @@
 		"onStartupFinished",
 		"onView:fikeya.dashboard",
 		"onCommand:fikeya.open",
+		"onCommand:fikeya.chat.toggle",
 		"onCommand:fikeya.configureProvider",
 		"onCommand:fikeya.configureAgents",
 		"onCommand:fikeya.initializeWorkspace",
@@ -60,6 +61,12 @@
 			{
 				"command": "fikeya.open",
 				"title": "%command.open.title%",
+				"category": "%command.category%",
+				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "fikeya.chat.toggle",
+				"title": "%command.chat.toggle.title%",
 				"category": "%command.category%",
 				"icon": "$(comment-discussion)"
 			},
@@ -155,6 +162,22 @@
 		"configuration": {
 			"title": "Fikeya",
 			"properties": {
+				"fikeya.startupMode": {
+					"type": "string",
+					"enum": [
+						"project",
+						"editor",
+						"none"
+					],
+					"enumDescriptions": [
+						"Open the Codex-style Project UI.",
+						"Open the editor with Fikeya Chat in the right pane.",
+						"Restore the native workbench without opening Fikeya."
+					],
+					"default": "project",
+					"scope": "window",
+					"description": "%configuration.startupMode.description%"
+				},
 				"fikeya.chat.openAtStartup": {
 					"type": "boolean",
 					"default": true,
@@ -176,6 +199,12 @@
 			}
 		},
 		"keybindings": [
+			{
+				"command": "fikeya.chat.toggle",
+				"key": "ctrl+l",
+				"mac": "cmd+l",
+				"when": "fikeya.isFikeyaProduct"
+			},
 			{
 				"command": "fikeya.open",
 				"key": "ctrl+alt+l",
@@ -201,6 +230,11 @@
 		],
 		"menus": {
 			"editor/title": [
+				{
+					"command": "fikeya.chat.toggle",
+					"when": "fikeya.supportsDesktopWorkbench && activeWebviewPanelId != fikeya.workspace",
+					"group": "navigation@19"
+				},
 				{
 					"command": "fikeya.layout.editor",
 					"when": "activeWebviewPanelId == fikeya.workspace",
