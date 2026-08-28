@@ -15,6 +15,7 @@ import {
 	buildPlanApproveArguments,
 	buildPlanCreateArguments,
 	buildPlanProposalArguments,
+	buildProjectRunArguments,
 	buildProviderConfigureArguments,
 	buildStatisticsArguments,
 	parseAgentApproval,
@@ -25,12 +26,14 @@ import {
 	parseProtocolFailure,
 	parsePlanProposalView,
 	parsePlanView,
+	parseProjectView,
 	parseRuntimeReport,
 	parseStatistics,
 	resolveFikeyaCli,
 	startFikeyaAgentRun,
 	startFikeyaPlan,
-	startFikeyaPlanProposal
+	startFikeyaPlanProposal,
+	startFikeyaProject
 } from '../runtime';
 
 const protocolInvocation = { executable: process.execPath, source: 'path' } as const;
@@ -96,6 +99,53 @@ function planProposalResultRecord(): Readonly<Record<string, unknown>> {
 	};
 }
 
+function projectResultRecord(): Readonly<Record<string, unknown>> {
+	const hash = `sha256:${'a'.repeat(64)}`;
+	const history = ['plan', 'audit_plan', 'execute', 'stopped'].map((stage, index) => ({
+		createdAt: `2026-08-28T00:00:0${index}.000Z`,
+		documentSha256: `sha256:${String(index + 1).repeat(64)}`,
+		revision: index + 1,
+		stage
+	}));
+	return {
+		history,
+		message: 'Project run reached a durable stop.',
+		nextAction: { action: 'review_plan', planId: 'pln_fixture' },
+		ok: true,
+		planId: 'pln_fixture',
+		record: {
+			codeAudit: null,
+			completionCriteria: [{ criterionId: 'criterion-1', description: 'The project is verified.', descriptionSha256: hash }],
+			createdAt: '2026-08-28T00:00:00.000Z',
+			executionFailures: 0,
+			failureReason: null,
+			feedback: '',
+			goalSha256: hash,
+			limits: { maxExecutionRetries: 2, maxNoProgress: 2, maxPlanRevisions: 3, maxProviderRetries: 2, maxTransitions: 64 },
+			noProgressCount: 0,
+			planAudit: null,
+			planHistory: [hash],
+			planId: 'pln_fixture',
+			planRevisions: 0,
+			planSpecSha256: hash,
+			providerFailures: 0,
+			resumeStage: 'execute',
+			revision: 4,
+			runId: 'aut_fixture',
+			schemaVersion: 1,
+			stage: 'stopped',
+			stopReason: 'plan_review_required',
+			transitionCount: 3,
+			updatedAt: '2026-08-28T00:00:03.000Z',
+			verification: null,
+			workspaceId: 'ws_fixture'
+		},
+		runId: 'aut_fixture',
+		stage: 'stopped',
+		type: 'project_result'
+	};
+}
+
 async function writeProtocolFixture(
 	workspacePath: string,
 	command: 'agent' | 'plan',
@@ -121,6 +171,19 @@ async function writeCapturingProtocolFixture(
 	const source = command === 'agent'
 		? "const fs = require('node:fs'); const base = process.argv[1]; const output = fs.readFileSync(`${base}.stdout`, 'utf8'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; const newline = input.indexOf('\\n'); if (newline < 0) return; fs.writeFileSync(`${base}.capture`, input.slice(0, newline), 'utf8'); process.stdin.pause(); process.stdout.end(output, () => process.exit(0)); });\n"
 		: "const fs = require('node:fs'); const base = process.argv[1]; const output = fs.readFileSync(`${base}.stdout`, 'utf8'); let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => { fs.writeFileSync(`${base}.capture`, input, 'utf8'); process.stdout.end(output); });\n";
+	await writeFile(fixturePath, source, 'utf8');
+	return capturePath;
+}
+
+async function writeProjectProtocolFixture(
+	workspacePath: string,
+	result: Readonly<Record<string, unknown>>,
+	approval?: Readonly<Record<string, unknown>>
+): Promise<string> {
+	const fixturePath = path.join(workspacePath, 'project');
+	const capturePath = `${fixturePath}.capture`;
+	const started = { type: 'project_started', runId: result.runId, stage: 'plan', revision: 1 };
+	const source = `const fs = require('node:fs'); const base = process.argv[1]; let input = ''; const messages = []; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; while (input.includes('\\n')) { const newline = input.indexOf('\\n'); const message = JSON.parse(input.slice(0, newline)); input = input.slice(newline + 1); messages.push(message); if (messages.length === 1) { process.stdout.write(${JSON.stringify(`${JSON.stringify(started)}\n`)}); ${approval ? `process.stdout.write(${JSON.stringify(`${JSON.stringify(approval)}\n`)});` : `fs.writeFileSync(base + '.capture', JSON.stringify(messages), 'utf8'); process.stdin.pause(); process.stdout.end(${JSON.stringify(`${JSON.stringify(result)}\n`)}, () => process.exit(0));`} } else { fs.writeFileSync(base + '.capture', JSON.stringify(messages), 'utf8'); process.stdin.pause(); process.stdout.end(${JSON.stringify(`${JSON.stringify(result)}\n`)}, () => process.exit(0)); } } });\n`;
 	await writeFile(fixturePath, source, 'utf8');
 	return capturePath;
 }
@@ -173,7 +236,7 @@ describe('Fikeya runtime protocol', () => {
 			}], 2);
 			const operation = startFikeyaAgentRun(
 				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', [], [], protocolInvocation, process.env
+				async () => 'deny_once', [], [], 'build', protocolInvocation, process.env
 			);
 
 			assert.deepStrictEqual(await operation.result, {
@@ -314,12 +377,131 @@ describe('Fikeya runtime protocol', () => {
 
 	test('keeps prompt content out of agent process arguments', () => {
 		const prompt = 'private prompt content';
-		const args = buildAgentRunArguments('openrouter-primary', 2048, 12_000, 'auto');
+		const args = buildAgentRunArguments('openrouter-primary', 2048, 12_000, 'auto', 'review');
 		assert.deepStrictEqual(args.slice(0, 7), ['agent', 'execute', '.', '--provider', 'openrouter-primary', '--protocol-stdin', '--allow-network']);
 		assert.ok(!args.includes(prompt));
-		assert.deepStrictEqual(args.slice(-5), ['--context-max-characters', '12000', '--memory', 'auto', '--json-lines']);
+		assert.deepStrictEqual(args.slice(-7), ['--context-max-characters', '12000', '--memory', 'auto', '--mode', 'review', '--json-lines']);
 		assert.ok(args.includes('--context-max-characters'));
 		assert.ok(args.includes('--json-lines'));
+	});
+
+	test('keeps project goals off argv and binds resume to one durable run', () => {
+		const goal = 'Build the complete animation and verify it.';
+		const start = buildProjectRunArguments('start', 'azure-primary');
+		const resume = buildProjectRunArguments('resume', 'azure-primary', 'aut_fixture');
+		const localBrowserResume = buildProjectRunArguments('resume', 'azure-primary', 'aut_fixture', true);
+		assert.deepStrictEqual(start, ['project', 'start', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--json-lines']);
+		assert.deepStrictEqual(resume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--json-lines']);
+		assert.deepStrictEqual(localBrowserResume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--allow-private-browser', '--json-lines']);
+		assert.ok(!start.includes(goal));
+		assert.ok(!resume.includes(goal));
+	});
+
+	test('parses exact durable project stages, history, and next action', () => {
+		const value = projectResultRecord();
+		const parsed = parseProjectView(value);
+		assert.strictEqual(parsed?.runId, 'aut_fixture');
+		assert.strictEqual(parsed?.planId, 'pln_fixture');
+		assert.strictEqual(parsed?.stage, 'stopped');
+		assert.strictEqual(parsed?.history.length, 4);
+		assert.deepStrictEqual(parsed?.nextAction, { action: 'review_plan', planId: 'pln_fixture' });
+
+		assert.strictEqual(parseProjectView({ ...value, unexpected: true }), undefined);
+		assert.strictEqual(parseProjectView({ ...value, stage: 'completed' }), undefined);
+		assert.strictEqual(parseProjectView({ ...value, runId: 'aut_other' }), undefined);
+		assert.strictEqual(parseProjectView({ ...value, history: (value.history as object[]).slice(1) }), undefined);
+		assert.strictEqual(parseProjectView({ ...value, nextAction: { action: 'review_plan', planId: 'pln_other' } }), undefined);
+		assert.strictEqual(parseProjectView({ ...value, nextAction: { action: 'resume_project', runId: 'aut_fixture' } }), undefined);
+		assert.strictEqual(parseProjectView({ ...value, nextAction: null }), undefined);
+		assert.strictEqual(parseProjectView({ ...value, record: { ...(value.record as object), goalSha256: 'bad' } }), undefined);
+
+		const digest = `sha256:${'c'.repeat(64)}`;
+		const record = value.record as Readonly<Record<string, unknown>>;
+		const audited = {
+			...value,
+			record: {
+				...record,
+				planAudit: { accepted: true, criteriaSha256: null, executionEvidenceSha256: null, phase: 'audit_plan', planSpecSha256: digest, resultSha256: digest },
+				codeAudit: { accepted: true, criteriaSha256: null, executionEvidenceSha256: digest, phase: 'audit_code', planSpecSha256: digest, resultSha256: digest },
+				verification: { accepted: true, criteriaSha256: digest, executionEvidenceSha256: digest, phase: 'verify', planSpecSha256: digest, resultSha256: digest }
+			}
+		};
+		assert.ok(parseProjectView(audited), 'real audit bindings include their execution evidence digest');
+		assert.strictEqual(parseProjectView({
+			...audited,
+			record: {
+				...(audited.record as Readonly<Record<string, unknown>>),
+				codeAudit: { accepted: true, criteriaSha256: null, phase: 'audit_code', planSpecSha256: digest, resultSha256: digest }
+			}
+		}), undefined, 'audit bindings fail closed when execution evidence is omitted');
+	});
+
+	test('uses bounded project JSON lines and sends only an exact approval decision', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-project-'));
+		try {
+			const approval = {
+				arguments: { path: 'src/main.ts' },
+				argumentsSha256: 'b'.repeat(64),
+				callId: 'read_main',
+				expectedRevision: 2,
+				requestId: 'approval_project',
+				sessionId: 'ses_project',
+				summary: 'Read src/main.ts',
+				toolName: 'workspace.read_file',
+				type: 'approval'
+			};
+			const capturePath = await writeProjectProtocolFixture(workspacePath, projectResultRecord(), approval);
+			const operation = startFikeyaProject(
+				'start',
+				'fixture-provider',
+				'Build the verified fixture.',
+				workspacePath,
+				async request => {
+					assert.deepStrictEqual(request, approval);
+					return 'allow_once';
+				},
+				undefined,
+				['The fixture is rendered and verified.'], false,
+				protocolInvocation,
+				process.env
+			);
+			let startedRunId: string | undefined;
+			const stopStartedObserver = operation.onStarted(started => {
+				startedRunId = started.runId;
+			});
+			const result = await operation.result;
+			stopStartedObserver();
+			const captured = JSON.parse(await readFile(capturePath, 'utf8'));
+			assert.strictEqual(result.ok, true);
+			assert.strictEqual(startedRunId, 'aut_fixture');
+			assert.strictEqual(result.value?.stage, 'stopped');
+			assert.deepStrictEqual(captured, [
+				{ type: 'start', goal: 'Build the verified fixture.', completionCriteria: ['The fixture is rendered and verified.'] },
+				{ type: 'approval', requestId: 'approval_project', decision: 'allow_once' }
+			]);
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
+	test('resumes a project with the exact goal and rejects malformed local requests', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-project-resume-'));
+		try {
+			const capturePath = await writeProjectProtocolFixture(workspacePath, projectResultRecord());
+			const operation = startFikeyaProject(
+				'resume', 'fixture-provider', 'Build the verified fixture.', workspacePath,
+				async () => 'deny_once', 'aut_fixture', [], false, protocolInvocation, process.env
+			);
+			assert.strictEqual((await operation.result).ok, true);
+			assert.deepStrictEqual(JSON.parse(await readFile(capturePath, 'utf8')), [
+				{ type: 'resume', runId: 'aut_fixture', goal: 'Build the verified fixture.' }
+			]);
+			assert.deepStrictEqual(await startFikeyaProject(
+				'resume', 'fixture-provider', 'Goal', workspacePath, async () => 'deny_once', '../escape'
+			).result, { ok: false, exitCode: null, failure: 'runtime-error' });
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
 	});
 
 	test('sends bounded provider history only through agent and planning stdin payloads', async () => {
@@ -333,7 +515,7 @@ describe('Fikeya runtime protocol', () => {
 			const agentCapturePath = await writeCapturingProtocolFixture(workspacePath, 'agent', agentOutput);
 			const agentOperation = startFikeyaAgentRun(
 				'fixture-provider', 'Continue the work.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', history, [], protocolInvocation, process.env
+				async () => 'deny_once', history, [], 'build', protocolInvocation, process.env
 			);
 			const agentResult = await agentOperation.result;
 
@@ -348,7 +530,7 @@ describe('Fikeya runtime protocol', () => {
 			const rejectedAgent = startFikeyaAgentRun(
 				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
 				async () => 'deny_once', Array.from({ length: 13 }, () => ({ role: 'user' as const, content: 'bounded' })),
-				[], protocolInvocation, process.env
+				[], 'build', protocolInvocation, process.env
 			);
 			const rejectedProposal = startFikeyaPlanProposal(
 				'fixture-provider', 'Reject this history.', 256, 512, 'off', workspacePath,
@@ -393,6 +575,7 @@ describe('Fikeya runtime protocol', () => {
 				async () => 'deny_once',
 				[],
 				[],
+				'build',
 				protocolInvocation,
 				process.env
 			);
@@ -402,7 +585,7 @@ describe('Fikeya runtime protocol', () => {
 			disposeAgentProgress();
 
 			await writeProtocolFixture(workspacePath, 'plan', [...progress, planResultRecord()]);
-			const planOperation = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const planOperation = startFikeyaPlan('run', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			const planProgress: unknown[] = [];
 			const disposePlanProgress = planOperation.onProgress(event => planProgress.push(event));
 			const planResult = await planOperation.result;
@@ -458,7 +641,7 @@ describe('Fikeya runtime protocol', () => {
 					await approvalRelease;
 					return 'deny_once';
 				},
-				[], [], protocolInvocation, process.env
+				[], [], 'build', protocolInvocation, process.env
 			);
 			await approvalReached;
 			const observed: unknown[] = [];
@@ -484,7 +667,7 @@ describe('Fikeya runtime protocol', () => {
 			]);
 			const malformedAgent = startFikeyaAgentRun(
 				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
-				async () => 'deny_once', [], [], protocolInvocation, process.env
+				async () => 'deny_once', [], [], 'build', protocolInvocation, process.env
 			);
 			const malformedAgentProgress: unknown[] = [];
 			malformedAgent.onProgress(event => malformedAgentProgress.push(event));
@@ -493,7 +676,7 @@ describe('Fikeya runtime protocol', () => {
 				{ event: 'x'.repeat(81), sequence: 1, stage: 'planning', type: 'progress' },
 				planResultRecord()
 			]);
-			const oversizedPlan = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const oversizedPlan = startFikeyaPlan('run', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			const oversizedPlanProgress: unknown[] = [];
 			oversizedPlan.onProgress(event => oversizedPlanProgress.push(event));
 
@@ -505,7 +688,7 @@ describe('Fikeya runtime protocol', () => {
 				{ event: 'stage_completed', sequence: 2, stage: 'executing', type: 'progress' },
 				planResultRecord()
 			]);
-			const unorderedPlan = startFikeyaPlan('resume', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const unorderedPlan = startFikeyaPlan('resume', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			const unorderedPlanProgress: unknown[] = [];
 			unorderedPlan.onProgress(event => unorderedPlanProgress.push(event));
 			const unorderedPlanResult = await unorderedPlan.result;
@@ -536,7 +719,7 @@ describe('Fikeya runtime protocol', () => {
 				`process.stdout.write(${JSON.stringify(`${JSON.stringify(progress)}\n`)}); setInterval(() => undefined, 1000);\n`,
 				'utf8'
 			);
-			const operation = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const operation = startFikeyaPlan('run', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			operation.onProgress(() => operation.cancel());
 			const cancelled = await operation.result;
 			assert.deepStrictEqual({ ok: cancelled.ok, failure: cancelled.failure }, { ok: false, failure: 'cancelled' });
@@ -567,6 +750,7 @@ describe('Fikeya runtime protocol', () => {
 		assert.deepStrictEqual(buildPlanCreateArguments(), ['plan', 'create', '.', '--spec-stdin', '--json']);
 		assert.ok(!buildPlanCreateArguments().includes(privateContent));
 		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--json']);
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example', true), ['plan', 'resume', 'pln_example', '--workspace', '.', '--allow-private-browser', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', ['inspect', 'verify']), ['plan', 'approve', 'pln_example', '--workspace', '.', '--step', 'inspect', '--step', 'verify', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', 'all'), ['plan', 'approve', 'pln_example', '--workspace', '.', '--all', '--json']);
 		const proposalArgs = buildPlanProposalArguments('azure-primary', 2048, 12_000, 'required');

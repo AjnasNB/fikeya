@@ -4,7 +4,7 @@ Fikeya is an AI code editor and coding-agent runtime first. Durable sessions and
 
 ## Status and reading guide
 
-Fikeya 0.1.0-beta.4 is the current public-beta source candidate. This document separates three different kinds of behavior:
+Fikeya 0.1.0-beta.5 is the current public-beta source candidate. This document separates three different kinds of behavior:
 
 - **Integrated now** is reachable through the current Desktop extension or `fikeya` CLI.
 - **Standalone component** has focused tests in this repository but is not yet connected to the Desktop/CLI product path.
@@ -46,8 +46,10 @@ The current runtime provides:
 - cooperative cancellation and resumable/forkable SQLite session primitives;
 - provider-reported usage or an explicit `unavailable` measurement;
 - content-free provider and Qarinah receipts;
-- an integrated workspace broker for bounded list/read/search/hash-guarded edits plus a `ToolBroker` that accepts an executable and argument vector and requires an exact one-use approval before real execution; and
-- a structured plan execution broker for root-bound file, search, edit, write, and allowlisted process calls, with execution and verification receipts.
+- an integrated workspace broker for bounded list/read/search/hash-guarded edits plus a `ToolBroker` that accepts an executable and argument vector and requires an exact one-use approval before real execution;
+- a structured plan execution broker for root-bound file, search, edit, write, and allowlisted process calls, with execution and verification receipts;
+- durable `project start`, `resume`, `show`, and `cancel` commands implementing an evidence-bound `plan -> audit plan -> execute -> audit code -> verify` lifecycle; and
+- approval-gated native browser actions for navigation, inspection, clicking, typing, scrolling, waiting, text assertions, bounded screenshots, and session closure.
 
 Azure OpenAI and OpenAI use the Responses API by default. Anthropic uses its native Messages API. OpenRouter, NVIDIA NIM, Google Gemini, Hugging Face Inference Providers, Groq, Ollama, and generic OpenAI-compatible profiles use compatible HTTP execution. Vertex AI is available through the compatible profile with a regional endpoint and a short-lived Google Cloud token; automatic ADC refresh remains a release follow-up. Every network turn still requires explicit consent, and credential bytes remain in the operating-system vault or an ephemeral identity token. HTTP quota failures are classified without retaining the provider body so the Desktop can offer a person-controlled handoff to another configured profile while retrieving the same workspace context again.
 
@@ -72,11 +74,13 @@ interface FikeyaMemoryPort {
 }
 ```
 
-### Browser and crawler presets
+### Native browser execution and external tool presets
 
-The runtime ships reviewed, disabled-by-default configuration presets for separately installed Cockroach Browser and Cockroach Crawler executables. Enabling a preset records an exact manifest digest for one workspace; it does not start the tool.
+The integrated runtime provides a dedicated Playwright browser session behind the same exact-call approval and cancellation boundaries as workspace and process tools. It validates URLs, selectors, text inputs, timeouts, output sizes, screenshot paths, session limits, and redirects. Browser content is untrusted evidence. Public HTTPS navigation is the default; private or loopback targets require a separate one-run opt-in. Research can inspect and interact with web pages but cannot write a screenshot into the workspace.
 
-The current runtime does not provide the complete MCP framing/session loop or a Desktop approval flow for these tools. The caller remains responsible for protocol framing, cancellation, upstream network policy, and child termination.
+The beta.5 Windows x64 Desktop and Windows x64 VSIX runtime embed one pinned, hash-verified Chromium Headless Shell payload. Source and standalone CLI installations must install the Runtime `browser` extra and provision the matching Playwright browser separately. No embedded browser package or Fikeya installer is currently shipped for macOS, Linux, Windows ARM64, or macOS ARM64.
+
+Reviewed, disabled-by-default configuration presets remain available for separately installed Cockroach Browser and Cockroach Crawler executables. Enabling one records an exact manifest digest for one workspace but does not start the tool. These external presets still do not provide a complete integrated MCP framing/session loop; their caller remains responsible for protocol framing, upstream network policy, and protocol-failure termination.
 
 ## Tested standalone components
 
@@ -131,9 +135,9 @@ Privileged operations must remain outside the model process. The complete broker
 
 The current file broker validates stale context with expected SHA-256 values and writes atomically. A future transactional patch layer must stage complete multi-file changes, present one canonical diff, support rollback, and leave the worktree unchanged when rejected.
 
-### Target browser and crawler execution
+### Remaining browser and crawler requirements
 
-Browser and crawler integrations should run as permissioned tools behind the execution broker. They must not load merely because a workspace opens.
+The native browser already runs as a permissioned tool behind the execution broker and does not load merely because a workspace opens. Remaining stable-release work includes packaged cross-platform browser verification, stronger OS resource isolation, and broader hostile-page testing. The external crawler remains a reviewed preset rather than a fully integrated product path.
 
 - Browser automation should use a dedicated process and explicit host/domain policy.
 - The crawler should receive explicit starting URLs, boundaries, budgets, and output schemas.
@@ -160,7 +164,7 @@ Provider-reported token counts and locally calculated estimates must remain dist
 10. Declared status, exit-code, output-hash, and file-hash expectations are evaluated and persisted as verification checks and an outcome hash.
 11. `plan show` exposes the current record and content-free proof receipt; a terminal success requires passed verification.
 
-The current integration is local. Team mode runs bounded read-only specialists concurrently and hands their findings to one selected approval-gated coding lead. Transactional multi-file patch staging, parallel writers in delegated worktrees, generalized pause/retry, external sandbox backends, and complete ACP/MCP product wiring remain target requirements rather than shipped behavior.
+The current integration is local. Team mode runs bounded read-only specialists concurrently and hands their findings to one selected approval-gated coding lead. Project mode persists each transition and can resume after a restart, but it is not an unbounded background worker: cancellation, a denied approval, an exhausted transition or retry budget, repeated lack of progress, failed evidence binding, or a safety violation stops the run. Transactional multi-file patch staging, parallel writers in delegated worktrees, external sandbox backends, and complete ACP/MCP product wiring remain target requirements rather than shipped behavior.
 
 ## Storage
 
@@ -186,4 +190,4 @@ Tenant billing, SSO, SCIM, and enterprise administration are not part of the pub
 
 ## Release gate
 
-Fikeya must not be described as stable until the same fixture succeeds through Desktop and CLI, rejected operations leave the worktree unchanged, cancellation terminates active work, recovery survives sidecar/runtime restart, secrets are absent from artifacts, and clean-install tests pass on Windows, macOS, and Linux.
+Fikeya must not be described as stable until the same fixture succeeds through each claimed Desktop and CLI package, rejected operations leave the worktree unchanged, cancellation terminates active work, recovery survives sidecar/runtime restart, secrets are absent from artifacts, and clean-install tests pass on every shipped platform. Beta.5 currently targets Windows x64 packaging only; macOS, Linux, and ARM64 installers are not shipped.

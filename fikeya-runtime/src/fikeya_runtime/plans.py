@@ -34,6 +34,15 @@ _MAX_APPROVAL_TTL_SECONDS = 600
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SUPPORTED_TOOLS = frozenset(
     {
+        "browser.assert_text",
+        "browser.click",
+        "browser.close",
+        "browser.navigate",
+        "browser.screenshot",
+        "browser.scroll",
+        "browser.snapshot",
+        "browser.type",
+        "browser.wait",
         "process.run",
         "workspace.list_files",
         "workspace.read_file",
@@ -874,6 +883,7 @@ class PlanService:
         plan_id: str,
         *,
         allowed_executables: frozenset[str] | None = None,
+        allow_private_browser: bool = False,
         resume: bool = False,
         cancellation: CancellationToken | None = None,
     ) -> PlanRecord:
@@ -886,12 +896,29 @@ class PlanService:
             return plan
         token = cancellation or CancellationToken()
         broker = (
-            WorkspaceExecutionBroker(self.workspace)
+            WorkspaceExecutionBroker(
+                self.workspace,
+                allow_private_browser=allow_private_browser,
+            )
             if allowed_executables is None
             else WorkspaceExecutionBroker(
-                self.workspace, allowed_executables=allowed_executables
+                self.workspace,
+                allowed_executables=allowed_executables,
+                allow_private_browser=allow_private_browser,
             )
         )
+        try:
+            return await self._run_with_broker(plan, broker, resume, token)
+        finally:
+            broker.close()
+
+    async def _run_with_broker(
+        self,
+        plan: PlanRecord,
+        broker: WorkspaceExecutionBroker,
+        resume: bool,
+        token: CancellationToken,
+    ) -> PlanRecord:
         while True:
             current = _first_incomplete(plan.steps)
             if current is None:

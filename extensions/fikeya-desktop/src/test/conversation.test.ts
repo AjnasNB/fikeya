@@ -171,6 +171,41 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(source, /chatScrollTop: chatThread\.scrollTop/u);
 		assert.match(source, /persistedState\.graphState/u);
 	});
+
+	test('renders the compact five-mode composer with durable local selection and behavior copy', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		for (const mode of ['ask', 'plan', 'build', 'review', 'research']) {
+			assert.match(source, new RegExp(`id: '${mode}'`, 'u'));
+		}
+		assert.doesNotMatch(source, /<option value="agent"/u);
+		assert.doesNotMatch(source, /<option value="multitask"/u);
+		assert.match(source, /data-parallel-toggle type="button" aria-pressed="false"/u);
+		assert.match(source, /aria-describedby="composer-mode-help"/u);
+		assert.match(source, /data-composer-mode-help role="status"/u);
+		assert.match(source, /\['ask', 'plan', 'build', 'review', 'research'\]\.includes\(persistedState\.chatMode\)/u);
+		assert.match(source, /chatMode: chatModeField\?\.value \|\| 'build'/u);
+		assert.match(source, /chatParallelAgents: parallelAgentsEnabled/u);
+		assert.match(source, /buildComposerModeProviderPrompt\(composerMode, prompt\)/u);
+	});
+
+	test('keeps attachment reads, send availability, and focus safe across mode changes', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /attachmentReadCount \+= 1/u);
+		assert.match(source, /hasAttachments: attachmentReadCount > 0 \|\| imageAttachments\.length > 0 \|\| textFileAttachments\.length > 0/u);
+		assert.match(source, /runButton\.disabled = runBlocked \|\| attachmentReadCount > 0/u);
+		assert.match(source, /chatModeField\?\.addEventListener\('change', updateComposerMode\)/u);
+		assert.doesNotMatch(source, /chatModeField\?\.addEventListener\('change', refresh/u);
+	});
+
+	test('shows accessible autonomous stages with cancel and durable-plan resume actions', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /\['PLAN', 'AUDIT_PLAN', 'EXECUTE', 'AUDIT_CODE', 'VERIFY'\]/u);
+		assert.match(source, /aria-current="step"/u);
+		assert.match(source, /data-agent-cancel/u);
+		assert.match(source, /data-plan-action="resume"/u);
+		assert.match(source, /data-plan-action="cancel"/u);
+		assert.match(source, /role="status"/u);
+	});
 });
 
 describe('Fikeya plan surface', () => {

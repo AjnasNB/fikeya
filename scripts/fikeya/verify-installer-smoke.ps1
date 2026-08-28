@@ -6,7 +6,8 @@ param(
 	[string]$PublicVersion,
 	[Parameter(Mandatory = $true)]
 	[string]$NumericVersion,
-	[string]$InstallDirectory = ""
+	[string]$InstallDirectory = "",
+	[string]$PythonCommand = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,32 @@ try {
 		if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
 			throw "Installed Fikeya file is missing: $requiredPath"
 		}
+	}
+	$bundledRuntimeRoot = Join-Path $installRoot "resources\app\extensions\fikeya-desktop\runtime"
+	$bundledRuntime = Join-Path $bundledRuntimeRoot "fikeya-runtime.exe"
+	$bundledRuntimeReceipt = Join-Path $bundledRuntimeRoot "fikeya-runtime.json"
+	foreach ($requiredPath in @($bundledRuntime, $bundledRuntimeReceipt)) {
+		if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+			throw "Installed Fikeya browser runtime file is missing: $requiredPath"
+		}
+	}
+	$browserSmokeRoot = Join-Path $installRoot "browser-smoke"
+	New-Item -ItemType Directory -Path $browserSmokeRoot | Out-Null
+	$browserSmokeOutput = @(& $PythonCommand `
+		(Join-Path $PSScriptRoot "test_installed_browser.py") `
+		--runtime-executable $bundledRuntime `
+		--runtime-receipt $bundledRuntimeReceipt `
+		--workspace $browserSmokeRoot `
+		--allow-private-fixture) -join "`n"
+	if ($LASTEXITCODE -ne 0) {
+		throw "Installed Fikeya browser smoke failed."
+	}
+	$browserSmoke = $browserSmokeOutput | ConvertFrom-Json
+	if ($browserSmoke.schemaVersion -cne "fikeya.installed-browser-smoke.v1" `
+		-or $browserSmoke.planStatus -cne "succeeded" `
+		-or $browserSmoke.privateHostConsent -cne "explicit" `
+		-or $browserSmoke.remoteNetworkAllowed -ne $false) {
+		throw "Installed Fikeya browser smoke receipt is incomplete."
 	}
 
 	$version = (Get-Item -LiteralPath $executable).VersionInfo
@@ -108,6 +135,9 @@ try {
 		authenticodeStatus = [string]$signature.Status
 		launcherVersion = $launcherVersions["--version"]
 		launcherVersionAlias = $launcherVersions["-v"]
+		browserVersion = $browserSmoke.browserVersion
+		browserPayloadSha256 = $browserSmoke.payloadSha256
+		browserLicenseFiles = $browserSmoke.licenseFiles
 	} | ConvertTo-Json -Compress | Write-Output
 } finally {
 	$uninstaller = Join-Path $installRoot "unins000.exe"

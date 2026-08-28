@@ -34,6 +34,19 @@ if ($outputPath -eq $repositoryRoot) {
 	throw "Release output cannot be the repository root."
 }
 
+$containmentCursor = $outputPath
+while ($containmentCursor.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+	if (Test-Path -LiteralPath $containmentCursor) {
+		$item = Get-Item -LiteralPath $containmentCursor -Force
+		if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+			throw "Release output path cannot traverse a reparse point: $containmentCursor"
+		}
+	}
+	$parent = [System.IO.Path]::GetDirectoryName($containmentCursor)
+	if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $containmentCursor) { break }
+	$containmentCursor = $parent
+}
+
 if (Test-Path -LiteralPath $outputPath) {
 	Remove-Item -LiteralPath $outputPath -Recurse -Force
 }
@@ -71,6 +84,39 @@ $extensionRoot = Join-Path $repositoryRoot "extensions\fikeya-desktop"
 Invoke-Checked $extensionRoot "npm" @("ci")
 Invoke-Checked $extensionRoot "npm" @("run", "package:vsix")
 Copy-Item -LiteralPath (Join-Path $extensionRoot "artifacts\fikeya-desktop-$extensionVersion-win32-x64.vsix") -Destination $outputPath
+$desktopRuntimeReceiptPath = Join-Path $extensionRoot "runtime\fikeya-runtime.json"
+if (-not (Test-Path -LiteralPath $desktopRuntimeReceiptPath -PathType Leaf)) {
+	throw "Windows Desktop runtime receipt was not produced."
+}
+$desktopRuntimeReceipt = Get-Content -LiteralPath $desktopRuntimeReceiptPath -Raw | ConvertFrom-Json
+$desktopBrowser = $desktopRuntimeReceipt.browser
+if ($desktopRuntimeReceipt.target -cne "win32-x64" `
+	-or $desktopBrowser.schemaVersion -cne "fikeya.desktop-browser-payload.v1" `
+	-or $desktopBrowser.playwrightVersion -cne "1.62.0" `
+	-or $desktopBrowser.browserVersion -cne "151.0.7922.34" `
+	-or $desktopBrowser.revision -cne "1234" `
+	-or $desktopBrowser.payloadSha256 -cne "sha256:a3ef07d44788de282bfddfd28350b230e9a795a441be39cce585fbca363338dc" `
+	-or $desktopBrowser.payloadBytes -ne 287667597 `
+	-or $desktopBrowser.fileCount -ne 299) {
+	throw "Windows Desktop browser payload is missing or does not match the reviewed release."
+}
+$desktopRuntimeExecutable = Join-Path $extensionRoot ([string]$desktopRuntimeReceipt.executable)
+if (-not (Test-Path -LiteralPath $desktopRuntimeExecutable -PathType Leaf)) {
+	throw "Windows Desktop runtime executable containing the browser payload is missing."
+}
+$requiredBrowserPackages = @("playwright", "greenlet", "pyee", "typing-extensions", "chromium-headless-shell", "playwright-ffmpeg", "playwright-winldd")
+foreach ($packageName in $requiredBrowserPackages) {
+	$package = @($desktopRuntimeReceipt.packages | Where-Object name -eq $packageName)
+	if ($package.Count -ne 1) {
+		throw "Windows Desktop runtime license manifest is missing $packageName."
+	}
+	foreach ($licensePath in @($package[0].licenseFiles)) {
+		$absoluteLicense = Join-Path $extensionRoot ([string]$licensePath)
+		if (-not (Test-Path -LiteralPath $absoluteLicense -PathType Leaf)) {
+			throw "Windows Desktop runtime license file is missing: $licensePath"
+		}
+	}
+}
 
 $cliInstall = @"
 Fikeya CLI $releaseVersion
@@ -88,8 +134,10 @@ Fikeya CLI $releaseVersion
    fikeya init .
    fikeya doctor .
 
-The installer resolves the local wheels to absolute file URIs and installs the
-Runtime with its Azure extra. It fails if azure.identity cannot be imported.
+The installer resolves the local wheels to absolute file URIs, installs the
+Runtime with Azure identity and Playwright support, and provisions the exact
+Chromium Headless Shell selected by pinned Playwright 1.62.0. Internet access is
+required for Python dependencies and the browser payload.
 "@
 $cliInstallPath = Join-Path $outputPath "FIKEYA-CLI-INSTALL.txt"
 $cliInstall | Set-Content -LiteralPath $cliInstallPath -Encoding utf8
@@ -113,12 +161,14 @@ function Get-OneWheel([string]$Prefix) {
 $agentCore = Get-OneWheel "fikeya_agent_core-"
 $runtime = Get-OneWheel "fikeya_runtime-"
 $interop = Get-OneWheel "fikeya_interop-"
-$runtimeRequirement = "fikeya-runtime[azure] @ $(([Uri]$runtime.FullName).AbsoluteUri)"
+$runtimeRequirement = "fikeya-runtime[azure,browser] @ $(([Uri]$runtime.FullName).AbsoluteUri)"
 
 & $PythonCommand -m pip install --disable-pip-version-check $agentCore.FullName $runtimeRequirement $interop.FullName
 if ($LASTEXITCODE -ne 0) { throw "Fikeya CLI installation failed." }
-& $PythonCommand -c "import azure.identity; import fikeya_runtime; print(fikeya_runtime.__version__)"
-if ($LASTEXITCODE -ne 0) { throw "Fikeya CLI Azure support verification failed." }
+& $PythonCommand -m playwright install chromium-headless-shell
+if ($LASTEXITCODE -ne 0) { throw "Fikeya CLI browser provisioning failed." }
+& $PythonCommand -c "import azure.identity; import fikeya_runtime; import playwright; print(fikeya_runtime.__version__)"
+if ($LASTEXITCODE -ne 0) { throw "Fikeya CLI Azure and browser support verification failed." }
 '@ | Set-Content -LiteralPath $cliInstallerPath -Encoding utf8
 $cliBundle = Join-Path $outputPath "fikeya-cli-$releaseVersion.zip"
 $cliFiles = Get-ChildItem -LiteralPath $outputPath -File | Where-Object {
@@ -161,7 +211,8 @@ if (-not $SkipDesktop) {
 	& (Join-Path $PSScriptRoot "verify-installer-smoke.ps1") `
 		-InstallerPath $setupTarget `
 		-PublicVersion $releaseVersion `
-		-NumericVersion ([string]$distribution.desktopNumericVersion)
+		-NumericVersion ([string]$distribution.desktopNumericVersion) `
+		-PythonCommand "python"
 
 	if ($env:FIKEYA_SIGNING_PFX_BASE64 -and $env:FIKEYA_SIGNING_PFX_PASSWORD) {
 		$pfxPath = Join-Path $env:TEMP "fikeya-release-signing.pfx"

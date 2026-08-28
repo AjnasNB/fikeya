@@ -60,8 +60,26 @@ if (runtimeBuild.status !== 0) {
 	throw new Error(`Standalone Fikeya Runtime build failed.\n${boundedOutput(runtimeBuild.stderr || runtimeBuild.stdout)}`);
 }
 const pythonRuntimeBuildReceipt = await readJson(path.join(runtimeBuildRoot, 'build-receipt.json'));
-if (pythonRuntimeBuildReceipt.target !== vsixTarget || pythonRuntimeBuildReceipt.schemaVersion !== 'fikeya.desktop-python-runtime-build.v1') {
+const expectedRuntimeExecutable = process.platform === 'win32' ? 'fikeya-runtime.exe' : 'fikeya-runtime';
+if (pythonRuntimeBuildReceipt.target !== vsixTarget
+	|| pythonRuntimeBuildReceipt.schemaVersion !== 'fikeya.desktop-python-runtime-build.v1'
+	|| pythonRuntimeBuildReceipt.executable !== expectedRuntimeExecutable
+	|| pythonRuntimeBuildReceipt.pythonLicenseFile !== 'licenses/python/LICENSE.txt'
+	|| !/^sha256:[0-9a-f]{64}$/.test(pythonRuntimeBuildReceipt.pythonLicenseSha256 ?? '')
+	|| !Array.isArray(pythonRuntimeBuildReceipt.packages)) {
 	throw new Error('Standalone Fikeya Runtime build receipt does not match the requested VSIX target.');
+}
+if (vsixTarget === 'win32-x64') {
+	const browser = pythonRuntimeBuildReceipt.browser;
+	if (browser?.schemaVersion !== 'fikeya.desktop-browser-payload.v1'
+		|| browser.playwrightVersion !== '1.62.0'
+		|| browser.browserVersion !== '151.0.7922.34'
+		|| browser.revision !== '1234'
+		|| browser.fileCount !== 299
+		|| browser.payloadBytes !== 287_667_597
+		|| browser.payloadSha256 !== 'sha256:a3ef07d44788de282bfddfd28350b230e9a795a441be39cce585fbca363338dc') {
+		throw new Error('Windows Desktop browser payload is missing or does not match the reviewed release.');
+	}
 }
 
 const packagedManifest = { ...sourcePackage };
@@ -89,19 +107,47 @@ await copyInto(path.join(extensionRoot, 'node_modules', 'ignore', 'LICENSE-MIT')
 
 const runtimeExecutableSource = path.join(runtimeBuildRoot, 'dist', pythonRuntimeBuildReceipt.executable);
 const runtimeExecutableTarget = path.join(stagingRoot, 'runtime', pythonRuntimeBuildReceipt.executable);
+const desktopRuntimeRoot = path.join(extensionRoot, 'runtime');
+await rm(desktopRuntimeRoot, { recursive: true, force: true });
+await mkdir(desktopRuntimeRoot, { recursive: true });
 await copyInto(runtimeExecutableSource, runtimeExecutableTarget);
+await copyInto(runtimeExecutableSource, path.join(desktopRuntimeRoot, pythonRuntimeBuildReceipt.executable));
 const packagedRuntimeLicenses = [];
+const packagedRuntimeNames = new Set();
 for (const item of pythonRuntimeBuildReceipt.packages) {
+	const buildLicenseFiles = Array.isArray(item?.licenseFiles) ? item.licenseFiles : [item?.licenseFile];
 	if (!item || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(item.name)
-		|| !/^licenses\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(item.licenseFile)) {
+		|| buildLicenseFiles.length === 0
+		|| buildLicenseFiles.some(licenseFile => !/^licenses\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(licenseFile))
+		|| !item.licenseSha256
+		|| Object.keys(item.licenseSha256).length !== buildLicenseFiles.length
+		|| buildLicenseFiles.some(licenseFile => !/^sha256:[0-9a-f]{64}$/.test(item.licenseSha256[licenseFile] ?? ''))) {
 		throw new Error('Standalone Fikeya Runtime build receipt contains an unsafe license path.');
 	}
-	const packagedPath = path.join('third_party', 'python-runtime', item.name, path.basename(item.licenseFile));
-	await copyInto(path.join(runtimeBuildRoot, item.licenseFile), path.join(stagingRoot, packagedPath));
-	packagedRuntimeLicenses.push({ ...item, licenseFile: packagedPath.replaceAll('\\', '/') });
+	if (packagedRuntimeNames.has(item.name)) {
+		throw new Error(`Standalone Fikeya Runtime build receipt contains a duplicate package: ${item.name}`);
+	}
+	packagedRuntimeNames.add(item.name);
+	const packagedLicenseFiles = [];
+	const packagedLicenseHashes = {};
+	for (const licenseFile of buildLicenseFiles) {
+		const packagedPath = path.join('runtime', 'licenses', item.name, path.basename(licenseFile));
+		await copyInto(path.join(runtimeBuildRoot, licenseFile), path.join(stagingRoot, packagedPath));
+		await copyInto(path.join(runtimeBuildRoot, licenseFile), path.join(extensionRoot, packagedPath));
+		const normalizedPackagedPath = packagedPath.replaceAll('\\', '/');
+		packagedLicenseFiles.push(normalizedPackagedPath);
+		packagedLicenseHashes[normalizedPackagedPath] = item.licenseSha256[licenseFile];
+	}
+	packagedRuntimeLicenses.push({
+		...item,
+		licenseFile: packagedLicenseFiles[0],
+		licenseFiles: packagedLicenseFiles,
+		licenseSha256: packagedLicenseHashes
+	});
 }
-const pythonLicensePath = path.join('third_party', 'python-runtime', 'python', 'LICENSE.txt');
+const pythonLicensePath = path.join('runtime', 'licenses', 'python', 'LICENSE.txt');
 await copyInto(path.join(runtimeBuildRoot, pythonRuntimeBuildReceipt.pythonLicenseFile), path.join(stagingRoot, pythonLicensePath));
+await copyInto(path.join(runtimeBuildRoot, pythonRuntimeBuildReceipt.pythonLicenseFile), path.join(extensionRoot, pythonLicensePath));
 const bundledPythonRuntimeReceipt = {
 	...pythonRuntimeBuildReceipt,
 	schemaVersion: 'fikeya.desktop-bundled-python-runtime.v1',
@@ -116,9 +162,6 @@ await writeJson(path.join(stagingRoot, 'runtime', 'fikeya-runtime.json'), bundle
 // generated, ignored desktop runtime in sync with the exact executable inspected below.
 // This prevents a successful VSIX build from leaving an older runtime in a subsequent
 // native desktop installer.
-const desktopRuntimeRoot = path.join(extensionRoot, 'runtime');
-await mkdir(desktopRuntimeRoot, { recursive: true });
-await copyInto(runtimeExecutableSource, path.join(desktopRuntimeRoot, pythonRuntimeBuildReceipt.executable));
 await writeJson(path.join(desktopRuntimeRoot, 'fikeya-runtime.json'), bundledPythonRuntimeReceipt);
 
 const bundledSidecar = path.join(stagingRoot, 'sidecar', 'qarinah-memory-view.mjs');

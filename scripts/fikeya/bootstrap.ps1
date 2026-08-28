@@ -120,8 +120,12 @@ if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) {
 
 $env:PIP_DISABLE_PIP_VERSION_CHECK = '1'
 $env:PIP_NO_INPUT = '1'
-Write-Output '[2/5] Installing Fikeya Agent Core and Runtime with the Azure identity extra'
-& $runtimePython -m pip install --no-input --disable-pip-version-check --constraint $constraints $agentCoreSource "$runtimeSource[azure]"
+Write-Output '[2/5] Installing Fikeya Agent Core and Runtime with Azure identity and browser support'
+& $runtimePython -m pip install --no-input --disable-pip-version-check --constraint $constraints $agentCoreSource "$runtimeSource[azure,browser]"
+if ($LASTEXITCODE -ne 0) {
+	exit $LASTEXITCODE
+}
+& $runtimePython -m playwright install chromium-headless-shell
 if ($LASTEXITCODE -ne 0) {
 	exit $LASTEXITCODE
 }

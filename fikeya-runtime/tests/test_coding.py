@@ -8,14 +8,19 @@ import json
 import socket
 import sqlite3
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
 from fikeya_agent_core import ApprovalDecision, CancellationToken, ToolCall
+from fikeya_agent_core.errors import CancellationError
 
+from fikeya_runtime.browser import BrowserActionResult, BrowserError, BrowserReceipt
 from fikeya_runtime.coding import CodingAgentRunner, WorkspaceExecutionBroker
 from fikeya_runtime.credentials import CredentialResolver
 from fikeya_runtime.inference import JsonResponse, ProviderExecutor
+from fikeya_runtime.modes import AgentMode
 from fikeya_runtime.providers import ProviderKind, ProviderStore, build_profile
 from fikeya_runtime.workspace import initialize_workspace
 
@@ -215,6 +220,328 @@ def test_coding_loop_inspects_edits_tests_and_returns_structured_outcome(
         assert connection.execute(
             "SELECT COUNT(*) FROM provider_call_receipts"
         ).fetchone() == (7,)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_tools"),
+    [
+        (
+            AgentMode.ASK,
+            {
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+            },
+        ),
+        (
+            AgentMode.PLAN,
+            {
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+            },
+        ),
+        (
+            AgentMode.REVIEW,
+            {
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+            },
+        ),
+        (
+            AgentMode.RESEARCH,
+            {
+                "browser.assert_text",
+                "browser.click",
+                "browser.close",
+                "browser.navigate",
+                "browser.scroll",
+                "browser.snapshot",
+                "browser.type",
+                "browser.wait",
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+            },
+        ),
+    ],
+)
+def test_non_build_modes_expose_only_their_mechanical_tool_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: AgentMode,
+    expected_tools: set[str],
+) -> None:
+    root = tmp_path / mode.value
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    broker = WorkspaceExecutionBroker(workspace, mode=mode)
+    tools = _run(broker.list_tools(CancellationToken()), monkeypatch)
+    assert {tool.name for tool in tools} == expected_tools
+
+
+def test_review_mode_rejects_a_forged_write_call_even_if_execution_is_invoked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "review"
+    root.mkdir()
+    target = root / "answer.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    workspace, _ = initialize_workspace(root)
+    broker = WorkspaceExecutionBroker(workspace, mode=AgentMode.REVIEW)
+    result = _run(
+        broker.execute(
+            ToolCall(
+                "write:forged",
+                "workspace.write_file",
+                {
+                    "content": "VALUE = 2\n",
+                    "expectedSha256": None,
+                    "path": "answer.py",
+                },
+            ),
+            CancellationToken(),
+            idempotency_key="review-forged-write",
+        ),
+        monkeypatch,
+    )
+    assert result.status == "error"
+    assert result.output == "Tool is unavailable in review mode."
+    assert target.read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert [receipt.name for receipt in broker.state.receipts] == [
+        "workspace.write_file"
+    ]
+
+
+class _FakeBrowserSession:
+    def __init__(self) -> None:
+        self.closed = False
+        self.urls: list[str] = []
+
+    def navigate(self, url: str) -> BrowserActionResult:
+        self.urls.append(url)
+        return BrowserActionResult(
+            BrowserReceipt("navigate", url, "sha256:" + "1" * 64, 3)
+        )
+
+    def inspect(self, _kind: str) -> BrowserActionResult:
+        return BrowserActionResult(
+            BrowserReceipt(
+                "inspect",
+                self.urls[-1] if self.urls else None,
+                "sha256:" + "4" * 64,
+                2,
+            ),
+            text="Simulation ready",
+        )
+
+    def close(self) -> BrowserActionResult:
+        self.closed = True
+        return BrowserActionResult(
+            BrowserReceipt(
+                "close",
+                self.urls[-1] if self.urls else None,
+                "sha256:" + "2" * 64,
+                1,
+            )
+        )
+
+
+class _CancellableBrowserSession:
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.closed = False
+
+    def wait(
+        self,
+        _milliseconds: int,
+        *,
+        cancellation_requested: object,
+    ) -> BrowserActionResult:
+        assert callable(cancellation_requested)
+        self.entered.set()
+        deadline = time.monotonic() + 5
+        while not cancellation_requested() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if cancellation_requested():
+            raise BrowserError("Browser wait was cancelled.")
+        raise AssertionError("Browser cancellation was not delivered.")
+
+    def close(self) -> BrowserActionResult:
+        self.closed = True
+        return BrowserActionResult(
+            BrowserReceipt("close", None, "sha256:" + "5" * 64, 1)
+        )
+
+
+def test_broker_cancellation_unwinds_browser_worker_before_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "cancel-browser"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    session = _CancellableBrowserSession()
+    broker = WorkspaceExecutionBroker(
+        workspace,
+        mode=AgentMode.BUILD,
+        browser_session=session,  # type: ignore[arg-type]
+    )
+    token = CancellationToken()
+
+    async def exercise() -> None:
+        task = asyncio.create_task(
+            broker.execute(
+                ToolCall(
+                    "browser:wait-cancel",
+                    "browser.wait",
+                    {"milliseconds": 10_000},
+                ),
+                token,
+                idempotency_key="browser-wait-cancel",
+            )
+        )
+        entered = await asyncio.to_thread(session.entered.wait, 5)
+        assert entered
+        token.cancel()
+        with pytest.raises(CancellationError):
+            await task
+
+    _run(exercise(), monkeypatch)
+    broker.close()
+    assert session.closed
+    assert broker.state.receipts == []
+
+
+def test_build_mode_routes_browser_actions_and_records_content_minimal_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "browser"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    session = _FakeBrowserSession()
+    broker = WorkspaceExecutionBroker(
+        workspace,
+        mode=AgentMode.BUILD,
+        browser_session=session,  # type: ignore[arg-type]
+    )
+
+    result = _run(
+        broker.execute(
+            ToolCall(
+                "browser:navigate",
+                "browser.navigate",
+                {"url": "https://example.com/docs?section=runtime"},
+            ),
+            CancellationToken(),
+            idempotency_key="browser-navigation",
+        ),
+        monkeypatch,
+    )
+
+    assert result.status == "ok"
+    assert json.loads(result.output) == {
+        "receipt": {
+            "action": "navigate",
+            "durationMs": 3,
+            "evidenceSha256": "sha256:" + "1" * 64,
+            "url": "https://example.com/docs?section=runtime",
+        },
+        "truncated": False,
+    }
+    assert session.urls == ["https://example.com/docs?section=runtime"]
+    assert [receipt.name for receipt in broker.state.receipts] == [
+        "browser.navigate"
+    ]
+    asserted = _run(
+        broker.execute(
+            ToolCall(
+                "browser:assert",
+                "browser.assert_text",
+                {"text": "Simulation ready"},
+            ),
+            CancellationToken(),
+            idempotency_key="browser-assertion",
+        ),
+        monkeypatch,
+    )
+    assert asserted.status == "ok"
+    assert [receipt.name for receipt in broker.state.receipts] == [
+        "browser.navigate",
+        "browser.assert_text",
+    ]
+    broker.close()
+    assert session.closed is True
+
+
+def test_browser_session_lifecycle_stays_on_one_dedicated_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fikeya_runtime.coding as coding_module
+
+    thread_ids: list[int] = []
+
+    class ThreadBoundBrowser:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.thread_id = threading.get_ident()
+            thread_ids.append(self.thread_id)
+
+        def _result(self, action: str) -> BrowserActionResult:
+            current = threading.get_ident()
+            assert current == self.thread_id
+            thread_ids.append(current)
+            return BrowserActionResult(
+                BrowserReceipt(
+                    action,  # type: ignore[arg-type]
+                    "https://example.com/",
+                    "sha256:" + "3" * 64,
+                    1,
+                )
+            )
+
+        def navigate(self, _url: str) -> BrowserActionResult:
+            return self._result("navigate")
+
+        def inspect(self, _kind: str) -> BrowserActionResult:
+            return self._result("inspect")
+
+        def close(self) -> BrowserActionResult:
+            return self._result("close")
+
+    monkeypatch.setattr(coding_module, "BrowserSession", ThreadBoundBrowser)
+    root = tmp_path / "thread-bound-browser"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    broker = WorkspaceExecutionBroker(workspace, mode=AgentMode.BUILD)
+
+    async def exercise() -> None:
+        await broker.execute(
+            ToolCall(
+                "browser:navigate",
+                "browser.navigate",
+                {"url": "https://example.com/"},
+            ),
+            CancellationToken(),
+            idempotency_key="threaded-browser-navigate",
+        )
+        await broker.execute(
+            ToolCall(
+                "browser:snapshot",
+                "browser.snapshot",
+                {"kind": "accessible"},
+            ),
+            CancellationToken(),
+            idempotency_key="threaded-browser-snapshot",
+        )
+
+    _run(exercise(), monkeypatch)
+    broker.close()
+    assert len(set(thread_ids)) == 1
+    assert thread_ids[0] != threading.get_ident()
 
 
 def test_denied_edit_leaves_the_file_unchanged(

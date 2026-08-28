@@ -13,6 +13,7 @@ import { FikeyaImageInput, isImageInputs } from './imageInputs';
 const maximumOutputBytes = 1024 * 1024;
 const maximumAgentOutputBytes = 5 * 1024 * 1024;
 const maximumPlanOutputBytes = 3 * 1024 * 1024;
+const maximumProjectOutputBytes = 5 * 1024 * 1024;
 const maximumPlanSpecificationBytes = 1024 * 1024;
 const runtimeTimeoutMilliseconds = 30_000;
 const agentTimeoutMilliseconds = 15 * 60_000;
@@ -74,6 +75,7 @@ export interface FikeyaAgentUsage {
 }
 
 export type FikeyaMemoryMode = 'auto' | 'off' | 'required';
+export type FikeyaExecutionMode = 'ask' | 'build' | 'review' | 'research';
 
 export interface FikeyaAgentMemory {
 	readonly status: 'off' | 'unavailable' | 'used';
@@ -435,6 +437,7 @@ export function startFikeyaAgentRun(
 	approvalHandler: FikeyaAgentApprovalHandler,
 	history: readonly FikeyaProviderHistoryMessage[] = [],
 	images: readonly FikeyaImageInput[] = [],
+	mode: FikeyaExecutionMode = 'build',
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaAgentRunHandle {
@@ -448,6 +451,7 @@ export function startFikeyaAgentRun(
 		|| contextMaxCharacters < 512
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
+		|| !['ask', 'build', 'review', 'research'].includes(mode)
 		|| !isValidProviderHistory(history)
 		|| !isImageInputs(images)) {
 		return {
@@ -458,7 +462,7 @@ export function startFikeyaAgentRun(
 	}
 
 	const operation = startAgentProtocolCli(
-		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode),
+		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode, mode),
 		workspacePath,
 		prompt,
 		history,
@@ -483,6 +487,69 @@ export async function loadFikeyaAgentReceipts(sessionId: string, workspacePath: 
 /** Reads content-free, measured-only aggregate statistics from the local runtime database. */
 export async function loadFikeyaStatistics(workspacePath: string): Promise<FikeyaCliResult<FikeyaStatistics>> {
 	return runBoundedJsonCli(buildStatisticsArguments(workspacePath), workspacePath, parseStatistics);
+}
+
+/** Starts or resumes one durable plan-audit-build-audit-verify project loop. */
+export function startFikeyaProject(
+	action: 'start' | 'resume',
+	providerName: string,
+	goal: string,
+	workspacePath: string,
+	approvalHandler: FikeyaAgentApprovalHandler,
+	runId?: string,
+	completionCriteria: readonly string[] = [],
+	allowPrivateBrowser = false,
+	invocation = resolveFikeyaCli(),
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+): FikeyaProjectRunHandle {
+	if (!identifierPattern.test(providerName)
+		|| !goal.trim()
+		|| Buffer.byteLength(goal.trim(), 'utf8') > 65_536
+		|| (action === 'resume' && (!runId || !identifierPattern.test(runId)))
+		|| (action === 'start' && runId !== undefined)
+		|| completionCriteria.length > 64
+		|| completionCriteria.some(criterion => !criterion.trim() || Buffer.byteLength(criterion.trim(), 'utf8') > 4_096)) {
+		return { result: Promise.resolve(invalidLocalRequest()), onStarted: () => () => undefined, cancel: () => undefined };
+	}
+	const initialMessage = action === 'start'
+		? { type: 'start' as const, goal: goal.trim(), ...(completionCriteria.length ? { completionCriteria: completionCriteria.map(value => value.trim()) } : {}) }
+		: { type: 'resume' as const, runId: runId!, goal: goal.trim() };
+	return startProjectProtocolCli(
+		buildProjectRunArguments(action, providerName, runId, allowPrivateBrowser),
+		workspacePath,
+		initialMessage,
+		approvalHandler,
+		agentTimeoutMilliseconds,
+		maximumProjectOutputBytes,
+		invocation,
+		environment
+	);
+}
+
+/** Reloads one durable project run and its content-free transition history. */
+export async function loadFikeyaProject(runId: string, workspacePath: string): Promise<FikeyaCliResult<FikeyaProjectView>> {
+	if (!identifierPattern.test(runId)) {
+		return invalidLocalRequest();
+	}
+	return runBoundedJsonCli(
+		['project', 'show', runId, '--workspace', '.', '--json'],
+		workspacePath,
+		parseProjectView,
+		maximumProjectOutputBytes
+	);
+}
+
+/** Permanently stops one durable project run while retaining its history and plan receipts. */
+export async function cancelFikeyaProject(runId: string, workspacePath: string): Promise<FikeyaCliResult<FikeyaProjectView>> {
+	if (!identifierPattern.test(runId)) {
+		return invalidLocalRequest();
+	}
+	return runBoundedJsonCli(
+		['project', 'cancel', runId, '--workspace', '.', '--json'],
+		workspacePath,
+		parseProjectView,
+		maximumProjectOutputBytes
+	);
 }
 
 /** Creates one immutable plan specification. All titles, tool arguments, and file content use stdin. */
@@ -589,6 +656,7 @@ export function startFikeyaPlan(
 	action: 'run' | 'resume',
 	planId: string,
 	workspacePath: string,
+	allowPrivateBrowser = false,
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaPlanRunHandle {
@@ -596,7 +664,7 @@ export function startFikeyaPlan(
 		return { result: Promise.resolve(invalidLocalRequest()), onProgress: () => () => undefined, cancel: () => undefined };
 	}
 	return startPlanProtocolCli(
-		buildPlanActionArguments(action, planId),
+		buildPlanActionArguments(action, planId, allowPrivateBrowser),
 		workspacePath,
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
@@ -635,8 +703,75 @@ export function buildPlanProposalArguments(
 	];
 }
 
-export function buildPlanActionArguments(action: 'show' | 'review' | 'run' | 'resume' | 'cancel', planId: string): readonly string[] {
-	return ['plan', action, planId, '--workspace', '.', '--json'];
+export function buildPlanActionArguments(
+	action: 'show' | 'review' | 'run' | 'resume' | 'cancel',
+	planId: string,
+	allowPrivateBrowser = false
+): readonly string[] {
+	const args = ['plan', action, planId, '--workspace', '.'];
+	if (allowPrivateBrowser && (action === 'run' || action === 'resume')) {
+		args.push('--allow-private-browser');
+	}
+	args.push('--json');
+	return args;
+}
+
+export type FikeyaProjectStage = 'plan' | 'audit_plan' | 'execute' | 'audit_code' | 'verify' | 'completed' | 'stopped' | 'failed';
+
+export interface FikeyaProjectHistoryEntry {
+	readonly createdAt: string;
+	readonly documentSha256: string;
+	readonly revision: number;
+	readonly stage: FikeyaProjectStage;
+}
+
+export interface FikeyaProjectRecord {
+	readonly runId: string;
+	readonly workspaceId: string;
+	readonly goalSha256: string;
+	readonly stage: FikeyaProjectStage;
+	readonly revision: number;
+	readonly createdAt: string;
+	readonly updatedAt: string;
+	readonly transitionCount: number;
+	readonly planRevisions: number;
+	readonly executionFailures: number;
+	readonly providerFailures: number;
+	readonly noProgressCount: number;
+	readonly planId: string | null;
+	readonly planSpecSha256: string | null;
+	readonly planHistory: readonly string[];
+	readonly resumeStage: FikeyaProjectStage | null;
+	readonly stopReason: string | null;
+	readonly failureReason: string | null;
+}
+
+export type FikeyaProjectNextAction =
+	| { readonly action: 'review_plan'; readonly planId: string }
+	| { readonly action: 'approve_plan_steps'; readonly planId: string }
+	| { readonly action: 'resume_project'; readonly runId: string };
+
+export interface FikeyaProjectView {
+	readonly ok: boolean;
+	readonly runId: string;
+	readonly planId: string | null;
+	readonly stage: FikeyaProjectStage;
+	readonly record: FikeyaProjectRecord;
+	readonly history: readonly FikeyaProjectHistoryEntry[];
+	readonly nextAction: FikeyaProjectNextAction | null;
+}
+
+export interface FikeyaProjectRunHandle {
+	readonly result: Promise<FikeyaCliResult<FikeyaProjectView>>;
+	onStarted(handler: (started: FikeyaProjectStarted) => void): () => void;
+	cancel(): void;
+}
+
+export interface FikeyaProjectStarted {
+	readonly type: 'project_started';
+	readonly runId: string;
+	readonly stage: FikeyaProjectStage;
+	readonly revision: number;
 }
 
 export function buildPlanApproveArguments(planId: string, stepIds: readonly string[] | 'all'): readonly string[] {
@@ -661,7 +796,8 @@ export function buildAgentRunArguments(
 	providerName: string,
 	maxOutputTokens: number,
 	contextMaxCharacters: number,
-	memoryMode: FikeyaMemoryMode
+	memoryMode: FikeyaMemoryMode,
+	mode: FikeyaExecutionMode = 'build'
 ): readonly string[] {
 	return [
 		'agent',
@@ -677,8 +813,28 @@ export function buildAgentRunArguments(
 		String(contextMaxCharacters),
 		'--memory',
 		memoryMode,
+		'--mode',
+		mode,
 		'--json-lines'
 	];
+}
+
+/** Builds a content-free project argument vector. The exact goal stays on stdin. */
+export function buildProjectRunArguments(
+	action: 'start' | 'resume',
+	providerName: string,
+	runId?: string,
+	allowPrivateBrowser = false
+): readonly string[] {
+	const args = action === 'start'
+		? ['project', 'start', '.', '--provider', providerName]
+		: ['project', 'resume', runId ?? '', '--workspace', '.', '--provider', providerName];
+	args.push('--protocol-stdin', '--allow-network');
+	if (allowPrivateBrowser) {
+		args.push('--allow-private-browser');
+	}
+	args.push('--json-lines');
+	return args;
 }
 
 /** Builds the public, non-secret CLI argument vector for one provider profile. */
@@ -953,6 +1109,179 @@ export function parsePlanProposalView(value: unknown): FikeyaPlanProposalView | 
 		return undefined;
 	}
 	return { ...view, proposal: { protocol: 'fikeya.plan-proposal.v1', sessionId, callId, usage, memory } };
+}
+
+/** Parses the integrity-checked durable project record emitted by start/resume/show/cancel. */
+export function parseProjectView(value: unknown): FikeyaProjectView | undefined {
+	const envelope = asRecord(value);
+	if (!envelope || !hasExactRecordKeys(envelope, envelope.type === undefined
+		? ['history', 'message', 'nextAction', 'ok', 'planId', 'record', 'runId', 'stage']
+		: ['history', 'message', 'nextAction', 'ok', 'planId', 'record', 'runId', 'stage', 'type'])
+		|| (envelope.type !== undefined && envelope.type !== 'project_result')
+		|| typeof envelope.ok !== 'boolean'
+		|| strictBoundedString(envelope.message, 4_096) === undefined) {
+		return undefined;
+	}
+	const record = parseProjectRecord(envelope.record);
+	const runId = strictBoundedString(envelope.runId, 128);
+	const planId = nullableBoundedString(envelope.planId, 128);
+	const stage = envelope.stage;
+	if (!record || !runId || !identifierPattern.test(runId) || runId !== record.runId
+		|| planId === undefined || planId !== record.planId
+		|| !isProjectStage(stage) || stage !== record.stage
+		|| envelope.ok !== (stage !== 'failed')
+		|| !Array.isArray(envelope.history) || envelope.history.length < 1 || envelope.history.length > 1_024) {
+		return undefined;
+	}
+	const history = envelope.history.map(parseProjectHistoryEntry);
+	if (history.some(entry => entry === undefined)) {
+		return undefined;
+	}
+	const typedHistory = history as FikeyaProjectHistoryEntry[];
+	if (typedHistory.some((entry, index) => entry.revision !== index + 1)
+		|| typedHistory.at(-1)?.revision !== record.revision
+		|| typedHistory.at(-1)?.stage !== record.stage) {
+		return undefined;
+	}
+	const nextAction = envelope.nextAction === null ? null : parseProjectNextAction(envelope.nextAction, record);
+	if (nextAction === undefined
+		|| (nextAction === null && record.stage === 'stopped' && record.resumeStage !== null)) {
+		return undefined;
+	}
+	return { ok: envelope.ok, runId, planId, stage, record, history: typedHistory, nextAction };
+}
+
+function parseProjectRecord(value: unknown): FikeyaProjectRecord | undefined {
+	const record = asRecord(value);
+	if (!record || !hasExactRecordKeys(record, [
+		'codeAudit', 'completionCriteria', 'createdAt', 'executionFailures', 'failureReason', 'feedback',
+		'goalSha256', 'limits', 'noProgressCount', 'planAudit', 'planHistory', 'planId', 'planRevisions',
+		'planSpecSha256', 'providerFailures', 'resumeStage', 'revision', 'runId', 'schemaVersion', 'stage',
+		'stopReason', 'transitionCount', 'updatedAt', 'verification', 'workspaceId'
+	]) || record.schemaVersion !== 1 || !hasBoundedFiniteJsonEncoding(record, 1_048_576)) {
+		return undefined;
+	}
+	const runId = strictBoundedString(record.runId, 128);
+	const workspaceId = strictBoundedString(record.workspaceId, 128);
+	const goalSha256 = strictBoundedString(record.goalSha256, 71);
+	const planId = nullableBoundedString(record.planId, 128);
+	const planSpecSha256 = nullableBoundedString(record.planSpecSha256, 71);
+	const resumeStage = record.resumeStage === null ? null : record.resumeStage;
+	const stopReason = nullableBoundedString(record.stopReason, 16_384);
+	const failureReason = nullableBoundedString(record.failureReason, 16_384);
+	const feedback = strictBoundedString(record.feedback, 16_384);
+	const createdAt = parseTimestamp(record.createdAt);
+	const updatedAt = parseTimestamp(record.updatedAt);
+	if (!runId || !identifierPattern.test(runId)
+		|| !workspaceId || !identifierPattern.test(workspaceId)
+		|| !goalSha256 || !/^sha256:[0-9a-f]{64}$/.test(goalSha256)
+		|| !isProjectStage(record.stage)
+		|| (resumeStage !== null && !isProjectStage(resumeStage))
+		|| planId === undefined || (planId !== null && !identifierPattern.test(planId))
+		|| planSpecSha256 === undefined || (planSpecSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(planSpecSha256))
+		|| (planId === null) !== (planSpecSha256 === null)
+		|| stopReason === undefined || failureReason === undefined || feedback === undefined
+		|| !createdAt || !updatedAt
+		|| !isBoundedInteger(record.revision, 1, 1_024)
+		|| !isBoundedInteger(record.transitionCount, 0, 512)
+		|| !isBoundedInteger(record.planRevisions, 0, 16)
+		|| !isBoundedInteger(record.executionFailures, 0, 16)
+		|| !isBoundedInteger(record.providerFailures, 0, 16)
+		|| !isBoundedInteger(record.noProgressCount, 0, 16)
+		|| !parseProjectLimits(record.limits)
+		|| !parseProjectCriteria(record.completionCriteria)
+		|| !parseProjectBindings(record.planAudit, record.codeAudit, record.verification)
+		|| !Array.isArray(record.planHistory) || record.planHistory.length > 64
+		|| record.planHistory.some(digest => typeof digest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(digest))) {
+		return undefined;
+	}
+	return {
+		runId, workspaceId, goalSha256, stage: record.stage, revision: record.revision,
+		createdAt, updatedAt, transitionCount: record.transitionCount,
+		planRevisions: record.planRevisions, executionFailures: record.executionFailures,
+		providerFailures: record.providerFailures, noProgressCount: record.noProgressCount,
+		planId, planSpecSha256, planHistory: record.planHistory as string[], resumeStage,
+		stopReason, failureReason
+	};
+}
+
+function parseProjectLimits(value: unknown): boolean {
+	const limits = asRecord(value);
+	return !!limits && hasExactRecordKeys(limits, ['maxExecutionRetries', 'maxNoProgress', 'maxPlanRevisions', 'maxProviderRetries', 'maxTransitions'])
+		&& isBoundedInteger(limits.maxExecutionRetries, 0, 16)
+		&& isBoundedInteger(limits.maxNoProgress, 1, 16)
+		&& isBoundedInteger(limits.maxPlanRevisions, 0, 16)
+		&& isBoundedInteger(limits.maxProviderRetries, 0, 16)
+		&& isBoundedInteger(limits.maxTransitions, 8, 512);
+}
+
+function parseProjectCriteria(value: unknown): boolean {
+	return Array.isArray(value) && value.length >= 1 && value.length <= 64 && value.every(candidate => {
+		const criterion = asRecord(candidate);
+		return !!criterion && hasExactRecordKeys(criterion, ['criterionId', 'description', 'descriptionSha256'])
+			&& typeof criterion.criterionId === 'string' && identifierPattern.test(criterion.criterionId)
+			&& strictBoundedString(criterion.description, 4_096) !== undefined
+			&& typeof criterion.descriptionSha256 === 'string' && /^sha256:[0-9a-f]{64}$/.test(criterion.descriptionSha256);
+	});
+}
+
+function parseProjectBindings(...values: readonly unknown[]): boolean {
+	return values.every(value => {
+		if (value === null) {
+			return true;
+		}
+		const binding = asRecord(value);
+		return !!binding && hasExactRecordKeys(binding, ['accepted', 'criteriaSha256', 'executionEvidenceSha256', 'phase', 'planSpecSha256', 'resultSha256'])
+			&& typeof binding.accepted === 'boolean'
+			&& (binding.phase === 'audit_plan' || binding.phase === 'audit_code' || binding.phase === 'verify')
+			&& typeof binding.planSpecSha256 === 'string' && /^sha256:[0-9a-f]{64}$/.test(binding.planSpecSha256)
+			&& typeof binding.resultSha256 === 'string' && /^sha256:[0-9a-f]{64}$/.test(binding.resultSha256)
+			&& (binding.phase === 'verify'
+				? typeof binding.criteriaSha256 === 'string' && /^sha256:[0-9a-f]{64}$/.test(binding.criteriaSha256)
+				: binding.criteriaSha256 === null)
+			&& (binding.phase === 'audit_plan'
+				? binding.executionEvidenceSha256 === null
+				: typeof binding.executionEvidenceSha256 === 'string' && /^sha256:[0-9a-f]{64}$/.test(binding.executionEvidenceSha256));
+	});
+}
+
+function parseProjectHistoryEntry(value: unknown): FikeyaProjectHistoryEntry | undefined {
+	const entry = asRecord(value);
+	const createdAt = parseTimestamp(entry?.createdAt);
+	const digest = strictBoundedString(entry?.documentSha256, 71);
+	if (!entry || !hasExactRecordKeys(entry, ['createdAt', 'documentSha256', 'revision', 'stage'])
+		|| !createdAt || !digest || !/^sha256:[0-9a-f]{64}$/.test(digest)
+		|| !isBoundedInteger(entry.revision, 1, 1_024) || !isProjectStage(entry.stage)) {
+		return undefined;
+	}
+	return { createdAt, documentSha256: digest, revision: entry.revision, stage: entry.stage };
+}
+
+function parseProjectNextAction(value: unknown, record: FikeyaProjectRecord): FikeyaProjectNextAction | undefined {
+	const action = asRecord(value);
+	if (!action || record.stage !== 'stopped' || record.resumeStage === null || typeof action.action !== 'string') {
+		return undefined;
+	}
+	if (record.stopReason === 'plan_review_required' && action.action === 'review_plan'
+		&& hasExactRecordKeys(action, ['action', 'planId'])
+		&& typeof action.planId === 'string' && action.planId === record.planId) {
+		return { action: 'review_plan', planId: action.planId };
+	}
+	if (record.stopReason === 'plan_approval_required' && action.action === 'approve_plan_steps'
+		&& hasExactRecordKeys(action, ['action', 'planId'])
+		&& typeof action.planId === 'string' && action.planId === record.planId) {
+		return { action: 'approve_plan_steps', planId: action.planId };
+	}
+	if (record.stopReason !== 'plan_review_required' && record.stopReason !== 'plan_approval_required'
+		&& action.action === 'resume_project' && hasExactRecordKeys(action, ['action', 'runId'])
+		&& action.runId === record.runId) {
+		return { action: action.action, runId: record.runId };
+	}
+	return undefined;
+}
+
+function isProjectStage(value: unknown): value is FikeyaProjectStage {
+	return typeof value === 'string' && ['plan', 'audit_plan', 'execute', 'audit_code', 'verify', 'completed', 'stopped', 'failed'].includes(value);
 }
 
 function parsePlanProposalUsage(value: unknown): FikeyaAgentUsage | undefined {
@@ -2167,6 +2496,242 @@ function startAgentProtocolCli(
 		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
 	});
 	return { result, onProgress: progressChannel.onProgress, cancel: () => cancelOperation() };
+}
+
+function startProjectProtocolCli(
+	args: readonly string[],
+	workspacePath: string,
+	initialMessage: Readonly<Record<string, unknown>>,
+	approvalHandler: FikeyaAgentApprovalHandler,
+	timeoutMilliseconds: number,
+	outputLimitBytes: number,
+	invocation: FikeyaCliInvocation,
+	environment: NodeJS.ProcessEnv
+): FikeyaProjectRunHandle {
+	let cancelOperation = (): void => undefined;
+	const startedChannel = createProjectStartedChannel();
+	const result = new Promise<FikeyaCliResult<FikeyaProjectView>>(resolve => {
+		const child = spawn(invocation.executable, args, {
+			cwd: workspacePath,
+			env: environment,
+			shell: false,
+			stdio: ['pipe', 'pipe', 'pipe'],
+			windowsHide: true
+		});
+		let buffered = Buffer.alloc(0);
+		let outputBytes = 0;
+		let finalValue: FikeyaProjectView | undefined;
+		let startedValue: FikeyaProjectStarted | undefined;
+		let settled = false;
+		let requestedFailure: FikeyaRuntimeFailure | undefined;
+		let timeout: NodeJS.Timeout | undefined;
+		let forcedFinish: NodeJS.Timeout | undefined;
+		let processing = Promise.resolve();
+
+		const finish = (operationResult: FikeyaCliResult<FikeyaProjectView>): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			if (timeout) {
+				clearTimeout(timeout);
+			}
+			if (forcedFinish) {
+				clearTimeout(forcedFinish);
+			}
+			startedChannel.close();
+			resolve(operationResult);
+		};
+		const stop = (failure: FikeyaRuntimeFailure): void => {
+			if (settled || requestedFailure) {
+				return;
+			}
+			requestedFailure = failure;
+			terminateChildTree(child);
+			forcedFinish = setTimeout(() => finish({ ok: false, exitCode: null, failure }), processTerminationGraceMilliseconds);
+		};
+		cancelOperation = (): void => stop('cancelled');
+
+		if (!child.stdin || !child.stdout || !child.stderr) {
+			stop('runtime-error');
+			return;
+		}
+		const writeMessage = (value: unknown): Promise<void> => new Promise((accept, reject) => {
+			let payload: string;
+			try {
+				payload = `${JSON.stringify(value)}\n`;
+			} catch (error) {
+				reject(error);
+				return;
+			}
+			if (Buffer.byteLength(payload, 'utf8') > maximumProtocolLineBytes) {
+				reject(new Error('Fikeya project protocol message exceeds its limit.'));
+				return;
+			}
+			child.stdin!.write(payload, 'utf8', error => error ? reject(error) : accept());
+		});
+		const processLine = async (line: Buffer): Promise<void> => {
+			if (line.length === 0 || line.length > maximumProtocolLineBytes) {
+				throw new Error('Fikeya project protocol line is empty or exceeds its limit.');
+			}
+			let value: unknown;
+			try {
+				value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line));
+			} catch {
+				throw new Error('Fikeya project protocol emitted invalid JSON.');
+			}
+			const record = asRecord(value);
+			if (record?.type === 'project_started') {
+				if (startedValue || !hasExactRecordKeys(record, ['revision', 'runId', 'stage', 'type'])) {
+					throw new Error('Fikeya project protocol emitted an invalid duplicate start record.');
+				}
+				const runId = strictBoundedString(record.runId, 128);
+				if (!runId || !identifierPattern.test(runId) || !isProjectStage(record.stage)
+					|| !isBoundedInteger(record.revision, 1, 1_024)) {
+					throw new Error('Fikeya project start record did not match the bounded schema.');
+				}
+				startedValue = { type: 'project_started', runId, stage: record.stage, revision: record.revision };
+				startedChannel.emit(startedValue);
+				return;
+			}
+			if (record?.type === 'approval') {
+				const request = parseAgentApproval(record);
+				if (!request) {
+					throw new Error('Fikeya project approval did not match the bounded schema.');
+				}
+				const decision = await approvalHandler(request);
+				if (decision !== 'allow_once' && decision !== 'deny_once' && decision !== 'cancel') {
+					throw new Error('Fikeya project approval handler returned an invalid decision.');
+				}
+				await writeMessage({ type: 'approval', requestId: request.requestId, decision });
+				return;
+			}
+			if (record?.type === 'project_result') {
+				if (finalValue || !startedValue) {
+					throw new Error('Fikeya project protocol emitted more than one result.');
+				}
+				finalValue = parseProjectView(record);
+				if (!finalValue || finalValue.runId !== startedValue.runId) {
+					throw new Error('Fikeya project result did not match the durable schema.');
+				}
+				return;
+			}
+			throw new Error('Fikeya project protocol emitted an unknown message.');
+		};
+		const capture = (chunk: Buffer, retain: boolean): void => {
+			if (settled) {
+				return;
+			}
+			outputBytes += chunk.byteLength;
+			if (outputBytes > outputLimitBytes) {
+				stop('output-limit');
+				return;
+			}
+			if (!retain) {
+				return;
+			}
+			buffered = Buffer.concat([buffered, chunk]);
+			while (true) {
+				const newline = buffered.indexOf(0x0a);
+				if (newline < 0) {
+					if (buffered.length > maximumProtocolLineBytes) {
+						stop('output-limit');
+					}
+					break;
+				}
+				let line = buffered.subarray(0, newline);
+				buffered = buffered.subarray(newline + 1);
+				if (line.at(-1) === 0x0d) {
+					line = line.subarray(0, line.length - 1);
+				}
+				processing = processing.then(() => processLine(line));
+				processing.catch(() => stop('invalid-json'));
+			}
+		};
+
+		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
+		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
+		child.stdin.on('error', () => {
+			if (!settled) {
+				stop('runtime-error');
+			}
+		});
+		child.on('error', error => {
+			if (requestedFailure) {
+				finish({ ok: false, exitCode: null, failure: requestedFailure });
+				return;
+			}
+			finish({
+				ok: false,
+				exitCode: null,
+				failure: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not-found' : 'runtime-error'
+			});
+		});
+		child.on('close', exitCode => {
+			void processing.then(() => {
+				if (settled) {
+					return;
+				}
+				if (requestedFailure) {
+					finish({ ok: false, exitCode, failure: requestedFailure });
+					return;
+				}
+				if (buffered.length !== 0 || (exitCode !== 0 && exitCode !== 2) || !finalValue) {
+					finish({ ok: false, exitCode, failure: buffered.length !== 0 || !finalValue ? 'invalid-json' : 'runtime-error' });
+					return;
+				}
+				finish({ ok: true, exitCode, value: finalValue, failure: 'none' });
+			}).catch(() => finish({ ok: false, exitCode, failure: 'invalid-json' }));
+		});
+
+		void writeMessage(initialMessage).catch(() => stop('runtime-error'));
+		timeout = setTimeout(() => stop('timeout'), timeoutMilliseconds);
+	});
+	return { result, onStarted: startedChannel.onStarted, cancel: () => cancelOperation() };
+}
+
+interface FikeyaProjectStartedChannel {
+	onStarted(handler: (started: FikeyaProjectStarted) => void): () => void;
+	emit(started: FikeyaProjectStarted): void;
+	close(): void;
+}
+
+function createProjectStartedChannel(): FikeyaProjectStartedChannel {
+	const handlers = new Set<(started: FikeyaProjectStarted) => void>();
+	let latest: FikeyaProjectStarted | undefined;
+	let closed = false;
+	const notify = (handler: (started: FikeyaProjectStarted) => void, started: FikeyaProjectStarted): void => {
+		try {
+			handler(started);
+		} catch {
+			// Observers cannot interrupt or alter the child-process result.
+		}
+	};
+	return {
+		onStarted: handler => {
+			if (latest) {
+				notify(handler, latest);
+			}
+			if (closed) {
+				return () => undefined;
+			}
+			handlers.add(handler);
+			return () => handlers.delete(handler);
+		},
+		emit: started => {
+			if (closed) {
+				return;
+			}
+			latest = started;
+			for (const handler of handlers) {
+				notify(handler, started);
+			}
+		},
+		close: () => {
+			closed = true;
+			handlers.clear();
+		}
+	};
 }
 
 export function parseProtocolFailure(record: Record<string, unknown>): FikeyaRuntimeFailure | undefined {

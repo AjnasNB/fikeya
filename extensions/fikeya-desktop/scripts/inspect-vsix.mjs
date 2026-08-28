@@ -93,14 +93,42 @@ if (pythonRuntimeReceipt.schemaVersion !== 'fikeya.desktop-bundled-python-runtim
 	|| pythonRuntimeReceipt.packages?.find?.(item => item.name === 'azure-identity')?.version !== '1.25.3') {
 	throw new Error('Bundled standalone Fikeya Runtime receipt is incomplete or targets a different platform.');
 }
+if (vsixTarget === 'win32-x64') {
+	const browser = pythonRuntimeReceipt.browser;
+	if (browser?.schemaVersion !== 'fikeya.desktop-browser-payload.v1'
+		|| browser.name !== 'chromium-headless-shell'
+		|| browser.playwrightVersion !== '1.62.0'
+		|| browser.browserVersion !== '151.0.7922.34'
+		|| browser.revision !== '1234'
+		|| browser.archivePrefix !== 'playwright/driver/package/.local-browsers'
+		|| browser.executablePath !== 'chromium_headless_shell-1234/chrome-headless-shell-win64/chrome-headless-shell.exe'
+		|| browser.executableSha256 !== 'sha256:ce4635cd0e5dc0e21494542a701f347e91c1f1d821970578d97ed8df4ced50ef'
+		|| browser.fileCount !== 299
+		|| browser.payloadBytes !== 287_667_597
+		|| browser.payloadSha256 !== 'sha256:a3ef07d44788de282bfddfd28350b230e9a795a441be39cce585fbca363338dc'
+		|| pythonRuntimeReceipt.packages?.find?.(item => item.name === 'playwright')?.version !== '1.62.0'
+		|| pythonRuntimeReceipt.packages?.find?.(item => item.name === 'chromium-headless-shell')?.version !== '151.0.7922.34') {
+		throw new Error('Bundled Windows browser payload is incomplete or not pinned to the reviewed release.');
+	}
+}
 const runtimeHash = `sha256:${createHash('sha256').update(entries.get(expectedRuntimeEntry)).digest('hex')}`;
 if (runtimeHash !== pythonRuntimeReceipt.executableSha256) {
 	throw new Error('Bundled standalone Fikeya Runtime hash does not match its receipt.');
 }
-const declaredRuntimeLicenses = [pythonRuntimeReceipt.pythonLicenseFile, ...pythonRuntimeReceipt.packages.map(item => item.licenseFile)];
-for (const licensePath of declaredRuntimeLicenses) {
-	if (typeof licensePath !== 'string' || !entries.has(`extension/${licensePath}`) || entries.get(`extension/${licensePath}`).length === 0) {
-		throw new Error(`Bundled standalone Fikeya Runtime license is missing: ${licensePath}`);
+const declaredRuntimeLicenses = [
+	{ path: pythonRuntimeReceipt.pythonLicenseFile, sha256: pythonRuntimeReceipt.pythonLicenseSha256 },
+	...pythonRuntimeReceipt.packages.flatMap(item => {
+		const files = Array.isArray(item.licenseFiles) ? item.licenseFiles : [item.licenseFile];
+		return files.map(licensePath => ({ path: licensePath, sha256: item.licenseSha256?.[licensePath] }));
+	})
+];
+for (const license of declaredRuntimeLicenses) {
+	if (typeof license.path !== 'string' || !entries.has(`extension/${license.path}`) || entries.get(`extension/${license.path}`).length === 0) {
+		throw new Error(`Bundled standalone Fikeya Runtime license is missing: ${license.path}`);
+	}
+	const digest = `sha256:${createHash('sha256').update(entries.get(`extension/${license.path}`)).digest('hex')}`;
+	if (license.sha256 !== digest) {
+		throw new Error(`Bundled standalone Fikeya Runtime license hash is invalid: ${license.path}`);
 	}
 }
 
@@ -116,6 +144,8 @@ const report = {
 	bundleSha256: bundleHash,
 	runtimeTarget: pythonRuntimeReceipt.target,
 	runtimeSha256: runtimeHash,
+	browserVersion: pythonRuntimeReceipt.browser?.browserVersion ?? null,
+	browserPayloadSha256: pythonRuntimeReceipt.browser?.payloadSha256 ?? null,
 	forbiddenEntries: 0
 };
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -130,7 +160,7 @@ function parseJsonEntry(zipEntries, name) {
 
 function readZipEntries(filePath) {
 	return new Promise((resolve, reject) => {
-		yauzl.open(filePath, { lazyEntries: true }, (openError, archive) => {
+			yauzl.open(filePath, { lazyEntries: true }, (openError, archive) => {
 			if (openError || !archive) {
 				reject(openError ?? new Error('Unable to open VSIX archive.'));
 				return;
@@ -139,12 +169,23 @@ function readZipEntries(filePath) {
 			archive.on('error', reject);
 			archive.on('end', () => resolve(result));
 			archive.on('entry', entry => {
+				const parts = entry.fileName.split('/');
+				if (entry.fileName.includes('\\') || entry.fileName.startsWith('/') || parts.includes('..')) {
+					reject(new Error(`VSIX contains an unsafe entry path: ${entry.fileName}`));
+					archive.close();
+					return;
+				}
 				if (/\/$/.test(entry.fileName)) {
 					archive.readEntry();
 					return;
 				}
+				if (result.has(entry.fileName)) {
+					reject(new Error(`VSIX contains a duplicate entry: ${entry.fileName}`));
+					archive.close();
+					return;
+				}
 				const entryLimit = /extension\/runtime\/fikeya-runtime(?:\.exe)?$/.test(entry.fileName)
-					? 64 * 1024 * 1024
+					? 192 * 1024 * 1024
 					: 4 * 1024 * 1024;
 				if (entry.uncompressedSize > entryLimit) {
 					reject(new Error(`VSIX entry exceeds its inspection limit: ${entry.fileName}`));

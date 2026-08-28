@@ -6,7 +6,7 @@
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderPrompt, invokeAgentRunRequest, isAgentComposerNumberValid } from '../agentComposer';
-import { escapeHtml, parseWebviewMessage } from '../messageValidation';
+import { escapeHtml, fikeyaComposerModes, parseWebviewMessage, runtimeModeForComposerMode } from '../messageValidation';
 
 describe('Fikeya webview message validation', () => {
 	test('accepts the bounded local conversation reset action', () => {
@@ -94,7 +94,7 @@ describe('Fikeya webview message validation', () => {
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
 			images: [],
-			mode: 'research',
+			composerMode: 'research',
 			allowNetwork: true
 		};
 		assert.deepStrictEqual(parseWebviewMessage(request), {
@@ -106,10 +106,11 @@ describe('Fikeya webview message validation', () => {
 			memoryMode: 'auto',
 			images: [],
 			files: [],
+			composerMode: 'research',
 			mode: 'research',
 			allowNetwork: true
 		});
-		assert.deepStrictEqual(parseWebviewMessage({ ...request, type: 'proposePlan' }), {
+		assert.deepStrictEqual(parseWebviewMessage({ ...request, type: 'proposePlan', composerMode: 'plan' }), {
 			type: 'proposePlan',
 			providerName: 'azure-primary',
 			prompt: 'Explain the failing test.',
@@ -118,6 +119,7 @@ describe('Fikeya webview message validation', () => {
 			memoryMode: 'auto',
 			images: [],
 			files: [],
+			composerMode: 'plan',
 			allowNetwork: true
 		});
 
@@ -128,6 +130,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'required',
+			composerMode: 'plan',
 			allowNetwork: false
 		}), undefined);
 	});
@@ -140,7 +143,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 1024,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
-			mode: 'agent',
+			composerMode: 'ask',
 			allowNetwork: true,
 			images: [{
 				dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
@@ -176,7 +179,7 @@ describe('Fikeya webview message validation', () => {
 			maxOutputTokens: 1024,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
-			mode: 'agent',
+			composerMode: 'review',
 			allowNetwork: true,
 			images: [],
 			files: [file]
@@ -205,7 +208,7 @@ describe('Fikeya webview message validation', () => {
 			providerName: 'local-default',
 			prompt: 'Inspect the current project.',
 			...agentComposerDefaults,
-			mode: 'agent',
+			composerMode: 'build',
 			allowNetwork: true
 		});
 		assert.ok(request && request.type === 'runAgent');
@@ -226,12 +229,61 @@ describe('Fikeya webview message validation', () => {
 		assert.match(buildAgentProviderPrompt('research', 'Where is the parser?'), /Distinguish project evidence from inference/u);
 	});
 
+	test('accepts bounded audited-project lifecycle messages without attachments or argv content', () => {
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'startProject',
+			providerName: 'azure-primary',
+			goal: '  Build and verify the complete project.  ',
+			allowNetwork: true
+		}), {
+			type: 'startProject',
+			providerName: 'azure-primary',
+			goal: 'Build and verify the complete project.',
+			allowNetwork: true
+		});
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'projectAction', action: 'refresh' }), { type: 'projectAction', action: 'refresh' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'projectAction', action: 'resume', providerName: 'azure-primary', goal: '  Build and verify. ' }), { type: 'projectAction', action: 'resume', providerName: 'azure-primary', goal: 'Build and verify.' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'projectAction', action: 'cancel' }), { type: 'projectAction', action: 'cancel' });
+		assert.strictEqual(parseWebviewMessage({ type: 'startProject', providerName: 'azure-primary', goal: 'No consent', allowNetwork: false }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'startProject', providerName: '../escape', goal: 'Goal', allowNetwork: true }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'resume', providerName: 'azure-primary', goal: '' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'resume', goal: 'Goal' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'cancel', goal: 'unexpected' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'projectAction', action: 'delete' }), undefined);
+	});
+
+	test('derives the runtime seam from the five bounded composer modes', () => {
+		assert.deepStrictEqual(fikeyaComposerModes, ['ask', 'plan', 'build', 'review', 'research']);
+		assert.deepStrictEqual([
+			runtimeModeForComposerMode('ask'),
+			runtimeModeForComposerMode('build'),
+			runtimeModeForComposerMode('review'),
+			runtimeModeForComposerMode('research')
+		], ['agent', 'agent', 'agent', 'research']);
+		const base = {
+			type: 'runAgent',
+			providerName: 'local-default',
+			prompt: 'Inspect the project.',
+			...agentComposerDefaults,
+			allowNetwork: true
+		};
+		for (const [composerMode, mode] of [['ask', 'agent'], ['build', 'agent'], ['review', 'agent'], ['research', 'research']] as const) {
+			const parsed = parseWebviewMessage({ ...base, composerMode });
+			assert.ok(parsed && parsed.type === 'runAgent');
+			assert.deepStrictEqual({ composerMode: parsed.composerMode, mode: parsed.mode }, { composerMode, mode });
+		}
+		assert.strictEqual(parseWebviewMessage({ ...base, composerMode: 'plan' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ ...base, composerMode: 'autonomous' }), undefined);
+		assert.strictEqual(parseWebviewMessage({ ...base, composerMode: 'build', mode: 'research' }), undefined);
+	});
+
 	test('accepts only bounded consented parallel-agent selections', () => {
 		assert.deepStrictEqual(parseWebviewMessage({
 			type: 'runMultiAgent',
 			selectedAgentIds: ['security-reviewer', 'test-researcher'],
 			leadProviderName: 'openrouter-primary',
 			prompt: 'Review the same change independently.',
+			composerMode: 'review',
 			maxConcurrency: 2,
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
@@ -242,6 +294,7 @@ describe('Fikeya webview message validation', () => {
 			selectedAgentIds: ['security-reviewer', 'test-researcher'],
 			leadProviderName: 'openrouter-primary',
 			prompt: 'Review the same change independently.',
+			composerMode: 'review',
 			maxConcurrency: 2,
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
@@ -253,6 +306,7 @@ describe('Fikeya webview message validation', () => {
 			selectedAgentIds: ['security-reviewer', 'security-reviewer'],
 			leadProviderName: 'openrouter-primary',
 			prompt: 'Duplicate selection.',
+			composerMode: 'review',
 			maxConcurrency: 2,
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
@@ -264,6 +318,7 @@ describe('Fikeya webview message validation', () => {
 			selectedAgentIds: ['security-reviewer'],
 			leadProviderName: 'openrouter-primary',
 			prompt: 'No consent.',
+			composerMode: 'review',
 			maxConcurrency: 1,
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
@@ -275,7 +330,20 @@ describe('Fikeya webview message validation', () => {
 			selectedAgentIds: ['security-reviewer'],
 			leadProviderName: 'openrouter-primary',
 			prompt: 'Too much parallelism.',
+			composerMode: 'review',
 			maxConcurrency: 9,
+			maxOutputTokens: 2048,
+			contextMaxCharacters: 12_000,
+			memoryMode: 'auto',
+			allowNetwork: true
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'runMultiAgent',
+			selectedAgentIds: ['security-reviewer'],
+			leadProviderName: 'openrouter-primary',
+			prompt: 'A plan must use the immutable proposal path.',
+			composerMode: 'plan',
+			maxConcurrency: 1,
 			maxOutputTokens: 2048,
 			contextMaxCharacters: 12_000,
 			memoryMode: 'auto',
@@ -295,9 +363,22 @@ describe('Fikeya webview message validation', () => {
 			}]
 		};
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'createPlan', specification }), { type: 'createPlan', specification });
+		const browserSpecification = {
+			schemaVersion: 1,
+			title: 'Verify the local app',
+			steps: [{
+				stepId: 'assert-ready',
+				title: 'Check visible status',
+				toolCall: { callId: 'browser:assert', name: 'browser.assert_text', arguments: { text: 'Ready' } },
+				verify: { expectedStatus: 'ok' }
+			}]
+		};
+		assert.ok(parseWebviewMessage({ type: 'createPlan', specification: browserSpecification }));
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'newPlan' }), { type: 'newPlan' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'refreshPlan' }), { type: 'refreshPlan' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'planAction', action: 'review' }), { type: 'planAction', action: 'review' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'planAction', action: 'resume' }), { type: 'planAction', action: 'resume' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'planAction', action: 'cancel' }), { type: 'planAction', action: 'cancel' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'planAction', action: 'approve-step', stepId: 'inspect' }), { type: 'planAction', action: 'approve-step', stepId: 'inspect' });
 		assert.strictEqual(parseWebviewMessage({ type: 'planAction', action: 'approve-step', stepId: '../inspect' }), undefined);
 		assert.strictEqual(parseWebviewMessage({ type: 'planAction', action: 'delete' }), undefined);

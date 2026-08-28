@@ -3,7 +3,26 @@
 
 """Local-first protocol and execution foundation for Fikeya."""
 
+from .browser import (
+    BrowserActionResult,
+    BrowserError,
+    BrowserLimitError,
+    BrowserReceipt,
+    BrowserSecurityError,
+    BrowserSession,
+    BrowserUnavailable,
+)
 from .events import EventEnvelope, EventType
 
-__all__ = ["EventEnvelope", "EventType"]
-__version__ = "0.1.0b4"
+__all__ = [
+    "BrowserActionResult",
+    "BrowserError",
+    "BrowserLimitError",
+    "BrowserReceipt",
+    "BrowserSecurityError",
+    "BrowserSession",
+    "BrowserUnavailable",
+    "EventEnvelope",
+    "EventType",
+]
+__version__ = "0.1.0b5"

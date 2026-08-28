@@ -23,8 +23,8 @@ from scripts.fikeya.verify_release_artifacts import (
 )
 
 
-PUBLIC_VERSION = "0.1.0-beta.4"
-EXTENSION_VERSION = "0.1.0-beta.4"
+PUBLIC_VERSION = "0.1.0-beta.5"
+EXTENSION_VERSION = "0.1.0-beta.5"
 EXPECTED_COMMIT = "a" * 40
 
 
@@ -224,8 +224,9 @@ def _build_release(root: Path, *, include_installer: bool = False) -> ReleaseIde
             '$agentCore = Get-OneWheel "fikeya_agent_core-"',
             '$runtime = Get-OneWheel "fikeya_runtime-"',
             '$interop = Get-OneWheel "fikeya_interop-"',
-            '$runtimeRequirement = "fikeya-runtime[azure]"',
-            '& python -c "import azure.identity"',
+            '$runtimeRequirement = "fikeya-runtime[azure,browser]"',
+            '& python -m playwright install chromium-headless-shell',
+            '& python -c "import azure.identity; import playwright"',
             "",
         ]
     )

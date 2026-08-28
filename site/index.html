@@ -52,7 +52,7 @@
 			<section class="hero" id="top">
 				<div class="shell hero-layout">
 					<div class="hero-copy">
-						<p class="release-line"><span aria-hidden="true"></span>Fikeya 0.1.0-beta.4 source candidate · Desktop, VS Code extension, and CLI</p>
+						<p class="release-line"><span aria-hidden="true"></span>Fikeya 0.1.0-beta.5 source candidate · Desktop, VS Code extension, and CLI</p>
 						<h1>Build with your model.<span>Spend fewer tokens.</span></h1>
 						<p class="hero-summary">Fikeya selects task-relevant project evidence instead of replaying the whole repository on every turn. Bring your own provider, approve tools, run code, and inspect measured token and verification receipts. The product target is lower billed input tokens on matched coding tasks, not an unqualified savings claim.</p>
 						<div class="hero-actions">
@@ -121,6 +121,24 @@
 							</article>
 						</div>
 					</div>
+				</div>
+			</section>
+
+			<section class="section project-loop-section" id="project-loop">
+				<div class="shell project-loop-layout">
+					<div class="section-intro compact">
+						<p class="eyebrow">Durable Project mode</p>
+						<h2>Plan, challenge, build, challenge again, then prove the result.</h2>
+						<p>Project mode stores a bounded run in the workspace and can resume it after Fikeya restarts. It continues through audited stages until the approved completion evidence passes, or stops safely for a person, a denied approval, cancellation, exhausted limits, or repeated lack of progress.</p>
+						<p class="scope-note">Browser checks are first-class approved plan steps. Fikeya can open a page, inspect visible or accessible content, click, type, scroll, assert text, capture a bounded screenshot, and bind those receipts to the exact code and plan that were reviewed.</p>
+					</div>
+					<ol class="project-loop" aria-label="Fikeya durable project stages">
+						<li><span>01</span><div><strong>Plan</strong><p>Inspect the workspace and produce an exact executable plan.</p></div></li>
+						<li><span>02</span><div><strong>Audit plan</strong><p>Use read-only tools to challenge the plan before execution.</p></div></li>
+						<li><span>03</span><div><strong>Build</strong><p>Run only reviewed, one-use-approved file, process, and browser steps.</p></div></li>
+						<li><span>04</span><div><strong>Audit code</strong><p>Review the exact plan receipt and deterministic workspace snapshot.</p></div></li>
+						<li><span>05</span><div><strong>Verify</strong><p>Match every completion criterion to reproducible evidence.</p></div></li>
+					</ol>
 				</div>
 			</section>
 

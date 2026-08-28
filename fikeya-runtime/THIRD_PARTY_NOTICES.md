@@ -10,6 +10,12 @@ Runtime dependencies:
 - [Azure Identity for Python](https://github.com/Azure/azure-sdk-for-python), an
   optional dependency used to obtain short-lived Entra ID tokens through the
   standard developer and workload credential chain. Its own license applies.
+- [Playwright for Python](https://github.com/microsoft/playwright-python), an
+  optional dependency used by the bounded browser capability. Windows Desktop
+  releases embed the exactly pinned Playwright driver, Chromium Headless Shell,
+  FFmpeg helper, and Winldd helper instead of downloading a browser at runtime.
+  Their reviewed license and notice files are shipped beside the bundled
+  Desktop runtime.
 - [Qarinah](https://github.com/AjnasNB/qarinah), an optional separately
   installed command-line integration. Fikeya invokes its public CLI as a child
   process and does not bundle its source or retained content.

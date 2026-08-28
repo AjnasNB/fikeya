@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +75,35 @@ const doctor = await runtime.runFikeyaRuntime('doctor', workspaceRoot, invocatio
 assert.equal(doctor.ok, true, `Bundled Fikeya doctor failed: ${doctor.failure}`);
 assert.equal(doctor.report?.status, 'ready');
 assert.equal(doctor.report?.initialized, true);
+
+let browserSmoke = null;
+if (target === 'win32-x64') {
+	const browserSmokeRoot = path.join(isolatedRoot, 'browser-smoke');
+	await mkdir(browserSmokeRoot, { recursive: true });
+	const pythonCommand = process.env.FIKEYA_PYTHON ?? 'python';
+	const browserSmokeResult = spawnSync(pythonCommand, [
+		path.join(repositoryRoot(), 'scripts', 'fikeya', 'test_installed_browser.py'),
+		'--runtime-executable',
+		invocation.executable,
+		'--runtime-receipt',
+		path.join(extractedRoot, 'runtime', 'fikeya-runtime.json'),
+		'--workspace',
+		browserSmokeRoot,
+		'--allow-private-fixture'
+	], {
+		cwd: workspaceRoot,
+		env: { ...packagedEnvironment, PATH: process.env.PATH ?? '' },
+		encoding: 'utf8',
+		stdio: ['ignore', 'pipe', 'pipe'],
+		windowsHide: true
+	});
+	assert.equal(browserSmokeResult.status, 0, `Bundled browser smoke failed: ${browserSmokeResult.stderr}`);
+	browserSmoke = JSON.parse(browserSmokeResult.stdout);
+	assert.equal(browserSmoke.schemaVersion, 'fikeya.installed-browser-smoke.v1');
+	assert.equal(browserSmoke.planStatus, 'succeeded');
+	assert.equal(browserSmoke.privateHostConsent, 'explicit');
+	assert.equal(browserSmoke.remoteNetworkAllowed, false);
+}
 
 const memoryInitialization = await memory.initializeQarinahMemory(extractedRoot, workspaceRoot);
 assert.equal(memoryInitialization.ok, true, `Bundled Qarinah initialization failed: ${memoryInitialization.failure}`);
@@ -159,6 +188,7 @@ try {
 		async () => 'deny_once',
 		[],
 		[],
+		'build',
 		invocation,
 		packagedEnvironment
 	).result;
@@ -228,9 +258,12 @@ const report = {
 	capturedRunEventCount: capturedRun.receipt.eventCount,
 	capturedRunLedgerHeadHash: capturedRun.receipt.ledgerHeadHash,
 	capturedRunGraphManifestHash: capturedRun.receipt.graphManifestHash,
-	providerRequestCount: providerRequests.length
+	providerRequestCount: providerRequests.length,
+	browserVersion: browserSmoke?.browserVersion ?? null,
+	browserPayloadSha256: browserSmoke?.payloadSha256 ?? null
 };
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+await rm(isolatedRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 
 function extractExtension(vsixPath, destination) {
 	return new Promise((resolve, reject) => {
@@ -241,21 +274,26 @@ function extractExtension(vsixPath, destination) {
 			}
 			archive.on('error', reject);
 			archive.on('end', resolve);
+			const seenEntries = new Set();
 			archive.on('entry', entry => {
 				if (!entry.fileName.startsWith('extension/') || entry.fileName.endsWith('/')) {
 					archive.readEntry();
 					return;
 				}
 				const relative = entry.fileName.slice('extension/'.length);
+				const parts = relative.split('/');
 				const targetPath = path.resolve(destination, ...relative.split('/'));
 				const entryLimit = relative === 'runtime/fikeya-runtime' || relative === 'runtime/fikeya-runtime.exe'
-					? 64 * 1024 * 1024
+					? 192 * 1024 * 1024
 					: 16 * 1024 * 1024;
-				if (!targetPath.startsWith(`${path.resolve(destination)}${path.sep}`) || entry.uncompressedSize > entryLimit) {
+				if (entry.fileName.includes('\\') || relative.startsWith('/') || parts.includes('..')
+					|| seenEntries.has(entry.fileName)
+					|| !targetPath.startsWith(`${path.resolve(destination)}${path.sep}`) || entry.uncompressedSize > entryLimit) {
 					reject(new Error(`Unsafe VSIX entry: ${entry.fileName}`));
 					archive.close();
 					return;
 				}
+				seenEntries.add(entry.fileName);
 				archive.openReadStream(entry, (streamError, stream) => {
 					if (streamError || !stream) {
 						reject(streamError ?? new Error(`Unable to extract ${entry.fileName}.`));
@@ -287,4 +325,8 @@ function currentVsixTarget() {
 	if (process.platform === 'darwin') return `darwin-${architecture}`;
 	if (process.platform === 'linux') return `linux-${architecture}`;
 	throw new Error(`Unsupported VSIX platform: ${process.platform}/${process.arch}`);
+}
+
+function repositoryRoot() {
+	return path.resolve(extensionRoot, '..', '..');
 }
