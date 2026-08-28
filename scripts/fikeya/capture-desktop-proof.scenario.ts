@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
 
 interface ScenarioTarget {
@@ -117,12 +118,10 @@ interface NarrowPanelState {
 
 interface ShortComposerState {
 	readonly viewportHeight: number;
-	readonly confirmationTop: number;
-	readonly confirmationBottom: number;
-	readonly promptBottom: number;
-	readonly footerTop: number;
-	readonly sendOnceVisible: boolean;
-	readonly cancelVisible: boolean;
+	readonly promptVisible: boolean;
+	readonly footerVisible: boolean;
+	readonly sendVisible: boolean;
+	readonly sendEnabled: boolean;
 }
 
 interface NarrowGraphState {
@@ -600,10 +599,6 @@ const scenario: Scenario = {
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = document.querySelector('[data-network-confirmation]');
-					const sendOnce = document.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -685,11 +680,8 @@ const scenario: Scenario = {
 					provider.dispatchEvent(new Event('change', { bubbles: true }));
 					prompt.value = 'Inspect this attached image together with the bounded project evidence.';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = form.querySelector('[data-network-confirmation]');
-					const sendOnce = form.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -704,6 +696,39 @@ const scenario: Scenario = {
 						: false;
 				})()`, 'The pasted image did not complete a visible multimodal Chat turn.', 90_000);
 				return `Pasted ${state.attachment}, rendered its bounded attachment receipt, and completed the real provider-backed Chat turn.`;
+			}
+		},
+		{
+			id: 'explorer-file-drop',
+			title: 'Drop a workspace file from Explorer anywhere on Project Chat',
+			async run({ code }) {
+				const resourceUri = pathToFileURL(path.join(workspacePath, 'README.md')).toString();
+				const dropped = await evaluateFikeya<boolean>(code, `(() => {
+					const surface = document.querySelector('[data-agent-surface]');
+					if (!surface || typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') return false;
+					const transfer = new DataTransfer();
+					transfer.setData('ResourceURLs', ${JSON.stringify(JSON.stringify([resourceUri]))});
+					surface.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+					surface.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+					surface.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+					return true;
+				})()`);
+				if (!dropped) {
+					throw new Error('The Project Chat surface did not accept a VS Code Explorer resource drop.');
+				}
+				await waitForFikeya<boolean>(code, `(() => {
+					const file = document.querySelector('[data-composer-attachments] .composer-attachment.file strong');
+					return file?.textContent?.trim() === 'README.md';
+				})()`, 'README.md was not attached after the Explorer resource drop.', 20_000);
+				const removed = await evaluateFikeya<boolean>(code, `(() => {
+					const remove = document.querySelector('[data-composer-attachments] .composer-attachment.file button');
+					if (!remove) return false;
+					remove.click();
+					return true;
+				})()`);
+				if (!removed) throw new Error('The dropped README.md attachment could not be removed.');
+				await waitForFikeya<boolean>(code, `document.querySelectorAll('[data-composer-attachments] .composer-attachment').length === 0`, 'The dropped file attachment did not clear.', 10_000);
+				return 'Dropped README.md from the VS Code Explorer resource channel onto the full Project Chat surface and attached its bounded UTF-8 content.';
 			}
 		},
 		{
@@ -759,10 +784,6 @@ const scenario: Scenario = {
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = form.querySelector('[data-network-confirmation]');
-					const sendOnce = form.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -806,10 +827,6 @@ const scenario: Scenario = {
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = form.querySelector('[data-network-confirmation]');
-					const sendOnce = form.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -876,10 +893,6 @@ const scenario: Scenario = {
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = form.querySelector('[data-network-confirmation]');
-					const sendOnce = form.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -900,8 +913,8 @@ const scenario: Scenario = {
 			}
 		},
 		{
-			id: 'short-composer-confirmation',
-			title: 'Confirm provider access from a short fixed composer without overlap',
+			id: 'short-composer-direct-send',
+			title: 'Keep direct send visible and enabled in a short fixed composer',
 			async run({ code, page }) {
 				proofWindowBounds ??= await page.evaluate<DesktopWindowBounds>('({ width: window.outerWidth, height: window.outerHeight })');
 				proofPanelWidth ??= await evaluateFikeya<number>(code, 'window.innerWidth');
@@ -911,51 +924,37 @@ const scenario: Scenario = {
 					const form = document.querySelector('[data-agent-form]');
 					const prompt = form?.querySelector('[name="prompt"]');
 					const mode = form?.querySelector('[name="chatMode"]');
-					const confirmation = form?.querySelector('[data-network-confirmation]');
-					const sendOnce = form?.querySelector('[data-network-confirm]');
-					const cancel = form?.querySelector('[data-network-cancel]');
+					const send = form?.querySelector('[data-agent-run]');
 					const footer = form?.querySelector('.composer-foot');
-					if (!form || !prompt || !mode || !confirmation || !sendOnce || !cancel || !footer) return false;
+					if (!form || !prompt || !mode || !send || !footer) return false;
 					mode.value = 'build';
 					mode.dispatchEvent(new Event('change', { bubbles: true }));
-					prompt.value = 'Verify the short composer confirmation without contacting the provider.';
+					prompt.value = 'Verify that direct send remains available in the short composer.';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
-					form.requestSubmit();
-					confirmation.scrollIntoView({ block: 'nearest' });
-					const confirmationRect = confirmation.getBoundingClientRect();
-					const promptRect = prompt.getBoundingClientRect();
-					const footerRect = footer.getBoundingClientRect();
+					footer.scrollIntoView({ block: 'nearest' });
 					const visible = element => {
 						const rect = element.getBoundingClientRect();
 						return rect.width > 0 && rect.height > 0 && rect.top >= -1 && rect.bottom <= window.innerHeight + 1;
 					};
 					const value = {
 						viewportHeight: window.innerHeight,
-						confirmationTop: confirmationRect.top,
-						confirmationBottom: confirmationRect.bottom,
-						promptBottom: promptRect.bottom,
-						footerTop: footerRect.top,
-						sendOnceVisible: visible(sendOnce),
-						cancelVisible: visible(cancel)
+						promptVisible: visible(prompt),
+						footerVisible: visible(footer),
+						sendVisible: visible(send),
+						sendEnabled: !send.disabled
 					};
-					return !confirmation.hidden
-						&& confirmationRect.top >= promptRect.bottom - 1
-						&& confirmationRect.bottom <= footerRect.top + 1
-						&& value.sendOnceVisible && value.cancelVisible
+					return value.promptVisible && value.footerVisible && value.sendVisible && value.sendEnabled
 						? value
 						: false;
-				})()`, 'The short composer confirmation was hidden, clipped, or overlapped another composer control.', 20_000);
+				})()`, 'The short composer prompt or direct send action was hidden, disabled, or clipped.', 20_000);
 				await evaluateFikeya<boolean>(code, `(() => {
-					const form = document.querySelector('[data-agent-form]');
-					const prompt = form?.querySelector('[name="prompt"]');
-					const cancel = form?.querySelector('[data-network-cancel]');
-					if (!prompt || !cancel) return false;
-					cancel.click();
+					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
+					if (!prompt) return false;
 					prompt.value = '';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					return true;
 				})()`);
-				return `At ${state.viewportHeight}px high, the one-message network confirmation remained fully visible between the prompt and footer with both confirmation actions usable.`;
+				return `At ${state.viewportHeight}px high, the prompt, footer, and one-click send action remained visible; send enabled=${state.sendEnabled}.`;
 			}
 		},
 		{
@@ -1239,18 +1238,12 @@ const scenario: Scenario = {
 		},
 		{
 			id: 'editor-terminal-layout',
-			title: 'Keep Editor UI Chat full-height beside the bottom terminal',
-			async run({ code, page }) {
-				const switched = await evaluateFikeya<boolean>(code, `(() => {
-					const select = document.querySelector('[data-layout-switch]');
-					if (!(select instanceof HTMLSelectElement)) return false;
-					select.value = 'editor';
-					select.dispatchEvent(new Event('change', { bubbles: true }));
-					return true;
-				})()`);
-				if (!switched) {
-					throw new Error('The Project UI dropdown did not expose Editor + Chat.');
-				}
+			title: 'Keep Project Chat persistent, then use Editor Chat beside the terminal',
+			async run({ code, page, workbench }) {
+				await runWorkbenchCommand(workbench, page, 'workbench.action.closeActiveEditor');
+				await page.waitForSelector('iframe.webview.ready', { state: 'visible', timeout: 30_000 });
+				await waitForFikeya<boolean>(code, `Boolean(document.querySelector('[data-agent-form]'))`, 'Project Chat did not reopen after its editor was closed.', 30_000);
+				await runWorkbenchCommand(workbench, page, 'fikeya.layout.editor');
 				await waitFor(
 					() => page.evaluate<boolean>(`(() => {
 						const auxiliary = document.querySelector('.part.auxiliarybar');
@@ -1281,7 +1274,7 @@ const scenario: Scenario = {
 					const rect = form?.getBoundingClientRect();
 					return Boolean(rect && rect.width > 0 && rect.bottom <= window.innerHeight + 1 && rect.bottom >= window.innerHeight - 36);
 				})()`, 'The Fikeya Chat composer was not anchored after the terminal opened.', 20_000);
-				return `Terminal stopped at x=${Math.round(layout.panelRight)} before Chat began at x=${Math.round(layout.chatLeft)}; Chat retained its full-height bottom at y=${Math.round(layout.chatBottom)} with composer anchored=${composerAnchored}.`;
+				return `Project Chat reopened after close. Native Editor UI then placed the terminal at x=${Math.round(layout.panelRight)} before Chat at x=${Math.round(layout.chatLeft)}; Chat stayed full-height to y=${Math.round(layout.chatBottom)} with composer anchored=${composerAnchored}.`;
 			}
 		}
 	]

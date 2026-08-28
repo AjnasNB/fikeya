@@ -78,9 +78,9 @@ const captureProviderDecisions = [
 	}
 ] as const;
 // Chat, pasted-image Chat, and mentioned-file Chat each use the three-stage
-// agent loop. Multitask exercises two advisory loops plus one lead loop. The audited Project/Plan
-// workflow uses one proposal call plus one plan/act/review loop for each of its three exact steps.
-const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 6) + 10;
+// agent loop. Multitask exercises two advisory loops plus one lead loop. The durable Plan adds one
+// provider proposal; its reviewed execution then runs only the three approved local workspace tools.
+const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 6) + 1;
 
 interface CaptureOptions {
 	compile: boolean;

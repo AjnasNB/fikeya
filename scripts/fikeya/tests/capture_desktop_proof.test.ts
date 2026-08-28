@@ -246,8 +246,6 @@ test('Electron Chat proof validates a real 360px-class responsive panel', async 
 	assert.match(scenario, /fiveModesAvailable/u);
 	assert.match(scenario, /ask,plan,build,review,research/u);
 	assert.match(scenario, /\[data-agent-run\]/u);
-	assert.match(scenario, /\[data-network-confirmation\]/u);
-	assert.match(scenario, /\[data-network-confirm\]/u);
 	assert.match(scenario, /\.composer-route > summary/u);
 	assert.match(scenario, /composerAnchored/u);
 	assert.match(scenario, /minimumPanelWidth = 340/u);
@@ -261,7 +259,6 @@ test('Electron proof executes and verifies a bounded two-agent Multitask batch',
 	assert.match(scenario, /parallelToggle\.click\(\)/u);
 	assert.match(scenario, /input\.checked = true/u);
 	assert.match(scenario, /form\.requestSubmit\(\)/u);
-	assert.match(scenario, /\[data-network-confirm\]/u);
 	assert.match(scenario, /Proof Planner/u);
 	assert.match(scenario, /Proof Reviewer/u);
 	assert.match(scenario, /\.assistant-message/u);
@@ -272,7 +269,7 @@ test('Electron proof executes and verifies a bounded two-agent Multitask batch',
 	assert.match(scenario, /specialistAnswerCount === 0/u);
 	assert.match(scenario, /currentTurnAnswers\.length === 1/u);
 	assert.match(scenario, /one canonical/u);
-	assert.equal(captureProviderExpectedRequestCount, 28);
+	assert.equal(captureProviderExpectedRequestCount, 19);
 });
 
 test('Electron Chat proof mentions a bounded workspace file through the native picker', async () => {
@@ -283,6 +280,16 @@ test('Electron Chat proof mentions a bounded workspace file through the native p
 	assert.match(scenario, /page\.keyboard\.type\('README\.md'\)/u);
 	assert.match(scenario, /prompt\?\.value\.includes\('@README\.md'\)/u);
 	assert.match(scenario, /attachment === 'README\.md'/u);
+});
+
+test('Electron Chat proof drops a VS Code Explorer resource onto the full Project surface', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /id: 'explorer-file-drop'/u);
+	assert.match(scenario, /pathToFileURL\(path\.join\(workspacePath, 'README\.md'\)\)/u);
+	assert.match(scenario, /\[data-agent-surface\]/u);
+	assert.match(scenario, /transfer\.setData\('ResourceURLs'/u);
+	assert.match(scenario, /new DragEvent\('drop'/u);
+	assert.match(scenario, /README\.md was not attached after the Explorer resource drop/u);
 });
 
 test('Electron Chat proof pastes an image and delivers it to the provider', async () => {
@@ -299,8 +306,6 @@ test('Electron proof uses chat-first inline Plan and dialog overlays', async () 
 	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
 	assert.match(scenario, /mode\.value = 'plan'/u);
 	assert.match(scenario, /form\.requestSubmit\(\)/u);
-	assert.match(scenario, /\[data-network-confirmation\]/u);
-	assert.match(scenario, /\[data-network-confirm\]/u);
 	assert.doesNotMatch(scenario, /type: 'createPlan'/u);
 	assert.match(scenario, /\.chat-plan-details/u);
 	assert.match(scenario, /\[data-modal-open="context"\]/u);
@@ -312,18 +317,25 @@ test('Electron proof uses chat-first inline Plan and dialog overlays', async () 
 	assert.doesNotMatch(scenario, /data-agent-plan/u);
 });
 
-test('Electron proof uses a Windows-safe evidence path and verifies the short composer confirmation', async () => {
+test('Electron proof uses a Windows-safe evidence path and verifies direct send at short height', async () => {
 	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
 	assert.match(scenario, /recordVideo: process\.platform !== 'win32'/u);
-	assert.match(scenario, /id: 'short-composer-confirmation'/u);
+	assert.match(scenario, /id: 'short-composer-direct-send'/u);
 	assert.match(scenario, /window\.resizeTo\(window\.outerWidth, 620\)/u);
-	assert.match(scenario, /confirmationRect\.top >= promptRect\.bottom/u);
-	assert.match(scenario, /confirmationRect\.bottom <= footerRect\.top/u);
-	assert.match(scenario, /sendOnceVisible/u);
-	assert.match(scenario, /cancelVisible/u);
+	assert.match(scenario, /sendVisible/u);
+	assert.match(scenario, /sendEnabled/u);
+	assert.match(scenario, /The short composer prompt or direct send action was hidden/u);
 	assert.match(scenario, /proofPanelWidth \?\?= await evaluateFikeya<number>\(code, 'window\.innerWidth'\)/u);
 	assert.match(scenario, /Math\.max\(421, \(proofPanelWidth \?\? 421\) - 8\)/u);
 	assert.doesNotMatch(scenario, /window\.innerWidth >= 700/u);
+});
+
+test('Electron proof reopens Project Chat after close and switches through the native command', async () => {
+	const scenario = await readFile(path.join(__dirname, '..', 'capture-desktop-proof.scenario.ts'), 'utf8');
+	assert.match(scenario, /workbench\.action\.closeActiveEditor/u);
+	assert.match(scenario, /Project Chat did not reopen after its editor was closed/u);
+	assert.match(scenario, /runWorkbenchCommand\(workbench, page, 'fikeya\.layout\.editor'\)/u);
+	assert.doesNotMatch(scenario, /data-layout-switch/u);
 });
 
 test('Electron proof selects an evidence-linked Qarinah node at the narrow width', async () => {
