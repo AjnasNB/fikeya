@@ -1571,6 +1571,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if ((action === 'approve-step' || action === 'approve-all') && !await this.confirmPlanApproval(plan, action === 'approve-step' ? stepId : undefined)) {
 			return;
 		}
+		let allowPrivateBrowser = false;
+		if ((action === 'run' || action === 'resume') && planNeedsPrivateBrowserAccess(plan)) {
+			const confirmation = vscode.l10n.t('Allow local browser access once');
+			const accepted = await vscode.window.showWarningMessage(
+				vscode.l10n.t('This approved plan opens a loopback or private-network page. Allow that browser access for this run only?'),
+				{ modal: true },
+				confirmation
+			);
+			if (accepted !== confirmation) {
+				return;
+			}
+			allowPrivateBrowser = true;
+		}
 
 		this.state = { ...this.state, plan: { ...this.state.plan, status: action === 'run' || action === 'resume' ? 'running' : 'loading', failure: undefined } };
 		this.refresh();
@@ -1598,7 +1611,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 
-		const operation = startFikeyaPlan(action, plan.planId, workspacePath);
+		const operation = startFikeyaPlan(action, plan.planId, workspacePath, allowPrivateBrowser);
 		this.activePlanRun = operation;
 		const disposeProgress = operation.onProgress(progress => {
 			if (this.activePlanRun !== operation) {
@@ -3290,6 +3303,39 @@ function planStepStatusLabel(status: FikeyaPlanRecord['steps'][number]['status']
 
 function planStatusLabel(status: FikeyaPlanRecord['status']): string {
 	return status.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+export function planNeedsPrivateBrowserAccess(plan: FikeyaPlanRecord): boolean {
+	return plan.steps.some(step => {
+		if (step.toolCall.name !== 'browser.navigate') {
+			return false;
+		}
+		const value = step.toolCall.arguments.url;
+		if (typeof value !== 'string') {
+			return false;
+		}
+		try {
+			const hostname = new URL(value).hostname.toLowerCase();
+			if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '[::1]') {
+				return true;
+			}
+			const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+			if (!match) {
+				return false;
+			}
+			const octets = match.slice(1).map(Number);
+			if (octets.some(octet => octet > 255)) {
+				return false;
+			}
+			return octets[0] === 10
+				|| octets[0] === 127
+				|| (octets[0] === 169 && octets[1] === 254)
+				|| (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+				|| (octets[0] === 192 && octets[1] === 168);
+		} catch {
+			return false;
+		}
+	});
 }
 
 /**

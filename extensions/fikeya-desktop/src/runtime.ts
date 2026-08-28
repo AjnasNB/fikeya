@@ -592,6 +592,7 @@ export function startFikeyaPlan(
 	action: 'run' | 'resume',
 	planId: string,
 	workspacePath: string,
+	allowPrivateBrowser = false,
 	invocation = resolveFikeyaCli(),
 	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
 ): FikeyaPlanRunHandle {
@@ -599,7 +600,7 @@ export function startFikeyaPlan(
 		return { result: Promise.resolve(invalidLocalRequest()), onProgress: () => () => undefined, cancel: () => undefined };
 	}
 	return startPlanProtocolCli(
-		buildPlanActionArguments(action, planId),
+		buildPlanActionArguments(action, planId, allowPrivateBrowser),
 		workspacePath,
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
@@ -638,8 +639,17 @@ export function buildPlanProposalArguments(
 	];
 }
 
-export function buildPlanActionArguments(action: 'show' | 'review' | 'run' | 'resume' | 'cancel', planId: string): readonly string[] {
-	return ['plan', action, planId, '--workspace', '.', '--json'];
+export function buildPlanActionArguments(
+	action: 'show' | 'review' | 'run' | 'resume' | 'cancel',
+	planId: string,
+	allowPrivateBrowser = false
+): readonly string[] {
+	const args = ['plan', action, planId, '--workspace', '.'];
+	if (allowPrivateBrowser && (action === 'run' || action === 'resume')) {
+		args.push('--allow-private-browser');
+	}
+	args.push('--json');
+	return args;
 }
 
 export function buildPlanApproveArguments(planId: string, stepIds: readonly string[] | 'all'): readonly string[] {

@@ -84,7 +84,23 @@ const maximumPromptBytes = 262_144;
 const maximumPlanSpecificationBytes = 1_048_576;
 const providerNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
-const supportedPlanTools = new Set(['process.run', 'workspace.list_files', 'workspace.read_file', 'workspace.replace_text', 'workspace.search_text', 'workspace.write_file']);
+const supportedPlanTools = new Set([
+	'browser.assert_text',
+	'browser.click',
+	'browser.close',
+	'browser.navigate',
+	'browser.screenshot',
+	'browser.scroll',
+	'browser.snapshot',
+	'browser.type',
+	'browser.wait',
+	'process.run',
+	'workspace.list_files',
+	'workspace.read_file',
+	'workspace.replace_text',
+	'workspace.search_text',
+	'workspace.write_file'
+]);
 
 /** Parses one untrusted webview message into the small command surface the extension accepts. */
 export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | undefined {

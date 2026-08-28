@@ -340,6 +340,17 @@ describe('Fikeya webview message validation', () => {
 			}]
 		};
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'createPlan', specification }), { type: 'createPlan', specification });
+		const browserSpecification = {
+			schemaVersion: 1,
+			title: 'Verify the local app',
+			steps: [{
+				stepId: 'assert-ready',
+				title: 'Check visible status',
+				toolCall: { callId: 'browser:assert', name: 'browser.assert_text', arguments: { text: 'Ready' } },
+				verify: { expectedStatus: 'ok' }
+			}]
+		};
+		assert.ok(parseWebviewMessage({ type: 'createPlan', specification: browserSpecification }));
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'newPlan' }), { type: 'newPlan' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'refreshPlan' }), { type: 'refreshPlan' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'planAction', action: 'review' }), { type: 'planAction', action: 'review' });

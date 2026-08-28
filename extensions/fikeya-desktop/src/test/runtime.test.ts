@@ -403,7 +403,7 @@ describe('Fikeya runtime protocol', () => {
 			disposeAgentProgress();
 
 			await writeProtocolFixture(workspacePath, 'plan', [...progress, planResultRecord()]);
-			const planOperation = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const planOperation = startFikeyaPlan('run', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			const planProgress: unknown[] = [];
 			const disposePlanProgress = planOperation.onProgress(event => planProgress.push(event));
 			const planResult = await planOperation.result;
@@ -494,7 +494,7 @@ describe('Fikeya runtime protocol', () => {
 				{ event: 'x'.repeat(81), sequence: 1, stage: 'planning', type: 'progress' },
 				planResultRecord()
 			]);
-			const oversizedPlan = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const oversizedPlan = startFikeyaPlan('run', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			const oversizedPlanProgress: unknown[] = [];
 			oversizedPlan.onProgress(event => oversizedPlanProgress.push(event));
 
@@ -506,7 +506,7 @@ describe('Fikeya runtime protocol', () => {
 				{ event: 'stage_completed', sequence: 2, stage: 'executing', type: 'progress' },
 				planResultRecord()
 			]);
-			const unorderedPlan = startFikeyaPlan('resume', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const unorderedPlan = startFikeyaPlan('resume', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			const unorderedPlanProgress: unknown[] = [];
 			unorderedPlan.onProgress(event => unorderedPlanProgress.push(event));
 			const unorderedPlanResult = await unorderedPlan.result;
@@ -537,7 +537,7 @@ describe('Fikeya runtime protocol', () => {
 				`process.stdout.write(${JSON.stringify(`${JSON.stringify(progress)}\n`)}); setInterval(() => undefined, 1000);\n`,
 				'utf8'
 			);
-			const operation = startFikeyaPlan('run', 'pln_fixture', workspacePath, protocolInvocation, process.env);
+			const operation = startFikeyaPlan('run', 'pln_fixture', workspacePath, false, protocolInvocation, process.env);
 			operation.onProgress(() => operation.cancel());
 			const cancelled = await operation.result;
 			assert.deepStrictEqual({ ok: cancelled.ok, failure: cancelled.failure }, { ok: false, failure: 'cancelled' });
@@ -568,6 +568,7 @@ describe('Fikeya runtime protocol', () => {
 		assert.deepStrictEqual(buildPlanCreateArguments(), ['plan', 'create', '.', '--spec-stdin', '--json']);
 		assert.ok(!buildPlanCreateArguments().includes(privateContent));
 		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--json']);
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example', true), ['plan', 'resume', 'pln_example', '--workspace', '.', '--allow-private-browser', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', ['inspect', 'verify']), ['plan', 'approve', 'pln_example', '--workspace', '.', '--step', 'inspect', '--step', 'verify', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', 'all'), ['plan', 'approve', 'pln_example', '--workspace', '.', '--all', '--json']);
 		const proposalArgs = buildPlanProposalArguments('azure-primary', 2048, 12_000, 'required');
