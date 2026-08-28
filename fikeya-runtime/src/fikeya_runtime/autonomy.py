@@ -16,9 +16,12 @@ import json
 import os
 import re
 import sqlite3
+import threading
+import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol, cast
@@ -52,6 +55,11 @@ _READ_ONLY_TOOLS = frozenset(
     {"workspace.list_files", "workspace.read_file", "workspace.search_text"}
 )
 _TERMINAL_STAGES = frozenset({"completed", "stopped", "failed"})
+_DEFAULT_LEASE_SECONDS = 15.0
+_DEFAULT_HEARTBEAT_SECONDS = 0.5
+_ACTIVE_AUTONOMY_LEASE: ContextVar[str | None] = ContextVar(
+    "fikeya_active_autonomy_lease", default=None
+)
 
 
 class AutonomyStage(str, enum.Enum):
@@ -643,12 +651,45 @@ class AutonomyRecord:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AutonomyControl:
+    """Durable cross-process cancellation and single-owner lease state."""
+
+    run_id: str
+    lease_owner: str | None
+    lease_expires_at: float | None
+    heartbeat_at: float | None
+    cancellation_requested_at: str | None
+    cancellation_reason: str | None
+    cancellation_acknowledged_at: str | None
+
+    @property
+    def cancellation_pending(self) -> bool:
+        return (
+            self.cancellation_requested_at is not None
+            and self.cancellation_acknowledged_at is None
+        )
+
+    def lease_active_at(self, now: float) -> bool:
+        return (
+            self.lease_owner is not None
+            and self.lease_expires_at is not None
+            and self.lease_expires_at > now
+        )
+
+
 class AutonomyStore:
     """SQLite persistence with integrity hashes and optimistic revisions."""
 
-    def __init__(self, workspace: Workspace) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self.workspace = workspace
         self.path = workspace.state_path
+        self._clock = clock
         StateStore(self.path).initialize()
         with self._connect() as connection:
             connection.executescript(
@@ -683,8 +724,29 @@ class AutonomyStore:
                     document_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS autonomous_project_loop_control (
+                    run_id TEXT PRIMARY KEY,
+                    lease_owner TEXT,
+                    lease_expires_at REAL,
+                    heartbeat_at REAL,
+                    cancellation_requested_at TEXT,
+                    cancellation_reason TEXT,
+                    cancellation_acknowledged_at TEXT,
+                    FOREIGN KEY (run_id) REFERENCES autonomous_project_loops(run_id)
+                        ON DELETE CASCADE,
+                    CHECK (
+                        (lease_owner IS NULL AND lease_expires_at IS NULL)
+                        OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)
+                    ),
+                    CHECK (
+                        cancellation_acknowledged_at IS NULL
+                        OR cancellation_requested_at IS NOT NULL
+                    )
+                );
                 CREATE INDEX IF NOT EXISTS autonomous_project_loops_updated
                     ON autonomous_project_loops(updated_at);
+                CREATE INDEX IF NOT EXISTS autonomous_project_loop_leases
+                    ON autonomous_project_loop_control(lease_expires_at);
                 """
             )
 
@@ -738,6 +800,13 @@ class AutonomyStore:
                         record.updated_at,
                     ),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO autonomous_project_loop_control (run_id)
+                    VALUES (?)
+                    """,
+                    (record.run_id,),
+                )
             except sqlite3.IntegrityError as error:
                 raise StateError(f"Autonomy run already exists: {record.run_id}") from error
         return record
@@ -772,27 +841,46 @@ class AutonomyStore:
         updated._validate()
         document = stable_json(updated.as_json())
         digest = sha256_text(document)
+        lease_owner = _ACTIVE_AUTONOMY_LEASE.get()
+        if lease_owner is not None:
+            validate_identifier(lease_owner, "autonomy lease owner")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            cursor = connection.execute(
+            parameters: tuple[object, ...] = (
+                updated.revision,
+                updated.stage.value,
+                document,
+                digest,
+                updated.updated_at,
+                updated.run_id,
+                record.revision,
+            )
+            lease_clause = ""
+            if lease_owner is not None:
+                lease_clause = """
+                    AND EXISTS (
+                        SELECT 1 FROM autonomous_project_loop_control AS control
+                        WHERE control.run_id = autonomous_project_loops.run_id
+                          AND control.lease_owner = ?
+                          AND control.lease_expires_at > ?
+                    )
                 """
+                parameters = (*parameters, lease_owner, self.now())
+            cursor = connection.execute(
+                f"""
                 UPDATE autonomous_project_loops
                 SET revision = ?, stage = ?, document_json = ?, document_sha256 = ?,
                     updated_at = ?
                 WHERE run_id = ? AND revision = ?
-                """,
-                (
-                    updated.revision,
-                    updated.stage.value,
-                    document,
-                    digest,
-                    updated.updated_at,
-                    updated.run_id,
-                    record.revision,
-                ),
+                {lease_clause}
+                """,  # noqa: S608 - lease clause is an internal constant, never input.
+                parameters,
             )
             if cursor.rowcount != 1:
-                raise StateError("Autonomy run changed concurrently; reload before continuing.")
+                raise StateError(
+                    "Autonomy run changed concurrently or its execution lease was lost; "
+                    "reload before continuing."
+                )
             connection.execute(
                 """
                 INSERT INTO autonomous_project_loop_history (
@@ -808,6 +896,12 @@ class AutonomyStore:
                 ),
             )
         return updated
+
+    def now(self) -> float:
+        value = float(self._clock())
+        if not 0 <= value < float("inf"):
+            raise StateError("Autonomy lease clock returned an invalid value.")
+        return value
 
     def history(self, run_id: str) -> tuple[dict[str, object], ...]:
         validate_identifier(run_id, "autonomy runId")
@@ -828,6 +922,255 @@ class AutonomyStore:
                 "stage": str(row["stage"]),
             }
             for row in rows
+        )
+
+    def control(self, run_id: str) -> AutonomyControl:
+        """Return the durable coordination state for one run."""
+
+        validate_identifier(run_id, "autonomy runId")
+        with self._connect() as connection:
+            self._ensure_control_row(connection, run_id)
+            return self._read_control(connection, run_id)
+
+    def acquire_lease(
+        self,
+        run_id: str,
+        owner: str,
+        *,
+        lease_seconds: float,
+    ) -> AutonomyControl:
+        """Acquire or renew the single durable execution lease for a run."""
+
+        validate_identifier(run_id, "autonomy runId")
+        validate_identifier(owner, "autonomy lease owner")
+        _lease_seconds(lease_seconds)
+        now = self.now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._ensure_control_row(connection, run_id)
+            current = self._read_control(connection, run_id)
+            if current.cancellation_requested_at is not None:
+                raise StateError("Autonomy run cancellation has already been requested.")
+            if current.lease_active_at(now) and current.lease_owner != owner:
+                raise StateError("Autonomy run is already active in another process.")
+            connection.execute(
+                """
+                UPDATE autonomous_project_loop_control
+                SET lease_owner = ?, lease_expires_at = ?, heartbeat_at = ?
+                WHERE run_id = ?
+                """,
+                (owner, now + lease_seconds, now, run_id),
+            )
+            return self._read_control(connection, run_id)
+
+    def heartbeat(
+        self,
+        run_id: str,
+        owner: str,
+        *,
+        lease_seconds: float,
+    ) -> str | None:
+        """Renew an owned lease and return a pending cancellation reason."""
+
+        validate_identifier(run_id, "autonomy runId")
+        validate_identifier(owner, "autonomy lease owner")
+        _lease_seconds(lease_seconds)
+        now = self.now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE autonomous_project_loop_control
+                SET lease_expires_at = ?, heartbeat_at = ?
+                WHERE run_id = ? AND lease_owner = ?
+                """,
+                (now + lease_seconds, now, run_id, owner),
+            )
+            if cursor.rowcount != 1:
+                raise StateError("Autonomy execution lease was lost.")
+            control = self._read_control(connection, run_id)
+        if not control.cancellation_pending:
+            return None
+        return control.cancellation_reason or "person cancelled"
+
+    def release_lease(self, run_id: str, owner: str) -> None:
+        """Release a lease only when it is still owned by this caller."""
+
+        validate_identifier(run_id, "autonomy runId")
+        validate_identifier(owner, "autonomy lease owner")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE autonomous_project_loop_control
+                SET lease_owner = NULL, lease_expires_at = NULL
+                WHERE run_id = ? AND lease_owner = ?
+                """,
+                (run_id, owner),
+            )
+
+    def finish_lease(self, run_id: str, owner: str) -> str | None:
+        """Atomically release a finished lease or retain it for cancel acknowledgement."""
+
+        validate_identifier(run_id, "autonomy runId")
+        validate_identifier(owner, "autonomy lease owner")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._ensure_control_row(connection, run_id)
+            control = self._read_control(connection, run_id)
+            if control.lease_owner != owner:
+                raise StateError("Autonomy execution lease was lost.")
+            if control.cancellation_pending:
+                return control.cancellation_reason or "person cancelled"
+            connection.execute(
+                """
+                UPDATE autonomous_project_loop_control
+                SET lease_owner = NULL, lease_expires_at = NULL
+                WHERE run_id = ? AND lease_owner = ?
+                """,
+                (run_id, owner),
+            )
+        return None
+
+    def request_cancellation(
+        self, run_id: str, reason: str = "person cancelled"
+    ) -> AutonomyControl:
+        """Durably request cancellation without claiming work has stopped."""
+
+        validate_identifier(run_id, "autonomy runId")
+        bounded_reason = _reason(reason, "person cancelled")
+        now = self.now()
+        requested_at = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._ensure_control_row(connection, run_id)
+            current = self._read_control(connection, run_id)
+            if current.cancellation_requested_at is None:
+                connection.execute(
+                    """
+                    UPDATE autonomous_project_loop_control
+                    SET cancellation_requested_at = ?, cancellation_reason = ?
+                    WHERE run_id = ?
+                    """,
+                    (requested_at, bounded_reason, run_id),
+                )
+            if not current.lease_active_at(now):
+                connection.execute(
+                    """
+                    UPDATE autonomous_project_loop_control
+                    SET lease_owner = NULL, lease_expires_at = NULL
+                    WHERE run_id = ?
+                    """,
+                    (run_id,),
+                )
+            return self._read_control(connection, run_id)
+
+    def cancellation_reason(self, run_id: str) -> str | None:
+        control = self.control(run_id)
+        if not control.cancellation_pending:
+            return None
+        return control.cancellation_reason or "person cancelled"
+
+    def acknowledge_cancellation(
+        self,
+        run_id: str,
+        *,
+        owner: str | None,
+    ) -> AutonomyControl:
+        """Acknowledge only after active work has unwound or terminated."""
+
+        validate_identifier(run_id, "autonomy runId")
+        if owner is not None:
+            validate_identifier(owner, "autonomy lease owner")
+        now = self.now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._ensure_control_row(connection, run_id)
+            current = self._read_control(connection, run_id)
+            if current.cancellation_requested_at is None:
+                raise StateError("Autonomy cancellation was not requested.")
+            if current.cancellation_acknowledged_at is not None:
+                return current
+            if current.lease_active_at(now) and current.lease_owner != owner:
+                raise StateError(
+                    "Active autonomy work must acknowledge its own cancellation."
+                )
+            if current.lease_owner is not None and current.lease_owner != owner:
+                raise StateError("A stale autonomy lease must expire before cancellation.")
+            connection.execute(
+                """
+                UPDATE autonomous_project_loop_control
+                SET cancellation_acknowledged_at = ?, lease_owner = NULL,
+                    lease_expires_at = NULL
+                WHERE run_id = ?
+                """,
+                (utc_now(), run_id),
+            )
+            return self._read_control(connection, run_id)
+
+    @staticmethod
+    def _ensure_control_row(
+        connection: sqlite3.Connection, run_id: str
+    ) -> None:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO autonomous_project_loop_control (run_id)
+            SELECT run_id FROM autonomous_project_loops WHERE run_id = ?
+            """,
+            (run_id,),
+        )
+        row = connection.execute(
+            "SELECT 1 FROM autonomous_project_loop_control WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise StateError(f"Unknown autonomy run: {run_id}")
+
+    @staticmethod
+    def _read_control(
+        connection: sqlite3.Connection, run_id: str
+    ) -> AutonomyControl:
+        row = connection.execute(
+            """
+            SELECT run_id, lease_owner, lease_expires_at, heartbeat_at,
+                   cancellation_requested_at, cancellation_reason,
+                   cancellation_acknowledged_at
+            FROM autonomous_project_loop_control WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise StateError(f"Unknown autonomy run: {run_id}")
+        return AutonomyControl(
+            run_id=str(row["run_id"]),
+            lease_owner=(
+                str(row["lease_owner"]) if row["lease_owner"] is not None else None
+            ),
+            lease_expires_at=(
+                float(row["lease_expires_at"])
+                if row["lease_expires_at"] is not None
+                else None
+            ),
+            heartbeat_at=(
+                float(row["heartbeat_at"])
+                if row["heartbeat_at"] is not None
+                else None
+            ),
+            cancellation_requested_at=(
+                str(row["cancellation_requested_at"])
+                if row["cancellation_requested_at"] is not None
+                else None
+            ),
+            cancellation_reason=(
+                str(row["cancellation_reason"])
+                if row["cancellation_reason"] is not None
+                else None
+            ),
+            cancellation_acknowledged_at=(
+                str(row["cancellation_acknowledged_at"])
+                if row["cancellation_acknowledged_at"] is not None
+                else None
+            ),
         )
 
     def save_audit(self, audit: AuditResult) -> str:
@@ -885,6 +1228,85 @@ class AutonomyStore:
             raise StateError("Persisted audit envelope is invalid.") from error
 
 
+class _AutonomyLeaseGuard:
+    """Heartbeat a durable lease and project cross-process cancel into a token."""
+
+    def __init__(
+        self,
+        store: AutonomyStore,
+        run_id: str,
+        owner: str,
+        cancellation: CancellationToken,
+        *,
+        lease_seconds: float,
+        heartbeat_seconds: float,
+    ) -> None:
+        self.store = store
+        self.run_id = run_id
+        self.owner = owner
+        self.cancellation = cancellation
+        self.lease_seconds = lease_seconds
+        self.heartbeat_seconds = heartbeat_seconds
+        self._stopping = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._failure: BaseException | None = None
+        self._reason: str | None = None
+
+    @property
+    def cancellation_reason(self) -> str | None:
+        return self._reason
+
+    def start(self) -> None:
+        self.poll()
+        self._thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name=f"fikeya-autonomy-{self.run_id[-12:]}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def poll(self) -> str | None:
+        self.raise_if_failed()
+        reason = self.store.heartbeat(
+            self.run_id,
+            self.owner,
+            lease_seconds=self.lease_seconds,
+        )
+        if reason is not None:
+            self._reason = reason
+            self.cancellation.cancel()
+        self.raise_if_failed()
+        return self._reason
+
+    def stop(self) -> None:
+        self._stopping.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=max(1.0, self.heartbeat_seconds * 3))
+            if thread.is_alive():
+                raise StateError("Autonomy lease heartbeat did not stop cleanly.")
+
+    def raise_if_failed(self) -> None:
+        if self._failure is not None:
+            raise StateError("Autonomy execution lease heartbeat failed.") from self._failure
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stopping.wait(self.heartbeat_seconds):
+            try:
+                reason = self.store.heartbeat(
+                    self.run_id,
+                    self.owner,
+                    lease_seconds=self.lease_seconds,
+                )
+                if reason is not None:
+                    self._reason = reason
+                    self.cancellation.cancel()
+            except BaseException as error:  # noqa: BLE001 - thread failure is surfaced.
+                self._failure = error
+                self.cancellation.cancel()
+                return
+
+
 class AutonomousProjectLoop:
     """Drive PLAN→AUDIT_PLAN→EXECUTE→AUDIT_CODE→VERIFY safely."""
 
@@ -895,12 +1317,25 @@ class AutonomousProjectLoop:
         coding_runner: CodingRunner,
         *,
         plans: PlanService | None = None,
+        lease_seconds: float = _DEFAULT_LEASE_SECONDS,
+        heartbeat_seconds: float = _DEFAULT_HEARTBEAT_SECONDS,
     ) -> None:
+        _lease_seconds(lease_seconds)
+        if (
+            isinstance(heartbeat_seconds, bool)
+            or not 0.01 <= heartbeat_seconds < lease_seconds / 2
+        ):
+            raise ValueError(
+                "heartbeat_seconds must be at least 0.01 seconds and less than "
+                "half the lease duration."
+            )
         self.workspace = workspace
         self.planner = planner
         self.coding_runner = coding_runner
         self.plans = plans or PlanService(workspace)
         self.store = AutonomyStore(workspace)
+        self.lease_seconds = float(lease_seconds)
+        self.heartbeat_seconds = float(heartbeat_seconds)
 
     def start(
         self,
@@ -936,18 +1371,31 @@ class AutonomousProjectLoop:
         if record.stage in {AutonomyStage.COMPLETED, AutonomyStage.FAILED} or (
             record.stage is AutonomyStage.STOPPED and record.resume_stage is None
         ):
+            control = self.store.control(run_id)
+            if control.cancellation_pending and not control.lease_active_at(
+                self.store.now()
+            ):
+                self.store.acknowledge_cancellation(run_id, owner=None)
             return record
-        self._cancel_current_plan(record, reason)
-        return self._transition(
+        control = self.store.request_cancellation(run_id, reason)
+        if control.lease_active_at(self.store.now()):
+            return self.store.load(run_id)
+        bounded_reason = control.cancellation_reason or "person cancelled"
+        self._cancel_current_plan(record, bounded_reason)
+        stopped = self._transition(
             record,
             stage=AutonomyStage.STOPPED,
             resume_stage=None,
-            stop_reason=_reason(reason, "person cancelled"),
+            stop_reason=bounded_reason,
             failure_reason=None,
         )
+        self.store.acknowledge_cancellation(run_id, owner=None)
+        return stopped
 
     def resume(self, run_id: str) -> AutonomyRecord:
         record = self.store.load(run_id)
+        if self.store.control(run_id).cancellation_requested_at is not None:
+            raise StateError("A cancelled autonomy run cannot resume.")
         if not record.can_resume or record.resume_stage is None:
             raise StateError("This stopped autonomy run cannot resume.")
         return self._transition(
@@ -974,48 +1422,118 @@ class AutonomousProjectLoop:
             raise StateError("Resume the stopped autonomy run before advancing it.")
         if record.terminal:
             return record
-
-        while not record.terminal:
-            if cancellation.cancelled:
-                return self._cancelled(record, "person cancelled")
-            if record.stage is AutonomyStage.PLAN:
-                record = await self._plan(record, bounded_goal, provider, cancellation)
-            elif record.stage is AutonomyStage.AUDIT_PLAN:
-                record = await self._audit(
-                    record,
-                    bounded_goal,
-                    provider,
-                    cancellation,
-                    approval_handler,
-                    AutonomyStage.AUDIT_PLAN,
-                )
-            elif record.stage is AutonomyStage.EXECUTE:
-                record = await self._execute(
-                    record,
-                    cancellation,
-                    allow_private_browser=provider.allow_private_browser,
-                )
-            elif record.stage is AutonomyStage.AUDIT_CODE:
-                record = await self._audit(
-                    record,
-                    bounded_goal,
-                    provider,
-                    cancellation,
-                    approval_handler,
-                    AutonomyStage.AUDIT_CODE,
-                )
-            elif record.stage is AutonomyStage.VERIFY:
-                record = await self._audit(
-                    record,
-                    bounded_goal,
-                    provider,
-                    cancellation,
-                    approval_handler,
-                    AutonomyStage.VERIFY,
-                )
-            else:
-                return self._failed(record, "invalid_nonterminal_stage")
-        return record
+        owner = f"lease_{uuid.uuid4().hex}"
+        self.store.acquire_lease(
+            run_id,
+            owner,
+            lease_seconds=self.lease_seconds,
+        )
+        lease_context = _ACTIVE_AUTONOMY_LEASE.set(owner)
+        guard = _AutonomyLeaseGuard(
+            self.store,
+            run_id,
+            owner,
+            cancellation,
+            lease_seconds=self.lease_seconds,
+            heartbeat_seconds=self.heartbeat_seconds,
+        )
+        result: AutonomyRecord | None = None
+        failure: BaseException | None = None
+        cancellation_reason: str | None = None
+        try:
+            guard.start()
+            record = self.store.load(run_id)
+            while not record.terminal:
+                durable_reason = guard.poll()
+                if cancellation.cancelled:
+                    record = self._cancelled(
+                        record, durable_reason or "person cancelled"
+                    )
+                    break
+                if record.stage is AutonomyStage.PLAN:
+                    record = await self._plan(
+                        record, bounded_goal, provider, cancellation
+                    )
+                elif record.stage is AutonomyStage.AUDIT_PLAN:
+                    record = await self._audit(
+                        record,
+                        bounded_goal,
+                        provider,
+                        cancellation,
+                        approval_handler,
+                        AutonomyStage.AUDIT_PLAN,
+                    )
+                elif record.stage is AutonomyStage.EXECUTE:
+                    record = await self._execute(
+                        record,
+                        cancellation,
+                        allow_private_browser=provider.allow_private_browser,
+                    )
+                elif record.stage is AutonomyStage.AUDIT_CODE:
+                    record = await self._audit(
+                        record,
+                        bounded_goal,
+                        provider,
+                        cancellation,
+                        approval_handler,
+                        AutonomyStage.AUDIT_CODE,
+                    )
+                elif record.stage is AutonomyStage.VERIFY:
+                    record = await self._audit(
+                        record,
+                        bounded_goal,
+                        provider,
+                        cancellation,
+                        approval_handler,
+                        AutonomyStage.VERIFY,
+                    )
+                else:
+                    record = self._failed(record, "invalid_nonterminal_stage")
+                guard.poll()
+            result = record
+        except BaseException as error:  # noqa: BLE001 - cleanup must fence all exits.
+            failure = error
+        finally:
+            try:
+                guard.stop()
+            except BaseException as error:  # noqa: BLE001 - preserve cleanup failure.
+                if failure is None:
+                    failure = error
+            try:
+                cancellation_reason = self.store.finish_lease(run_id, owner)
+                if cancellation_reason is not None:
+                    current = self.store.load(run_id)
+                    if current.stage not in {
+                        AutonomyStage.COMPLETED,
+                        AutonomyStage.FAILED,
+                    } and not (
+                        current.stage is AutonomyStage.STOPPED
+                        and current.resume_stage is None
+                    ):
+                        self._cancel_current_plan(current, cancellation_reason)
+                        current = self._transition(
+                            current,
+                            stage=AutonomyStage.STOPPED,
+                            resume_stage=None,
+                            stop_reason=cancellation_reason,
+                            failure_reason=None,
+                        )
+                    self.store.acknowledge_cancellation(run_id, owner=owner)
+                    result = current
+            except BaseException as error:  # noqa: BLE001 - cleanup must be surfaced.
+                if failure is None:
+                    failure = error
+            finally:
+                _ACTIVE_AUTONOMY_LEASE.reset(lease_context)
+        if cancellation_reason is not None and isinstance(
+            failure, (CancellationError, CoreCancellationError)
+        ):
+            failure = None
+        if failure is not None:
+            raise failure
+        if result is None:
+            raise StateError("Autonomy run ended without a durable result.")
+        return result
 
     async def _plan(
         self,
@@ -1332,6 +1850,7 @@ class AutonomousProjectLoop:
         )
 
     def _cancelled(self, record: AutonomyRecord, reason: str) -> AutonomyRecord:
+        reason = self.store.cancellation_reason(record.run_id) or reason
         self._cancel_current_plan(record, reason)
         return self._transition(
             record,
@@ -1620,6 +2139,12 @@ def _reason(value: str, fallback: str) -> str:
     return encoded[:_MAX_FEEDBACK_BYTES].decode("utf-8", errors="ignore")
 
 
+def _lease_seconds(value: float) -> float:
+    if isinstance(value, bool) or not 0.1 <= value <= 300:
+        raise ValueError("lease_seconds must be between 0.1 and 300 seconds.")
+    return float(value)
+
+
 def _retryable(error: Exception) -> bool:
     return isinstance(error, (AutonomyProtocolError, PlanProposalError)) or bool(
         getattr(error, "retryable", False)
@@ -1719,6 +2244,7 @@ __all__ = [
     "AuditResult",
     "AuditVerdict",
     "AutonomousProjectLoop",
+    "AutonomyControl",
     "AutonomyLimits",
     "AutonomyProtocolError",
     "AutonomyRecord",

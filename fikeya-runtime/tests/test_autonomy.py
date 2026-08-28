@@ -8,7 +8,12 @@ import hashlib
 import json
 import re
 import socket
+import subprocess
+import sys
+import threading
+import time
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,13 +23,14 @@ from fikeya_agent_core import ApprovalDecision
 from fikeya_runtime.autonomy import (
     AUTONOMY_REVIEW_PROTOCOL,
     AutonomousProjectLoop,
+    AutonomyStore,
     AutonomyLimits,
     AutonomyProtocolError,
     AutonomyStage,
     ProviderOptions,
     decode_audit_result,
 )
-from fikeya_runtime.errors import StateError
+from fikeya_runtime.errors import CancellationError, StateError
 from fikeya_runtime.inference import CancellationToken
 from fikeya_runtime.modes import AgentMode
 from fikeya_runtime.plans import PlanService, PlanStatus
@@ -138,6 +144,26 @@ class _FakePlanner:
             raise outcome
         assert isinstance(outcome, dict)
         return SimpleNamespace(plan=self.service.create(outcome))
+
+
+class _BlockingPlanner:
+    def __init__(self, acknowledgement_gate: threading.Event | None = None) -> None:
+        self.entered = threading.Event()
+        self.cancel_observed = threading.Event()
+        self.acknowledgement_gate = acknowledgement_gate
+        self.calls = 0
+
+    def propose(self, **kwargs: object) -> object:
+        cancellation = kwargs["cancellation"]
+        assert isinstance(cancellation, CancellationToken)
+        self.calls += 1
+        self.entered.set()
+        while not cancellation.cancelled:
+            time.sleep(0.01)
+        self.cancel_observed.set()
+        if self.acknowledgement_gate is not None:
+            assert self.acknowledgement_gate.wait(5)
+        raise CancellationError("planning cancelled")
 
 
 @dataclass(frozen=True)
@@ -595,6 +621,287 @@ def test_cancel_at_review_boundary_cancels_plan_and_removes_resume_path(
     assert plans.store.load(cancelled.plan_id).status is PlanStatus.CANCELLED
     with pytest.raises(StateError, match="cannot resume"):
         loop.resume(record.run_id)
+
+
+def test_active_lease_rejects_concurrent_advance_without_duplicate_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, plans = _workspace(tmp_path)
+    planner = _BlockingPlanner()
+    coding = _FakeCodingRunner([])
+    first = AutonomousProjectLoop(
+        workspace,
+        planner,
+        coding,
+        plans=plans,
+        lease_seconds=2,
+        heartbeat_seconds=0.05,
+    )
+    second = AutonomousProjectLoop(
+        workspace,
+        planner,
+        coding,
+        plans=PlanService(workspace),
+        lease_seconds=2,
+        heartbeat_seconds=0.05,
+    )
+    started = first.start("Keep exactly one provider owner.")
+    results: list[object] = []
+    failures: list[BaseException] = []
+    monkeypatch.setattr(socket.socket, "connect", _ORIGINAL_SOCKET_CONNECT)
+
+    def run_first() -> None:
+        try:
+            results.append(
+                asyncio.run(
+                    first.advance(
+                        started.run_id,
+                        goal="Keep exactly one provider owner.",
+                        provider=_options(),
+                        cancellation=CancellationToken(),
+                        approval_handler=_approve,
+                    )
+                )
+            )
+        except BaseException as error:  # noqa: BLE001 - asserted below.
+            failures.append(error)
+
+    thread = threading.Thread(target=run_first, daemon=True)
+    thread.start()
+    assert planner.entered.wait(5)
+    with pytest.raises(StateError, match="already active"):
+        asyncio.run(
+            second.advance(
+                started.run_id,
+                goal="Keep exactly one provider owner.",
+                provider=_options(),
+                cancellation=CancellationToken(),
+                approval_handler=_approve,
+            )
+        )
+
+    pending = second.cancel(started.run_id, "concurrency test cleanup")
+    assert pending.stage is AutonomyStage.PLAN
+    thread.join(timeout=8)
+    assert not thread.is_alive()
+    assert failures == []
+    assert planner.calls == 1
+    assert len(results) == 1
+    assert results[0].stage is AutonomyStage.STOPPED
+    control = first.store.control(started.run_id)
+    assert control.cancellation_acknowledged_at is not None
+    assert control.lease_owner is None
+
+
+def test_separate_process_cancel_waits_for_active_provider_acknowledgement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, plans = _workspace(tmp_path)
+    acknowledgement_gate = threading.Event()
+    planner = _BlockingPlanner(acknowledgement_gate)
+    coding = _FakeCodingRunner([])
+    loop = AutonomousProjectLoop(
+        workspace,
+        planner,
+        coding,
+        plans=plans,
+        lease_seconds=2,
+        heartbeat_seconds=0.05,
+    )
+    started = loop.start("Cancel from a separate coordinator process.")
+    results: list[object] = []
+    failures: list[BaseException] = []
+    monkeypatch.setattr(socket.socket, "connect", _ORIGINAL_SOCKET_CONNECT)
+
+    def run_active() -> None:
+        try:
+            results.append(
+                asyncio.run(
+                    loop.advance(
+                        started.run_id,
+                        goal="Cancel from a separate coordinator process.",
+                        provider=_options(),
+                        cancellation=CancellationToken(),
+                        approval_handler=_approve,
+                    )
+                )
+            )
+        except BaseException as error:  # noqa: BLE001 - asserted below.
+            failures.append(error)
+
+    thread = threading.Thread(target=run_active, daemon=True)
+    thread.start()
+    assert planner.entered.wait(5)
+    script = """
+import sys
+from pathlib import Path
+from fikeya_runtime.autonomy import AutonomousProjectLoop
+from fikeya_runtime.workspace import Workspace
+
+class Stub:
+    pass
+
+loop = AutonomousProjectLoop(Workspace.load(Path(sys.argv[1])), Stub(), Stub())
+record = loop.cancel(sys.argv[2], "external process cancelled")
+print(record.stage.value)
+"""
+    cancelled = subprocess.run(
+        [sys.executable, "-c", script, str(workspace.root), started.run_id],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert cancelled.stdout.strip() == AutonomyStage.PLAN.value
+    assert planner.cancel_observed.wait(5)
+    pending = loop.store.control(started.run_id)
+    assert pending.cancellation_pending
+    assert pending.cancellation_acknowledged_at is None
+    assert loop.load(started.run_id).stage is AutonomyStage.PLAN
+
+    acknowledgement_gate.set()
+    thread.join(timeout=8)
+    assert not thread.is_alive()
+    assert failures == []
+    assert len(results) == 1
+    assert results[0].stage is AutonomyStage.STOPPED
+    assert results[0].stop_reason == "external process cancelled"
+    acknowledged = loop.store.control(started.run_id)
+    assert not acknowledged.cancellation_pending
+    assert acknowledged.cancellation_acknowledged_at is not None
+
+
+def test_stale_lease_takeover_replaces_owner_and_fences_old_heartbeat(
+    tmp_path: Path,
+) -> None:
+    workspace, plans = _workspace(tmp_path)
+    loop = AutonomousProjectLoop(
+        workspace,
+        _FakePlanner(plans, []),
+        _FakeCodingRunner([]),
+        plans=plans,
+    )
+    started = loop.start("Recover a run after its owner disappears.")
+    current = [100.0]
+    store = AutonomyStore(workspace, clock=lambda: current[0])
+    first = store.acquire_lease(started.run_id, "lease_first", lease_seconds=5)
+    assert first.lease_owner == "lease_first"
+    with pytest.raises(StateError, match="already active"):
+        store.acquire_lease(started.run_id, "lease_second", lease_seconds=5)
+
+    current[0] += 6
+    recovered = store.acquire_lease(
+        started.run_id, "lease_second", lease_seconds=5
+    )
+    assert recovered.lease_owner == "lease_second"
+    with pytest.raises(StateError, match="lease was lost"):
+        store.heartbeat(started.run_id, "lease_first", lease_seconds=5)
+
+
+def test_durable_cancel_terminates_approved_process_tree_before_stopped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, plans = _workspace(tmp_path)
+    child_code = (
+        "import time; from pathlib import Path; time.sleep(1.5); "
+        "Path('child-survived.txt').write_text('unsafe', encoding='utf-8')"
+    )
+    parent_code = (
+        "import subprocess, sys, time; from pathlib import Path; "
+        "Path('process-started.txt').write_text('started', encoding='utf-8'); "
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        "time.sleep(30)"
+    )
+    specification = {
+        "schemaVersion": 1,
+        "title": "Run a cancellable process tree",
+        "steps": [
+            {
+                "stepId": "process-tree",
+                "title": "Start a bounded process tree",
+                "toolCall": {
+                    "arguments": {
+                        "arguments": ["-c", parent_code],
+                        "cwd": ".",
+                        "executable": "python",
+                        "timeoutSeconds": 60,
+                    },
+                    "callId": "process:tree",
+                    "name": "process.run",
+                },
+                "verify": {"expectedStatus": "ok"},
+            }
+        ],
+    }
+    plan = plans.create(specification)
+    plans.review(plan.plan_id)
+    plans.approve(plan.plan_id, approve_all=True)
+    planner = _FakePlanner(plans, [])
+    coding = _FakeCodingRunner([])
+    loop = AutonomousProjectLoop(
+        workspace,
+        planner,
+        coding,
+        plans=plans,
+        lease_seconds=2,
+        heartbeat_seconds=0.05,
+    )
+    started = loop.start("Terminate the approved process tree on cancel.")
+    executing = loop.store.save(
+        replace(
+            started,
+            stage=AutonomyStage.EXECUTE,
+            plan_id=plan.plan_id,
+            plan_spec_sha256=plan.spec_sha256,
+            plan_history=(plan.spec_sha256,),
+        )
+    )
+    results: list[object] = []
+    failures: list[BaseException] = []
+    monkeypatch.setattr(socket.socket, "connect", _ORIGINAL_SOCKET_CONNECT)
+
+    def run_active() -> None:
+        try:
+            results.append(
+                asyncio.run(
+                    loop.advance(
+                        executing.run_id,
+                        goal="Terminate the approved process tree on cancel.",
+                        provider=_options(),
+                        cancellation=CancellationToken(),
+                        approval_handler=_approve,
+                    )
+                )
+            )
+        except BaseException as error:  # noqa: BLE001 - asserted below.
+            failures.append(error)
+
+    thread = threading.Thread(target=run_active, daemon=True)
+    thread.start()
+    started_marker = workspace.root / "process-started.txt"
+    deadline = time.monotonic() + 8
+    while not started_marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert started_marker.exists()
+
+    pending = AutonomousProjectLoop(
+        workspace,
+        planner,
+        coding,
+        plans=PlanService(workspace),
+    ).cancel(executing.run_id, "terminate process tree")
+    assert pending.stage is AutonomyStage.EXECUTE
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert failures == []
+    assert len(results) == 1
+    assert results[0].stage is AutonomyStage.STOPPED
+    assert loop.store.control(executing.run_id).cancellation_acknowledged_at is not None
+    time.sleep(1.7)
+    assert not (workspace.root / "child-survived.txt").exists()
 
 
 def test_explicit_audit_failure_enters_failed_state(
