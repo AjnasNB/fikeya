@@ -236,6 +236,7 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(source, /data-agent-surface/u);
 		assert.match(source, /attachDroppedResources/u);
 		assert.match(source, /ResourceURLs/u);
+		assert.match(source, /CodeFiles/u);
 		assert.match(source, /application\/vnd\.code\.uri-list/u);
 		assert.match(source, /this\.projectPanelRequired = true/u);
 		assert.match(source, /if \(this\.projectPanelRequired && !this\.disposed && !this\.panel\)/u);

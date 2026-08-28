@@ -3391,6 +3391,22 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 					// Fall through to the URI-list formats used by current desktop workbenches.
 				}
 			}
+			const encodedCodeFiles = readTransferData(transfer, 'CodeFiles');
+			if (encodedCodeFiles) {
+				try {
+					const parsed = JSON.parse(encodedCodeFiles);
+					if (Array.isArray(parsed)) {
+						for (const value of parsed) {
+							if (typeof value !== 'string') continue;
+							const normalized = value.replace(/\\/gu, '/');
+							if (/^[a-zA-Z]:\//u.test(normalized)) resources.push(encodeURI('file:///' + normalized));
+							else if (normalized.startsWith('/')) resources.push(encodeURI('file://' + normalized));
+						}
+					}
+				} catch {
+					// Ignore malformed workbench drag metadata and continue with URI-list data.
+				}
+			}
 			for (const type of ['application/vnd.code.uri-list', 'text/uri-list']) {
 				const value = readTransferData(transfer, type);
 				if (!value) continue;
@@ -3401,6 +3417,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const hasDroppableData = transfer => Array.from(transfer?.types ?? []).some(type => [
 			'files',
 			'resourceurls',
+			'codefiles',
 			'application/vnd.code.uri-list',
 			'text/uri-list'
 		].includes(type.toLowerCase()));

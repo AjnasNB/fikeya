@@ -751,6 +751,12 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
 	}
 
 	windowDidDragStart(): void {
+		// Fikeya's first-party chat surfaces deliberately accept Explorer resources.
+		// Keeping their iframe interactive lets the drop reach the extension webview,
+		// where workspace boundaries and file types are validated before any read.
+		if (this.providedViewType === 'fikeya.workspace' || this.providedViewType === 'fikeya.dashboard') {
+			return;
+		}
 		// Webview break drag and dropping around the main window (no events are generated when you are over them)
 		// Work around this by disabling pointer events during the drag.
 		// https://github.com/electron/electron/issues/18226
