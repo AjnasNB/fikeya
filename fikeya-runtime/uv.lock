@@ -438,7 +438,7 @@ requires-dist = [
     { name = "azure-identity", marker = "extra == 'azure'", specifier = ">=1.20,<2" },
     { name = "fikeya-agent-core", directory = "../fikeya-agent-core" },
     { name = "keyring", specifier = ">=25.6,<27" },
-    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.52,<2" },
+    { name = "playwright", marker = "extra == 'browser'", specifier = "==1.62.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<10" },
 ]
 provides-extras = ["azure", "browser", "test"]
