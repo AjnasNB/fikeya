@@ -20,6 +20,7 @@ if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
 	$InstallDirectory = Join-Path $buildRoot "installer-smoke-$([guid]::NewGuid().ToString('N'))"
 }
 $installRoot = [System.IO.Path]::GetFullPath($InstallDirectory)
+$installLog = "$installRoot-install.log"
 $buildPrefix = $buildRoot.TrimEnd('\') + '\'
 if (-not $installRoot.StartsWith($buildPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
 	throw "Installer smoke directory must remain inside $buildRoot"
@@ -38,12 +39,19 @@ try {
 		"/SUPPRESSMSGBOXES",
 		"/NORESTART",
 		"/SP-",
+		"/NOCLOSEAPPLICATIONS",
+		"/LOG=`"$installLog`"",
 		"/MERGETASKS=`"!runcode`"",
 		"/DIR=`"$installRoot`""
 	)
 	$installProcess = Start-Process -FilePath $installer -ArgumentList $installArguments -Wait -PassThru -WindowStyle Hidden
 	if ($installProcess.ExitCode -ne 0) {
-		throw "Installer exited with code $($installProcess.ExitCode)."
+		$logTail = if (Test-Path -LiteralPath $installLog -PathType Leaf) {
+			(@(Get-Content -LiteralPath $installLog -Tail 24) -join "`n")
+		} else {
+			"Installer log was not created."
+		}
+		throw "Installer exited with code $($installProcess.ExitCode).`n$logTail"
 	}
 
 	$executable = Join-Path $installRoot "Fikeya.exe"
@@ -153,5 +161,8 @@ try {
 	}
 	if (Test-Path -LiteralPath $installRoot) {
 		Remove-Item -LiteralPath $installRoot -Recurse -Force
+	}
+	if (Test-Path -LiteralPath $installLog -PathType Leaf) {
+		Remove-Item -LiteralPath $installLog -Force
 	}
 }
