@@ -24,7 +24,7 @@ def test_cli_reports_the_installed_version(capsys: object) -> None:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out == "fikeya 0.1.0b5\n"
+    assert capsys.readouterr().out == "fikeya 0.1.0b7\n"
 
 
 def test_agent_execute_mode_defaults_to_build_and_private_browser_is_opt_in() -> None:

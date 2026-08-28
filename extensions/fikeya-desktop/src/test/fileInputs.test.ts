@@ -37,7 +37,12 @@ describe('Fikeya bounded text-file inputs', () => {
 		assert.strictEqual(parseTextFileInputs([{ ...valid, name: '.env', relativePath: '.env' }]), undefined);
 		assert.strictEqual(parseTextFileInputs([{ ...valid, relativePath: '../index.ts' }]), undefined);
 		assert.strictEqual(parseTextFileInputs([{ ...valid, sizeBytes: valid.sizeBytes - 1 }]), undefined);
-		assert.strictEqual(parseTextFileInputs(Array.from({ length: 9 }, () => valid)), undefined);
+		assert.strictEqual(parseTextFileInputs(Array.from({ length: 10 }, (_, index) => ({
+			...valid,
+			name: `index-${index}.ts`,
+			relativePath: `src/index-${index}.ts`
+		})))?.length, 10);
+		assert.strictEqual(parseTextFileInputs(Array.from({ length: 11 }, () => valid)), undefined);
 	});
 
 	test('adds attached content only to the current provider prompt', () => {

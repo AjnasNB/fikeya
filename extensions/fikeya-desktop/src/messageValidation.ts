@@ -21,14 +21,17 @@ export function runtimeModeForComposerMode(mode: FikeyaAgentComposerMode): Fikey
 export type FikeyaWebviewMessage =
 	| { readonly type: 'openCommand'; readonly command: FikeyaCommand }
 	| { readonly type: 'refreshProviders' }
+	| { readonly type: 'webviewReady' }
+	| { readonly type: 'pickMentionFiles'; readonly source: 'workspace' | 'computer' }
+	| { readonly type: 'attachDroppedResources'; readonly resourceUris: readonly string[] }
 	| { readonly type: 'setComposerAttachmentState'; readonly hasAttachments: boolean }
 	| { readonly type: 'configureProviderProfile'; readonly providerId: string; readonly profileLabel: string; readonly baseUrl: string; readonly model: string; readonly secret?: string }
 	| { readonly type: 'testProvider'; readonly providerName: string }
 	| { readonly type: 'removeProvider'; readonly providerName: string }
-	| { readonly type: 'runAgent'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: FikeyaAgentComposerMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
-	| { readonly type: 'runMultiAgent'; readonly selectedAgentIds: readonly string[]; readonly leadProviderName: string; readonly prompt: string; readonly composerMode: FikeyaAgentComposerMode; readonly maxConcurrency: number; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
-	| { readonly type: 'proposePlan'; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: 'plan'; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
-	| { readonly type: 'startProject'; readonly providerName: string; readonly goal: string; readonly allowNetwork: true }
+	| { readonly type: 'runAgent'; readonly requestId?: string; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: FikeyaAgentComposerMode; readonly mode: FikeyaAgentMode; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
+	| { readonly type: 'runMultiAgent'; readonly requestId?: string; readonly selectedAgentIds: readonly string[]; readonly leadProviderName: string; readonly prompt: string; readonly composerMode: FikeyaAgentComposerMode; readonly maxConcurrency: number; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly allowNetwork: true }
+	| { readonly type: 'proposePlan'; readonly requestId?: string; readonly providerName: string; readonly prompt: string; readonly maxOutputTokens: number; readonly contextMaxCharacters: number; readonly memoryMode: FikeyaAgentMemoryMode; readonly composerMode: 'plan'; readonly images: readonly FikeyaImageInput[]; readonly files: readonly FikeyaTextFileInput[]; readonly allowNetwork: true }
+	| { readonly type: 'startProject'; readonly requestId?: string; readonly providerName: string; readonly goal: string; readonly allowNetwork: true }
 	| { readonly type: 'projectAction'; readonly action: 'refresh' | 'resume' | 'cancel'; readonly goal?: string; readonly providerName?: string }
 	| { readonly type: 'cancelAgent' }
 	| { readonly type: 'createPlan'; readonly specification: FikeyaPlanSpecification }
@@ -39,6 +42,7 @@ export type FikeyaWebviewMessage =
 	| { readonly type: 'planAction'; readonly action: 'review' | 'approve-all' | 'approve-step' | 'run' | 'resume' | 'cancel'; readonly stepId?: string }
 	| { readonly type: 'clearConversation' }
 	| { readonly type: 'restoreConversation' }
+	| { readonly type: 'copyConversationMessage'; readonly messageId: string }
 	| { readonly type: 'copyText'; readonly text: string }
 	| { readonly type: 'openFile'; readonly path: string }
 	| { readonly type: 'openExternal'; readonly url: string }
@@ -84,7 +88,11 @@ const allowedCommands: readonly FikeyaCommand[] = [
 
 const maximumPromptBytes = 262_144;
 const maximumPlanSpecificationBytes = 1_048_576;
+const maximumDroppedResourceCount = 32;
+const maximumResourceUriLength = 4_096;
 const providerNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const requestIdPattern = /^[a-zA-Z0-9_-]{8,128}$/;
+const conversationMessageIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
 const supportedPlanTools = new Set([
 	'browser.assert_text',
@@ -119,6 +127,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 			return undefined;
 		}
 		case 'refreshProviders':
+		case 'webviewReady':
 		case 'cancelAgent':
 		case 'newPlan':
 		case 'restorePlan':
@@ -129,6 +138,19 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'refreshStatistics':
 		case 'refreshMemory':
 			return { type: value.type };
+		case 'pickMentionFiles':
+			return value.source === 'workspace' || value.source === 'computer'
+				? { type: value.type, source: value.source }
+				: undefined;
+		case 'attachDroppedResources':
+			return Array.isArray(value.resourceUris)
+				&& value.resourceUris.length > 0
+				&& value.resourceUris.length <= maximumDroppedResourceCount
+				&& value.resourceUris.every(resourceUri => typeof resourceUri === 'string'
+					&& resourceUri.length > 0
+					&& resourceUri.length <= maximumResourceUriLength)
+				? { type: value.type, resourceUris: value.resourceUris as string[] }
+				: undefined;
 		case 'configureProviderProfile': {
 			if (!isProviderName(value.providerId)
 				|| typeof value.profileLabel !== 'string'
@@ -157,6 +179,10 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'setComposerAttachmentState':
 			return typeof value.hasAttachments === 'boolean'
 				? { type: value.type, hasAttachments: value.hasAttachments }
+				: undefined;
+		case 'copyConversationMessage':
+			return typeof value.messageId === 'string' && conversationMessageIdPattern.test(value.messageId)
+				? { type: value.type, messageId: value.messageId }
 				: undefined;
 		case 'copyText':
 			return typeof value.text === 'string' && Buffer.byteLength(value.text, 'utf8') <= maximumPromptBytes
@@ -192,7 +218,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 		case 'proposePlan': {
 			const images = parseImageInputs(value.images);
 			const files = parseTextFileInputs(value.files);
-			if (!isProviderName(value.providerName)
+			if ((value.requestId !== undefined && !parseRequestId(value.requestId))
+				|| !isProviderName(value.providerName)
 				|| typeof value.prompt !== 'string'
 				|| value.prompt.trim().length === 0
 				|| Buffer.byteLength(value.prompt, 'utf8') > maximumPromptBytes
@@ -209,6 +236,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				return undefined;
 			}
 			const request = {
+				...(parseRequestId(value.requestId) ? { requestId: value.requestId as string } : {}),
 				providerName: value.providerName,
 				prompt: value.prompt,
 				maxOutputTokens: value.maxOutputTokens,
@@ -234,7 +262,8 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 				: undefined;
 		}
 		case 'runMultiAgent': {
-			if (!isProviderName(value.leadProviderName)
+			if ((value.requestId !== undefined && !parseRequestId(value.requestId))
+				|| !isProviderName(value.leadProviderName)
 				|| typeof value.prompt !== 'string'
 				|| value.prompt.trim().length === 0
 				|| Buffer.byteLength(value.prompt, 'utf8') > maximumPromptBytes
@@ -258,6 +287,7 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 			}
 			return {
 				type: value.type,
+				...(parseRequestId(value.requestId) ? { requestId: value.requestId as string } : {}),
 				selectedAgentIds: value.selectedAgentIds as string[],
 				leadProviderName: value.leadProviderName,
 				prompt: value.prompt,
@@ -270,12 +300,13 @@ export function parseWebviewMessage(value: unknown): FikeyaWebviewMessage | unde
 			};
 		}
 		case 'startProject':
-			return isProviderName(value.providerName)
+			return (value.requestId === undefined || parseRequestId(value.requestId) !== undefined)
+				&& isProviderName(value.providerName)
 				&& typeof value.goal === 'string'
 				&& value.goal.trim().length > 0
 				&& Buffer.byteLength(value.goal.trim(), 'utf8') <= 65_536
 				&& value.allowNetwork === true
-				? { type: value.type, providerName: value.providerName, goal: value.goal.trim(), allowNetwork: true }
+				? { type: value.type, ...(parseRequestId(value.requestId) ? { requestId: value.requestId as string } : {}), providerName: value.providerName, goal: value.goal.trim(), allowNetwork: true }
 				: undefined;
 		case 'projectAction': {
 			if (value.action === 'refresh' || value.action === 'cancel') {
@@ -451,6 +482,10 @@ function hasBoundedFiniteJsonEncoding(value: unknown, maximumBytes: number): boo
 
 function isProviderName(value: unknown): value is string {
 	return typeof value === 'string' && providerNamePattern.test(value);
+}
+
+function parseRequestId(value: unknown): value is string {
+	return typeof value === 'string' && requestIdPattern.test(value);
 }
 
 function isFikeyaAgentComposerMode(value: unknown): value is FikeyaAgentComposerMode {

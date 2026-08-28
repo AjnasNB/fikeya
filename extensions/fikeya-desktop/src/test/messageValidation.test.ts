@@ -16,6 +16,8 @@ describe('Fikeya webview message validation', () => {
 	});
 
 	test('validates message actions without accepting paths or schemes outside the workspace boundary', () => {
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'copyConversationMessage', messageId: 'chat-1234-abcd' }), { type: 'copyConversationMessage', messageId: 'chat-1234-abcd' });
+		assert.strictEqual(parseWebviewMessage({ type: 'copyConversationMessage', messageId: '../chat' }), undefined);
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'copyText', text: 'copy me' }), { type: 'copyText', text: 'copy me' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'reviewDiff', content: '@@ -1 +1 @@\n-old\n+new' }), { type: 'reviewDiff', content: '@@ -1 +1 @@\n-old\n+new' });
 		assert.deepStrictEqual(parseWebviewMessage({ type: 'openFile', path: 'src/index.ts' }), { type: 'openFile', path: 'src/index.ts' });
@@ -85,7 +87,7 @@ describe('Fikeya webview message validation', () => {
 		}), undefined);
 	});
 
-	test('accepts bounded agent turns only with per-run network consent', () => {
+	test('accepts bounded agent turns only with explicit send authorization', () => {
 		const request = {
 			type: 'runAgent',
 			providerName: 'azure-primary',
@@ -227,6 +229,39 @@ describe('Fikeya webview message validation', () => {
 		]);
 		assert.strictEqual(buildAgentProviderPrompt('agent', 'Inspect the current project.'), 'Inspect the current project.');
 		assert.match(buildAgentProviderPrompt('research', 'Where is the parser?'), /Distinguish project evidence from inference/u);
+	});
+
+	test('accepts bounded file-picker actions and request correlation identifiers', () => {
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'webviewReady' }), { type: 'webviewReady' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'workspace' }), { type: 'pickMentionFiles', source: 'workspace' });
+		assert.deepStrictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'computer' }), { type: 'pickMentionFiles', source: 'computer' });
+		assert.strictEqual(parseWebviewMessage({ type: 'pickMentionFiles', source: 'network' }), undefined);
+		assert.deepStrictEqual(parseWebviewMessage({
+			type: 'attachDroppedResources',
+			resourceUris: ['file:///workspace/src/index.ts', 'file:///workspace/test']
+		}), {
+			type: 'attachDroppedResources',
+			resourceUris: ['file:///workspace/src/index.ts', 'file:///workspace/test']
+		});
+		assert.strictEqual(parseWebviewMessage({ type: 'attachDroppedResources', resourceUris: [] }), undefined);
+		assert.strictEqual(parseWebviewMessage({
+			type: 'attachDroppedResources',
+			resourceUris: Array.from({ length: 33 }, (_, index) => `file:///workspace/${index}.ts`)
+		}), undefined);
+		assert.strictEqual(parseWebviewMessage({ type: 'attachDroppedResources', resourceUris: [42] }), undefined);
+		const request = {
+			type: 'runAgent',
+			requestId: 'request_20260828',
+			providerName: 'local-default',
+			prompt: 'Inspect the selected files.',
+			...agentComposerDefaults,
+			composerMode: 'build',
+			allowNetwork: true
+		};
+		const parsed = parseWebviewMessage(request);
+		assert.ok(parsed && parsed.type === 'runAgent');
+		assert.deepStrictEqual(parsed.requestId, request.requestId);
+		assert.strictEqual(parseWebviewMessage({ ...request, requestId: 'bad id' }), undefined);
 	});
 
 	test('accepts bounded audited-project lifecycle messages without attachments or argv content', () => {

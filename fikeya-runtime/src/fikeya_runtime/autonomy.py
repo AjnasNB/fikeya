@@ -1251,6 +1251,8 @@ class _AutonomyLeaseGuard:
         self._thread: threading.Thread | None = None
         self._failure: BaseException | None = None
         self._reason: str | None = None
+        self._lease_deadline = self.store.now() + self.lease_seconds
+        self._lease_state_lock = threading.Lock()
 
     @property
     def cancellation_reason(self) -> str | None:
@@ -1267,14 +1269,7 @@ class _AutonomyLeaseGuard:
 
     def poll(self) -> str | None:
         self.raise_if_failed()
-        reason = self.store.heartbeat(
-            self.run_id,
-            self.owner,
-            lease_seconds=self.lease_seconds,
-        )
-        if reason is not None:
-            self._reason = reason
-            self.cancellation.cancel()
+        self._heartbeat_once()
         self.raise_if_failed()
         return self._reason
 
@@ -1293,18 +1288,34 @@ class _AutonomyLeaseGuard:
     def _heartbeat_loop(self) -> None:
         while not self._stopping.wait(self.heartbeat_seconds):
             try:
-                reason = self.store.heartbeat(
-                    self.run_id,
-                    self.owner,
-                    lease_seconds=self.lease_seconds,
-                )
-                if reason is not None:
-                    self._reason = reason
-                    self.cancellation.cancel()
+                self._heartbeat_once()
             except BaseException as error:  # noqa: BLE001 - thread failure is surfaced.
                 self._failure = error
                 self.cancellation.cancel()
                 return
+
+    def _heartbeat_once(self) -> None:
+        try:
+            reason = self.store.heartbeat(
+                self.run_id,
+                self.owner,
+                lease_seconds=self.lease_seconds,
+            )
+        except sqlite3.OperationalError as error:
+            if not _is_transient_sqlite_lock(error):
+                raise
+            with self._lease_state_lock:
+                lease_deadline = self._lease_deadline
+            if self.store.now() >= lease_deadline:
+                raise StateError(
+                    "Autonomy execution lease could not be renewed before expiry."
+                ) from error
+            return
+        with self._lease_state_lock:
+            self._lease_deadline = self.store.now() + self.lease_seconds
+        if reason is not None:
+            self._reason = reason
+            self.cancellation.cancel()
 
 
 class AutonomousProjectLoop:
@@ -2143,6 +2154,17 @@ def _lease_seconds(value: float) -> float:
     if isinstance(value, bool) or not 0.1 <= value <= 300:
         raise ValueError("lease_seconds must be between 0.1 and 300 seconds.")
     return float(value)
+
+
+def _is_transient_sqlite_lock(error: sqlite3.OperationalError) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    # SQLite has kept BUSY=5 and LOCKED=6 stable since the result-code API was
+    # introduced. Mask extended codes to their primary result code. Python 3.10
+    # does not expose sqlite3.SQLITE_BUSY/sqlite3.SQLITE_LOCKED as attributes.
+    if isinstance(code, int) and code & 0xFF in {5, 6}:
+        return True
+    message = str(error).casefold()
+    return "database is locked" in message or "database table is locked" in message
 
 
 def _retryable(error: Exception) -> bool:

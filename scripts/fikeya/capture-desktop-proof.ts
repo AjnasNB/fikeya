@@ -77,7 +77,10 @@ const captureProviderDecisions = [
 		content: captureProviderOutput
 	}
 ] as const;
-const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 3) + 4;
+// Chat, pasted-image Chat, and mentioned-file Chat each use the three-stage
+// agent loop. Multitask exercises two advisory loops plus one lead loop. The durable Plan adds one
+// provider proposal; its reviewed execution then runs only the three approved local workspace tools.
+const captureProviderExpectedRequestCount = (captureProviderDecisions.length * 6) + 1;
 
 interface CaptureOptions {
 	compile: boolean;

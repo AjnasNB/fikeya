@@ -8,12 +8,12 @@ import hashlib
 import json
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,11 +23,12 @@ from fikeya_agent_core import ApprovalDecision
 from fikeya_runtime.autonomy import (
     AUTONOMY_REVIEW_PROTOCOL,
     AutonomousProjectLoop,
-    AutonomyStore,
     AutonomyLimits,
     AutonomyProtocolError,
     AutonomyStage,
+    AutonomyStore,
     ProviderOptions,
+    _AutonomyLeaseGuard,
     decode_audit_result,
 )
 from fikeya_runtime.errors import CancellationError, StateError
@@ -692,6 +693,43 @@ def test_active_lease_rejects_concurrent_advance_without_duplicate_provider_call
     control = first.store.control(started.run_id)
     assert control.cancellation_acknowledged_at is not None
     assert control.lease_owner is None
+
+
+def test_transient_heartbeat_lock_is_tolerated_only_until_lease_expiry() -> None:
+    class LockedStore:
+        def __init__(self) -> None:
+            self.current = 100.0
+
+        def now(self) -> float:
+            return self.current
+
+        def heartbeat(
+            self,
+            _run_id: str,
+            _owner: str,
+            *,
+            lease_seconds: float,
+        ) -> str | None:
+            assert lease_seconds == 15
+            raise sqlite3.OperationalError("database is locked")
+
+    store = LockedStore()
+    cancellation = CancellationToken()
+    guard = _AutonomyLeaseGuard(  # type: ignore[arg-type]
+        store,
+        "aut_transient_lock",
+        "lease_transient_lock",
+        cancellation,
+        lease_seconds=15,
+        heartbeat_seconds=0.5,
+    )
+
+    assert guard.poll() is None
+    assert not cancellation.cancelled
+
+    store.current += 15
+    with pytest.raises(StateError, match="could not be renewed before expiry"):
+        guard.poll()
 
 
 def test_separate_process_cancel_waits_for_active_provider_acknowledgement(

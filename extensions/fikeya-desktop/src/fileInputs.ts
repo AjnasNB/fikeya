@@ -11,7 +11,7 @@ export interface FikeyaTextFileInput {
 	readonly sizeBytes: number;
 }
 
-export const maximumTextFileCount = 8;
+export const maximumTextFileCount = 10;
 export const maximumTextFileBytes = 98_304;
 export const maximumTotalTextFileBytes = 393_216;
 

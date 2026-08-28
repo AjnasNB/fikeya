@@ -28,4 +28,14 @@ describe('Fikeya team lead handoff', () => {
 		assert.match(prompt, /Lead responsibility:/u);
 		assert.doesNotMatch(prompt, /�/u);
 	});
+
+	test('collapses identical specialist findings before the lead handoff', () => {
+		const repeated = 'The parser already validates malformed input.';
+		const prompt = buildTeamLeadPrompt('Review the parser.', [
+			{ name: 'Planner', role: 'planner', output: repeated },
+			{ name: 'Reviewer', role: 'reviewer', output: `${repeated}\r\n` }
+		]);
+		assert.match(prompt, /## Planner \+ Reviewer \(planner, reviewer\)/u);
+		assert.strictEqual(prompt.match(/The parser already validates malformed input\./gu)?.length, 1);
+	});
 });

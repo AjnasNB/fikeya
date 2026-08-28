@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
 
 interface ScenarioTarget {
@@ -57,6 +58,8 @@ interface ChatState {
 	readonly chatVisible: boolean;
 	readonly assistant: string;
 	readonly provider: string;
+	readonly messageActionCount: number;
+	readonly copyState: string;
 	readonly usage: Readonly<Record<string, string>>;
 	readonly usageBasis: string;
 	readonly modes: readonly string[];
@@ -72,10 +75,11 @@ interface MultitaskState {
 	readonly status: string;
 	readonly selectedAgents: number;
 	readonly messageCount: number;
-	readonly results: readonly {
+	readonly answer: {
 		readonly label: string;
 		readonly content: string;
-	}[];
+	};
+	readonly specialistAnswerCount: number;
 }
 
 interface MultitaskLiveState {
@@ -108,18 +112,16 @@ interface NarrowPanelState {
 	readonly modeVisible: boolean;
 	readonly contextOptionsVisible: boolean;
 	readonly moreActionsVisible: boolean;
-	readonly multitaskAvailable: boolean;
+	readonly fiveModesAvailable: boolean;
 	readonly composerAnchored: boolean;
 }
 
 interface ShortComposerState {
 	readonly viewportHeight: number;
-	readonly confirmationTop: number;
-	readonly confirmationBottom: number;
-	readonly promptBottom: number;
-	readonly footerTop: number;
-	readonly sendOnceVisible: boolean;
-	readonly cancelVisible: boolean;
+	readonly promptVisible: boolean;
+	readonly footerVisible: boolean;
+	readonly sendVisible: boolean;
+	readonly sendEnabled: boolean;
 }
 
 interface NarrowGraphState {
@@ -576,7 +578,7 @@ const scenario: Scenario = {
 						const provider = document.querySelector('[data-agent-form] [name="providerName"]');
 						if (!prompt || !mode || !provider || !Array.from(provider.options).some(option => option.value === ${JSON.stringify(providerName)})) return false;
 						return !document.querySelector('[data-surface-panel="chat"]')?.hidden
-							&& Array.from(mode.options).map(option => option.value).join(',') === 'agent,plan,research,multitask';
+							&& Array.from(mode.options).map(option => option.value).join(',') === 'ask,plan,build,review,research';
 					})()`,
 					'The real Fikeya Chat composer did not become ready.',
 					60_000
@@ -597,17 +599,17 @@ const scenario: Scenario = {
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = document.querySelector('[data-network-confirmation]');
-					const sendOnce = document.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
 					throw new Error('The real Chat composer could not submit the deterministic provider turn.');
 				}
 				const state = await waitForFikeya<ChatState>(code, `(() => {
-					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim();
+					const latestAssistant = Array.from(document.querySelectorAll('.assistant-message')).at(-1);
+					const assistant = latestAssistant?.querySelector('.message-content')?.textContent?.trim();
+					const messageActions = latestAssistant?.querySelectorAll('.message-actions .message-action') ?? [];
+					const copyAction = latestAssistant?.querySelector('[data-copy-message]');
+					copyAction?.click();
 					const providerField = document.querySelector('[data-agent-form] [name="providerName"]');
 					const modeField = document.querySelector('[data-agent-form] [name="chatMode"]');
 					const selectedProvider = providerField?.options?.[providerField.selectedIndex]?.textContent?.trim();
@@ -622,14 +624,18 @@ const scenario: Scenario = {
 					const value = {
 						assistant,
 						chatVisible: !document.querySelector('[data-surface-panel="chat"]')?.hidden,
+						messageActionCount: messageActions.length,
+						copyState: copyAction?.dataset.copyState ?? '',
 						modes: Array.from(modeField?.options ?? []).map(option => option.value),
 						provider: selectedProvider,
 						usage: metrics,
 						usageBasis
 					};
 					return value.chatVisible
-						&& value.modes.join(',') === 'agent,plan,research,multitask'
+						&& value.modes.join(',') === 'ask,plan,build,review,research'
 						&& value.assistant === ${JSON.stringify(providerOutput)}
+						&& value.messageActionCount === 1
+						&& value.copyState === 'copied'
 						&& value.provider === ${JSON.stringify(`${providerName} | fikeya-proof-model`)}
 						&& value.usage['Input Tokens'] === '60'
 						&& value.usage['Cached Input Tokens'] === '12'
@@ -668,17 +674,14 @@ const scenario: Scenario = {
 					const provider = form?.querySelector('[name="providerName"]');
 					const mode = form?.querySelector('[name="chatMode"]');
 					if (!form || !prompt || !provider || !mode) return false;
-					mode.value = 'agent';
+					mode.value = 'build';
 					mode.dispatchEvent(new Event('change', { bubbles: true }));
 					provider.value = ${JSON.stringify(providerName)};
 					provider.dispatchEvent(new Event('change', { bubbles: true }));
 					prompt.value = 'Inspect this attached image together with the bounded project evidence.';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = form.querySelector('[data-network-confirmation]');
-					const sendOnce = form.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -696,6 +699,110 @@ const scenario: Scenario = {
 			}
 		},
 		{
+			id: 'explorer-file-drop',
+			title: 'Drop a workspace file from Explorer anywhere on Project Chat',
+			async run({ code }) {
+				const resourceUri = pathToFileURL(path.join(workspacePath, 'README.md')).toString();
+				const dropped = await evaluateFikeya<boolean>(code, `(() => {
+					const surface = document.querySelector('[data-agent-surface]');
+					if (!surface || typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') return false;
+					const transfer = new DataTransfer();
+					transfer.setData('ResourceURLs', ${JSON.stringify(JSON.stringify([resourceUri]))});
+					surface.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+					surface.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+					surface.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+					return true;
+				})()`);
+				if (!dropped) {
+					throw new Error('The Project Chat surface did not accept a VS Code Explorer resource drop.');
+				}
+				await waitForFikeya<boolean>(code, `(() => {
+					const file = document.querySelector('[data-composer-attachments] .composer-attachment.file strong');
+					return file?.textContent?.trim() === 'README.md';
+				})()`, 'README.md was not attached after the Explorer resource drop.', 20_000);
+				const removed = await evaluateFikeya<boolean>(code, `(() => {
+					const remove = document.querySelector('[data-composer-attachments] .composer-attachment.file button');
+					if (!remove) return false;
+					remove.click();
+					return true;
+				})()`);
+				if (!removed) {
+					throw new Error('The dropped README.md attachment could not be removed.');
+				}
+				await waitForFikeya<boolean>(code, `document.querySelectorAll('[data-composer-attachments] .composer-attachment').length === 0`, 'The dropped file attachment did not clear.', 10_000);
+				return 'Dropped README.md from the VS Code Explorer resource channel onto the full Project Chat surface and attached its bounded UTF-8 content.';
+			}
+		},
+		{
+			id: 'mentioned-file-chat',
+			title: 'Mention a workspace file and deliver its bounded content to the selected model',
+			async run({ code, page }) {
+				const opened = await evaluateFikeya<boolean>(code, `(() => {
+					const mention = document.querySelector('[data-mention-workspace]');
+					if (!mention) return false;
+					mention.click();
+					return true;
+				})()`);
+				if (!opened) {
+					throw new Error('The workspace-file mention action was not available.');
+				}
+				const pickerTitle = 'Add workspace files to this message';
+				await waitForQuickInput(page, pickerTitle);
+				const focused = await page.evaluate<boolean>(`(() => {
+					const input = document.querySelector('.quick-input-widget .quick-input-box input');
+					if (!input) return false;
+					input.focus();
+					return document.activeElement === input;
+				})()`);
+				if (!focused) {
+					throw new Error('The workspace-file mention picker could not receive focus.');
+				}
+				await page.keyboard.press('Control+A');
+				await page.keyboard.type('README.md');
+				await waitFor(
+					() => page.evaluate<boolean>(`document.querySelectorAll('.quick-input-list .monaco-list-row').length === 1`),
+					'The workspace-file mention picker did not narrow to README.md.',
+					10_000
+				);
+				await page.keyboard.press('ArrowDown');
+				await page.keyboard.press('Space');
+				await page.keyboard.press('Enter');
+				await waitForFikeya<boolean>(code, `(() => {
+					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
+					const file = document.querySelector('[data-composer-attachments] .composer-attachment.file strong');
+					return file?.textContent?.trim() === 'README.md' && prompt?.value.includes('@README.md');
+				})()`, 'README.md was not attached through the workspace mention flow.', 20_000);
+				const submitted = await evaluateFikeya<boolean>(code, `(() => {
+					const form = document.querySelector('[data-agent-form]');
+					const prompt = form?.querySelector('[name="prompt"]');
+					const provider = form?.querySelector('[name="providerName"]');
+					const mode = form?.querySelector('[name="chatMode"]');
+					if (!form || !prompt || !provider || !mode) return false;
+					mode.value = 'build';
+					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					provider.value = ${JSON.stringify(providerName)};
+					provider.dispatchEvent(new Event('change', { bubbles: true }));
+					prompt.value += ' Explain the evidence in this mentioned file.';
+					prompt.dispatchEvent(new Event('input', { bubbles: true }));
+					if (!form.checkValidity()) return false;
+					form.requestSubmit();
+					return true;
+				})()`);
+				if (!submitted) {
+					throw new Error('The mentioned-file Chat turn could not be submitted.');
+				}
+				const state = await waitForFikeya<ImageChatState>(code, `(() => {
+					const assistant = Array.from(document.querySelectorAll('.assistant-message .message-content')).at(-1)?.textContent?.trim() ?? '';
+					const attachment = Array.from(document.querySelectorAll('.user-message .message-attachment strong')).at(-1)?.textContent?.trim() ?? '';
+					const status = document.querySelector('.composer-status')?.textContent?.trim() ?? '';
+					return assistant === ${JSON.stringify(providerOutput)} && attachment === 'README.md' && status.toLowerCase().includes('completed')
+						? { assistant, attachment, status }
+						: false;
+				})()`, 'The mentioned workspace file did not complete a visible provider-backed Chat turn.', 90_000);
+				return `Mentioned ${state.attachment} through @, delivered its bounded UTF-8 content, and completed the real provider-backed Chat turn.`;
+			}
+		},
+		{
 			id: 'completed-multitask',
 			title: 'Complete a bounded two-agent Multitask batch through the real UI',
 			async run({ code, page }) {
@@ -704,8 +811,11 @@ const scenario: Scenario = {
 					const prompt = form?.querySelector('[name="prompt"]');
 					const mode = form?.querySelector('[name="chatMode"]');
 					if (!form || !prompt || !mode) return false;
-					mode.value = 'multitask';
+					mode.value = 'review';
 					mode.dispatchEvent(new Event('change', { bubbles: true }));
+					const parallelToggle = form.querySelector('[data-parallel-toggle]');
+					if (!parallelToggle) return false;
+					parallelToggle.click();
 					const choices = Array.from(form.querySelectorAll('[data-agent-picker] .agent-choice'));
 					const expected = new Set(['Proof Planner', 'Proof Reviewer']);
 					if (choices.length !== 2 || choices.some(choice => !expected.has(choice.querySelector('strong')?.textContent?.trim() ?? ''))) return false;
@@ -719,10 +829,6 @@ const scenario: Scenario = {
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = form.querySelector('[data-network-confirmation]');
-					const sendOnce = form.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -747,21 +853,28 @@ const scenario: Scenario = {
 						${JSON.stringify(`Proof Planner · ${providerName}`)},
 						${JSON.stringify(`Proof Reviewer · ${providerName}`)}
 					]);
-					const results = Array.from(document.querySelectorAll('.assistant-message')).map(message => ({
+					const messages = Array.from(document.querySelectorAll('.chat-message'));
+					const specialistAnswerCount = messages.map(message => message.querySelector('.message-meta span')?.textContent?.trim() ?? '')
+						.filter(label => expectedLabels.has(label)).length;
+					const lastUserIndex = messages.findLastIndex(message => message.classList.contains('user-message'));
+					const currentTurnAnswers = messages.slice(lastUserIndex + 1).filter(message => message.classList.contains('assistant-message')).map(message => ({
 						label: message.querySelector('.message-meta span')?.textContent?.trim() ?? '',
 						content: message.querySelector('.message-content')?.textContent?.trim() ?? ''
-					})).filter(item => expectedLabels.has(item.label));
+					}));
+					const answer = currentTurnAnswers[0];
 					const status = document.querySelector('.composer-status')?.textContent?.trim() ?? '';
 					const selectedAgents = document.querySelectorAll('[data-agent-picker] input[name="selectedAgentId"]:checked').length;
 					const messageCount = Number(document.querySelector('[data-chat-thread]')?.getAttribute('data-message-count') ?? '0');
 					const complete = status.toLowerCase().includes('completed')
 						&& selectedAgents === 2
 						&& messageCount >= 5
-						&& results.length === 2
-						&& results.every(item => item.content === ${JSON.stringify(providerOutput)});
-					return complete ? { status, selectedAgents, messageCount, results } : false;
-				})()`, 'The bounded Multitask batch did not render two completed, provider-labelled advisory results.', 120_000);
-				return `Observed ${live.heading}, then completed a bounded ${completed.selectedAgents}-agent Multitask batch through the UI; ${completed.results.map(item => item.label).join(' and ')} each rendered the exact verified provider result.`;
+						&& specialistAnswerCount === 0
+						&& currentTurnAnswers.length === 1
+						&& answer?.label === ${JSON.stringify(providerName)}
+						&& answer.content === ${JSON.stringify(providerOutput)};
+					return complete ? { status, selectedAgents, messageCount, answer, specialistAnswerCount } : false;
+				})()`, 'The bounded Multitask batch did not collapse specialist evidence into one lead answer.', 120_000);
+				return `Observed ${live.heading}, then completed a bounded ${completed.selectedAgents}-agent Multitask batch through the UI; specialist evidence produced one canonical ${completed.answer.label} answer with no duplicate specialist messages.`;
 			}
 		},
 		{
@@ -782,10 +895,6 @@ const scenario: Scenario = {
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					if (!form.checkValidity()) return false;
 					form.requestSubmit();
-					const confirmation = form.querySelector('[data-network-confirmation]');
-					const sendOnce = form.querySelector('[data-network-confirm]');
-					if (!confirmation || confirmation.hidden || !sendOnce) return false;
-					sendOnce.click();
 					return true;
 				})()`);
 				if (!submitted) {
@@ -806,8 +915,8 @@ const scenario: Scenario = {
 			}
 		},
 		{
-			id: 'short-composer-confirmation',
-			title: 'Confirm provider access from a short fixed composer without overlap',
+			id: 'short-composer-direct-send',
+			title: 'Keep direct send visible and enabled in a short fixed composer',
 			async run({ code, page }) {
 				proofWindowBounds ??= await page.evaluate<DesktopWindowBounds>('({ width: window.outerWidth, height: window.outerHeight })');
 				proofPanelWidth ??= await evaluateFikeya<number>(code, 'window.innerWidth');
@@ -817,51 +926,37 @@ const scenario: Scenario = {
 					const form = document.querySelector('[data-agent-form]');
 					const prompt = form?.querySelector('[name="prompt"]');
 					const mode = form?.querySelector('[name="chatMode"]');
-					const confirmation = form?.querySelector('[data-network-confirmation]');
-					const sendOnce = form?.querySelector('[data-network-confirm]');
-					const cancel = form?.querySelector('[data-network-cancel]');
+					const send = form?.querySelector('[data-agent-run]');
 					const footer = form?.querySelector('.composer-foot');
-					if (!form || !prompt || !mode || !confirmation || !sendOnce || !cancel || !footer) return false;
-					mode.value = 'agent';
+					if (!form || !prompt || !mode || !send || !footer) return false;
+					mode.value = 'build';
 					mode.dispatchEvent(new Event('change', { bubbles: true }));
-					prompt.value = 'Verify the short composer confirmation without contacting the provider.';
+					prompt.value = 'Verify that direct send remains available in the short composer.';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
-					form.requestSubmit();
-					confirmation.scrollIntoView({ block: 'nearest' });
-					const confirmationRect = confirmation.getBoundingClientRect();
-					const promptRect = prompt.getBoundingClientRect();
-					const footerRect = footer.getBoundingClientRect();
+					footer.scrollIntoView({ block: 'nearest' });
 					const visible = element => {
 						const rect = element.getBoundingClientRect();
 						return rect.width > 0 && rect.height > 0 && rect.top >= -1 && rect.bottom <= window.innerHeight + 1;
 					};
 					const value = {
 						viewportHeight: window.innerHeight,
-						confirmationTop: confirmationRect.top,
-						confirmationBottom: confirmationRect.bottom,
-						promptBottom: promptRect.bottom,
-						footerTop: footerRect.top,
-						sendOnceVisible: visible(sendOnce),
-						cancelVisible: visible(cancel)
+						promptVisible: visible(prompt),
+						footerVisible: visible(footer),
+						sendVisible: visible(send),
+						sendEnabled: !send.disabled
 					};
-					return !confirmation.hidden
-						&& confirmationRect.top >= promptRect.bottom - 1
-						&& confirmationRect.bottom <= footerRect.top + 1
-						&& value.sendOnceVisible && value.cancelVisible
+					return value.promptVisible && value.footerVisible && value.sendVisible && value.sendEnabled
 						? value
 						: false;
-				})()`, 'The short composer confirmation was hidden, clipped, or overlapped another composer control.', 20_000);
+				})()`, 'The short composer prompt or direct send action was hidden, disabled, or clipped.', 20_000);
 				await evaluateFikeya<boolean>(code, `(() => {
-					const form = document.querySelector('[data-agent-form]');
-					const prompt = form?.querySelector('[name="prompt"]');
-					const cancel = form?.querySelector('[data-network-cancel]');
-					if (!prompt || !cancel) return false;
-					cancel.click();
+					const prompt = document.querySelector('[data-agent-form] [name="prompt"]');
+					if (!prompt) return false;
 					prompt.value = '';
 					prompt.dispatchEvent(new Event('input', { bubbles: true }));
 					return true;
 				})()`);
-				return `At ${state.viewportHeight}px high, the one-message network confirmation remained fully visible between the prompt and footer with both confirmation actions usable.`;
+				return `At ${state.viewportHeight}px high, the prompt, footer, and one-click send action remained visible; send enabled=${state.sendEnabled}.`;
 			}
 		},
 		{
@@ -893,13 +988,13 @@ const scenario: Scenario = {
 						sendVisible: visible(send),
 						modeVisible: visible(mode),
 						moreActionsVisible: visible(moreActions),
-						multitaskAvailable: Array.from(mode?.options ?? []).some(option => option.value === 'multitask'),
+						fiveModesAvailable: Array.from(mode?.options ?? []).map(option => option.value).join(',') === 'ask,plan,build,review,research',
 						composerAnchored: Boolean(formRect && formRect.bottom <= window.innerHeight + 1 && formRect.bottom >= window.innerHeight - 36)
 					};
 					return value.viewportWidth >= 340 && value.viewportWidth <= 420
 						&& value.documentWidth <= value.viewportWidth + 1
 						&& value.bodyWidth <= value.viewportWidth + 1
-						&& Object.entries(value).filter(([key]) => key.endsWith('Visible') || key === 'multitaskAvailable' || key === 'composerAnchored').every(([, shown]) => shown === true)
+						&& Object.entries(value).filter(([key]) => key.endsWith('Visible') || key === 'fiveModesAvailable' || key === 'composerAnchored').every(([, shown]) => shown === true)
 						? value
 						: false;
 				})()`, 'The real Chat panel overflowed or hid a primary control at its narrow width.', 20_000);
@@ -1145,8 +1240,11 @@ const scenario: Scenario = {
 		},
 		{
 			id: 'editor-terminal-layout',
-			title: 'Keep Editor UI Chat full-height beside the bottom terminal',
+			title: 'Keep Project Chat persistent, then use Editor Chat beside the terminal',
 			async run({ code, page, workbench }) {
+				await runWorkbenchCommand(workbench, page, 'workbench.action.closeActiveEditor');
+				await page.waitForSelector('iframe.webview.ready', { state: 'visible', timeout: 30_000 });
+				await waitForFikeya<boolean>(code, `Boolean(document.querySelector('[data-agent-form]'))`, 'Project Chat did not reopen after its editor was closed.', 30_000);
 				await runWorkbenchCommand(workbench, page, 'fikeya.layout.editor');
 				await waitFor(
 					() => page.evaluate<boolean>(`(() => {
@@ -1158,7 +1256,7 @@ const scenario: Scenario = {
 					30_000
 				);
 				await waitForFikeya<boolean>(code, `Boolean(document.querySelector('[data-agent-form]'))`, 'The Editor UI Chat composer did not become ready.', 20_000);
-				await runWorkbenchCommand(workbench, page, 'workbench.action.terminal.toggleTerminal');
+				await page.keyboard.press('Control+Backquote');
 				const layout = await waitFor(
 					() => page.evaluate<{ panelTop: number; panelRight: number; chatLeft: number; chatBottom: number } | false>(`(() => {
 						const panel = document.querySelector('.part.panel');
@@ -1178,7 +1276,7 @@ const scenario: Scenario = {
 					const rect = form?.getBoundingClientRect();
 					return Boolean(rect && rect.width > 0 && rect.bottom <= window.innerHeight + 1 && rect.bottom >= window.innerHeight - 36);
 				})()`, 'The Fikeya Chat composer was not anchored after the terminal opened.', 20_000);
-				return `Terminal stopped at x=${Math.round(layout.panelRight)} before Chat began at x=${Math.round(layout.chatLeft)}; Chat retained its full-height bottom at y=${Math.round(layout.chatBottom)} with composer anchored=${composerAnchored}.`;
+				return `Project Chat reopened after close. Native Editor UI then placed the terminal at x=${Math.round(layout.panelRight)} before Chat at x=${Math.round(layout.chatLeft)}; Chat stayed full-height to y=${Math.round(layout.chatBottom)} with composer anchored=${composerAnchored}.`;
 			}
 		}
 	]

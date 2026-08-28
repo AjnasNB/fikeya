@@ -33,7 +33,8 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
 
         self.assertIn('class="composer-menu-controls"', surface)
         self.assertIn("Configure models", surface)
-        self.assertIn('data-agent-run type="submit"', surface)
+        self.assertIn('data-agent-run type="button"', surface)
+        self.assertIn("document.addEventListener('submit', event => event.preventDefault(), true)", source)
         self.assertIn('aria-hidden="true">↑</span>', surface)
         self.assertNotIn('class="quiet composer-add-model"', surface)
         self.assertNotIn('class="run-controls"', surface)
@@ -78,17 +79,29 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
         )
         self.assertEqual(desktop_toggle["when"], "fikeya.isFikeyaProduct")
 
-    def test_chat_exposes_a_permanent_project_editor_switch(self) -> None:
+    def test_project_chat_is_persistent_and_uses_the_native_editor_switch(self) -> None:
         source = (
             REPOSITORY_ROOT / "extensions/fikeya-desktop/src/extension.ts"
         ).read_text(encoding="utf-8")
+        manifest = json.loads(
+            (REPOSITORY_ROOT / "extensions/fikeya-desktop/package.json").read_text(
+                encoding="utf-8"
+            )
+        )
 
-        self.assertIn('data-layout-switch', source)
-        self.assertIn("Project UI", source)
-        self.assertIn("Editor + Chat", source)
-        self.assertIn("layoutSwitch?.addEventListener('change'", source)
+        self.assertNotIn('data-layout-switch', source)
+        self.assertIn("this.projectPanelRequired = true", source)
+        self.assertIn(
+            "if (this.projectPanelRequired && !this.disposed && !this.panel)", source
+        )
         self.assertIn("public async toggleChatPane()", source)
         self.assertIn("this.view?.visible", source)
+        editor_action = next(
+            item
+            for item in manifest["contributes"]["menus"]["editor/title"]
+            if item["command"] == "fikeya.layout.editor"
+        )
+        self.assertIn("activeWebviewPanelId == fikeya.workspace", editor_action["when"])
 
     def test_chat_stays_anchored_and_saves_only_dirty_workspace_files(self) -> None:
         source = (
@@ -144,9 +157,16 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
         self.assertIn("data-attachment-input", source)
         self.assertIn("data-folder-input", source)
         self.assertIn("clipboardData?.items", source)
-        self.assertIn("droppedItems(event.dataTransfer)", source)
+        self.assertIn("droppedItems(transfer)", source)
+        self.assertIn("attachDroppedResources", source)
+        self.assertIn("ResourceURLs", source)
+        self.assertIn("data-agent-surface", source)
         self.assertIn("images: imageAttachments", source)
         self.assertIn("files: textFileAttachments", source)
+        self.assertIn("data-mention-workspace", source)
+        self.assertIn("data-mention-computer", source)
+        self.assertIn("fikeya.composerFilesPicked", source)
+        self.assertIn("maximumTextFileCount", source)
         self.assertNotIn("dataUrl", conversation)
         self.assertIn("Content-free metadata only", conversation)
 

@@ -47,6 +47,23 @@ describe('Fikeya live conversation state', () => {
 		assert.ok(messages.reduce((total, item) => total + item.content.length, 0) <= 960_000);
 	});
 
+	test('renders an identical assistant answer only once within one user turn', () => {
+		let messages: readonly FikeyaConversationMessage[] = [
+			{ ...message(1, 'Inspect the project.'), role: 'user' }
+		];
+		messages = appendConversationMessage(messages, { ...message(2, 'One canonical answer.'), providerName: 'planner' });
+		messages = appendConversationMessage(messages, { ...message(4, 'One canonical answer.\r\n'), providerName: 'reviewer' });
+		assert.deepStrictEqual(messages.map(item => [item.role, item.content, item.providerName]), [
+			['user', 'Inspect the project.', undefined],
+			['assistant', 'One canonical answer.', 'planner']
+		]);
+
+		messages = appendConversationMessage(messages, { ...message(3, 'Ask again.'), role: 'user' });
+		messages = appendConversationMessage(messages, { ...message(6, 'One canonical answer.'), providerName: 'lead' });
+		assert.strictEqual(messages.length, 4, 'a later user turn may legitimately receive the same answer');
+		assert.strictEqual(messages.at(-1)?.providerName, 'lead');
+	});
+
 	test('round-trips a redacted bounded workspace snapshot after restart', () => {
 		const messages: readonly FikeyaConversationMessage[] = [
 			{ ...message(1, 'Inspect src/index.ts with sk-or-v1-1234567890abcdefgh.'), providerName: 'openrouter-main' },
@@ -147,6 +164,20 @@ describe('Fikeya live conversation state', () => {
 });
 
 describe('Fikeya chat webview refresh state', () => {
+	test('renders the inline webview JavaScript with literal escapes intact', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		const scriptStart = source.lastIndexOf('<script nonce=');
+		const scriptTagEnd = source.indexOf('>', scriptStart);
+		const scriptBodyStart = scriptTagEnd + 1;
+		const scriptEnd = source.indexOf('</script>', scriptBodyStart);
+		const script = source.slice(scriptBodyStart, scriptEnd).replace(/^\r?\n/u, '');
+		assert.ok(scriptStart > 0 && scriptTagEnd > scriptStart && scriptEnd > scriptBodyStart);
+		assert.match(source.slice(0, scriptStart), /return String\.raw`<!DOCTYPE html>/u);
+		assert.doesNotThrow(() => new Function(script));
+		assert.match(script, /document\.addEventListener\('submit', event => event\.preventDefault\(\), true\)/u);
+		assert.match(script, /replaceAll\('\\\\', '\/'\)/u);
+	});
+
 	test('restores composer focus against the rendered Chat surface', async () => {
 		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
 		assert.match(source, /focusSurface: initialSurface/u);
@@ -194,7 +225,32 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(source, /hasAttachments: attachmentReadCount > 0 \|\| imageAttachments\.length > 0 \|\| textFileAttachments\.length > 0/u);
 		assert.match(source, /runButton\.disabled = runBlocked \|\| attachmentReadCount > 0/u);
 		assert.match(source, /chatModeField\?\.addEventListener\('change', updateComposerMode\)/u);
+		assert.match(source, /executeAgentAction\(chatModeField\?\.value === 'plan' \? 'plan' : parallelAgentsEnabled \? 'multitask' : 'run'\)/u);
+		assert.match(source, /agentForm\.requestSubmit\(\)/u);
+		assert.doesNotMatch(source, /data-network-confirmation/u);
 		assert.doesNotMatch(source, /chatModeField\?\.addEventListener\('change', refresh/u);
+	});
+
+	test('keeps Project chat persistent and accepts Explorer resource drops across the surface', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /data-agent-surface/u);
+		assert.match(source, /attachDroppedResources/u);
+		assert.match(source, /ResourceURLs/u);
+		assert.match(source, /application\/vnd\.code\.uri-list/u);
+		assert.match(source, /this\.projectPanelRequired = true/u);
+		assert.match(source, /if \(this\.projectPanelRequired && !this\.disposed && !this\.panel\)/u);
+		assert.doesNotMatch(source, /data-layout-switch/u);
+	});
+
+	test('uses one accessible animated copy action instead of a floating button cluster', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /role="toolbar" aria-label=/u);
+		assert.match(source, /data-copy-message="\$\{escapeHtml\(messageId\)\}"/u);
+		assert.match(source, /postUi\('copyConversationMessage', \{ messageId \}\)/u);
+		assert.match(source, /data-copy-state="copied"/u);
+		assert.match(source, /@keyframes fikeya-action-confirm/u);
+		assert.match(source, /@media \(prefers-reduced-motion: reduce\)/u);
+		assert.doesNotMatch(source, /class="quiet copy-message"/u);
 	});
 
 	test('shows accessible autonomous stages with cancel and durable-plan resume actions', async () => {

@@ -2,7 +2,7 @@
 	"name": "fikeya-desktop",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "0.1.0-beta.5",
+	"version": "0.1.0-beta.7",
 	"publisher": "fikeya",
 	"license": "AGPL-3.0-or-later",
 	"repository": {
@@ -28,6 +28,7 @@
 		"onView:fikeya.dashboard",
 		"onCommand:fikeya.open",
 		"onCommand:fikeya.chat.toggle",
+		"onCommand:fikeya.chat.attachFiles",
 		"onCommand:fikeya.configureProvider",
 		"onCommand:fikeya.configureAgents",
 		"onCommand:fikeya.initializeWorkspace",
@@ -69,6 +70,12 @@
 				"title": "%command.chat.toggle.title%",
 				"category": "%command.category%",
 				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "fikeya.chat.attachFiles",
+				"title": "%command.chat.attachFiles.title%",
+				"category": "%command.category%",
+				"icon": "$(mention)"
 			},
 			{
 				"command": "fikeya.layout.project",
@@ -229,6 +236,13 @@
 			}
 		],
 		"menus": {
+			"explorer/context": [
+				{
+					"command": "fikeya.chat.attachFiles",
+					"when": "resourceScheme == file",
+					"group": "navigation@19"
+				}
+			],
 			"editor/title": [
 				{
 					"command": "fikeya.chat.toggle",
