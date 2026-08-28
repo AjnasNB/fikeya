@@ -1,4 +1,4 @@
-# Generated for the Fikeya beta.5 component set.
+# Generated for the Fikeya beta.6 component set.
 # Regenerate deliberately when fikeya-runtime dependencies change.
 # These are dependency constraints, not a standalone requirements file.
 
