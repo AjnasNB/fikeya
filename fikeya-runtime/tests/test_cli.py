@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from fikeya_agent_core import AgentNoProgressError
+
 from fikeya_runtime.cli import _parser, main
 from fikeya_runtime.errors import ProviderConnectivityError, SecretStoreUnavailable
 
@@ -24,7 +25,7 @@ def test_cli_reports_the_installed_version(capsys: object) -> None:
     assert capsys.readouterr().out == "fikeya 0.1.0b4\n"
 
 
-def test_agent_execute_mode_defaults_to_build_and_accepts_review() -> None:
+def test_agent_execute_mode_defaults_to_build_and_private_browser_is_opt_in() -> None:
     parser = _parser()
     default = parser.parse_args(
         [
@@ -47,11 +48,14 @@ def test_agent_execute_mode_defaults_to_build_and_accepts_review() -> None:
             "--protocol-stdin",
             "--mode",
             "review",
+            "--allow-private-browser",
             "--json-lines",
         ]
     )
     assert default.mode == "build"
+    assert default.allow_private_browser is False
     assert review.mode == "review"
+    assert review.allow_private_browser is True
 
 
 class _ProtocolInput:
@@ -329,6 +333,7 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
     monkeypatch: object,
 ) -> None:
     from fikeya_agent_core import ApprovalDecision
+
     from fikeya_runtime import coding
 
     home = tmp_path / "home"

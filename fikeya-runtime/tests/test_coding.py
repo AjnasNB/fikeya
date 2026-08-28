@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from fikeya_agent_core import ApprovalDecision, CancellationToken, ToolCall
 
+from fikeya_runtime.browser import BrowserActionResult, BrowserReceipt
 from fikeya_runtime.coding import CodingAgentRunner, WorkspaceExecutionBroker
 from fikeya_runtime.credentials import CredentialResolver
 from fikeya_runtime.inference import JsonResponse, ProviderExecutor
@@ -246,6 +247,22 @@ def test_coding_loop_inspects_edits_tests_and_returns_structured_outcome(
                 "process.run",
             },
         ),
+        (
+            AgentMode.RESEARCH,
+            {
+                "browser.click",
+                "browser.close",
+                "browser.navigate",
+                "browser.screenshot",
+                "browser.scroll",
+                "browser.snapshot",
+                "browser.type",
+                "browser.wait",
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+            },
+        ),
     ],
 )
 def test_non_build_modes_expose_only_their_mechanical_tool_policy(
@@ -291,6 +308,77 @@ def test_review_mode_rejects_a_forged_write_call_even_if_execution_is_invoked(
     assert result.status == "error"
     assert result.output == "Tool is unavailable in review mode."
     assert target.read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert [receipt.name for receipt in broker.state.receipts] == [
+        "workspace.write_file"
+    ]
+
+
+class _FakeBrowserSession:
+    def __init__(self) -> None:
+        self.closed = False
+        self.urls: list[str] = []
+
+    def navigate(self, url: str) -> BrowserActionResult:
+        self.urls.append(url)
+        return BrowserActionResult(
+            BrowserReceipt("navigate", url, "sha256:" + "1" * 64, 3)
+        )
+
+    def close(self) -> BrowserActionResult:
+        self.closed = True
+        return BrowserActionResult(
+            BrowserReceipt(
+                "close",
+                self.urls[-1] if self.urls else None,
+                "sha256:" + "2" * 64,
+                1,
+            )
+        )
+
+
+def test_build_mode_routes_browser_actions_and_records_content_minimal_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "browser"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    session = _FakeBrowserSession()
+    broker = WorkspaceExecutionBroker(
+        workspace,
+        mode=AgentMode.BUILD,
+        browser_session=session,  # type: ignore[arg-type]
+    )
+
+    result = _run(
+        broker.execute(
+            ToolCall(
+                "browser:navigate",
+                "browser.navigate",
+                {"url": "https://example.com/docs?section=runtime"},
+            ),
+            CancellationToken(),
+            idempotency_key="browser-navigation",
+        ),
+        monkeypatch,
+    )
+
+    assert result.status == "ok"
+    assert json.loads(result.output) == {
+        "receipt": {
+            "action": "navigate",
+            "durationMs": 3,
+            "evidenceSha256": "sha256:" + "1" * 64,
+            "url": "https://example.com/docs?section=runtime",
+        },
+        "truncated": False,
+    }
+    assert session.urls == ["https://example.com/docs?section=runtime"]
+    assert [receipt.name for receipt in broker.state.receipts] == [
+        "browser.navigate"
+    ]
+    broker.close()
+    assert session.closed is True
 
 
 def test_denied_edit_leaves_the_file_unchanged(

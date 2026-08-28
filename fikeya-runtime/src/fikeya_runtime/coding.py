@@ -34,6 +34,7 @@ from fikeya_agent_core import (
 )
 
 from .agent import AgentRunner, MemoryPreparation
+from .browser import BrowserActionResult, BrowserSession
 from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
 from .errors import ApprovalError, FikeyaError
@@ -232,6 +233,8 @@ class WorkspaceExecutionBroker:
         allowed_executables: frozenset[str] = _DEFAULT_ALLOWED_EXECUTABLES,
         maximum_process_timeout_seconds: float = 120.0,
         mode: AgentMode | str = AgentMode.BUILD,
+        allow_private_browser: bool = False,
+        browser_session: BrowserSession | None = None,
     ) -> None:
         if (
             isinstance(maximum_process_timeout_seconds, bool)
@@ -243,6 +246,8 @@ class WorkspaceExecutionBroker:
         self.workspace = workspace
         self.state = _BrokerState()
         self.mode_policy: ModePolicy = mode_policy(mode)
+        self.allow_private_browser = allow_private_browser
+        self._browser = browser_session
         self.maximum_process_timeout_seconds = maximum_process_timeout_seconds
         self._process_broker = ToolBroker(
             boundary=workspace.boundary,
@@ -341,6 +346,96 @@ class WorkspaceExecutionBroker:
                     "additionalProperties": False,
                 },
             ),
+            ToolDefinition(
+                "browser.navigate",
+                "Navigate the isolated browser to one approved HTTP or HTTPS URL.",
+                {
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {"url": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                "browser.snapshot",
+                "Inspect a bounded accessibility or visible-text snapshot of the active page.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["accessible", "text"],
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                "browser.click",
+                "Click one selector in the active page after an exact approval.",
+                {
+                    "type": "object",
+                    "required": ["selector"],
+                    "properties": {"selector": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                "browser.type",
+                "Enter bounded text into one selector after an exact approval.",
+                {
+                    "type": "object",
+                    "required": ["selector", "text"],
+                    "properties": {
+                        "clear": {"type": "boolean"},
+                        "selector": {"type": "string"},
+                        "text": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                "browser.scroll",
+                "Scroll the active page by bounded pixel deltas.",
+                {
+                    "type": "object",
+                    "required": ["deltaY"],
+                    "properties": {
+                        "deltaX": {"type": "integer"},
+                        "deltaY": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                "browser.screenshot",
+                "Capture one viewport PNG to an approved project-relative path.",
+                {
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                "browser.wait",
+                "Wait for a bounded number of milliseconds in the active page.",
+                {
+                    "type": "object",
+                    "required": ["milliseconds"],
+                    "properties": {"milliseconds": {"type": "integer"}},
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                "browser.close",
+                "Close the isolated browser session.",
+                {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
         )
         return tuple(tool for tool in tools if self.mode_policy.allows(tool.name))
 
@@ -362,6 +457,15 @@ class WorkspaceExecutionBroker:
                 f"Tool is unavailable in {self.mode_policy.mode.value} mode.",
             )
             self.state.results[idempotency_key] = result
+            self.state.receipts.append(
+                ToolExecutionReceipt(
+                    call_id=call.call_id,
+                    name=call.name,
+                    status=result.status,
+                    output_sha256=sha256_text(result.output),
+                    test=False,
+                )
+            )
             return result
         try:
             if call.name == "workspace.list_files":
@@ -376,6 +480,8 @@ class WorkspaceExecutionBroker:
                 result = self._write_file(call)
             elif call.name == "process.run":
                 result = await asyncio.to_thread(self._run_process, call, cancellation)
+            elif call.name.startswith("browser."):
+                result = await asyncio.to_thread(self._run_browser, call)
             else:
                 result = ToolResult(call.call_id, "error", "Unknown broker tool.")
         except (ApprovalError, FikeyaError, OSError, UnicodeError, ValueError) as error:
@@ -392,6 +498,94 @@ class WorkspaceExecutionBroker:
                 )
             )
         return result
+
+    def close(self) -> None:
+        """Release optional browser resources owned by this broker."""
+
+        if self._browser is not None:
+            self._browser.close()
+            self._browser = None
+
+    def _browser_session(self) -> BrowserSession:
+        if self._browser is None:
+            self._browser = BrowserSession(
+                self.workspace.root,
+                allow_private=self.allow_private_browser,
+            )
+        return self._browser
+
+    def _run_browser(self, call: ToolCall) -> ToolResult:
+        session = self._browser_session()
+        result: BrowserActionResult
+        if call.name == "browser.navigate":
+            arguments = _exact_arguments(
+                call, required=frozenset({"url"}), optional=frozenset()
+            )
+            result = session.navigate(_required_string(arguments, "url"))
+        elif call.name == "browser.snapshot":
+            arguments = _exact_arguments(
+                call, required=frozenset(), optional=frozenset({"kind"})
+            )
+            kind = _optional_string(arguments, "kind", default="accessible")
+            if kind not in {"accessible", "text"}:
+                raise ValueError("Browser snapshot kind must be accessible or text.")
+            result = session.inspect(kind)  # type: ignore[arg-type]
+        elif call.name == "browser.click":
+            arguments = _exact_arguments(
+                call, required=frozenset({"selector"}), optional=frozenset()
+            )
+            result = session.click(_required_string(arguments, "selector"))
+        elif call.name == "browser.type":
+            arguments = _exact_arguments(
+                call,
+                required=frozenset({"selector", "text"}),
+                optional=frozenset({"clear"}),
+            )
+            clear = arguments.get("clear", True)
+            if not isinstance(clear, bool):
+                raise ValueError("Browser clear must be boolean.")
+            result = session.type(
+                _required_string(arguments, "selector"),
+                _required_string(arguments, "text", allow_empty=True),
+                clear=clear,
+            )
+        elif call.name == "browser.scroll":
+            arguments = _exact_arguments(
+                call,
+                required=frozenset({"deltaY"}),
+                optional=frozenset({"deltaX"}),
+            )
+            result = session.scroll(
+                _required_integer(arguments, "deltaY"),
+                delta_x=_optional_integer(arguments, "deltaX", default=0),
+            )
+        elif call.name == "browser.screenshot":
+            arguments = _exact_arguments(
+                call, required=frozenset({"path"}), optional=frozenset()
+            )
+            supplied = _required_string(arguments, "path")
+            target = self._file(supplied, must_exist=False)
+            before = _file_sha256(target) if target.exists() else None
+            relative = target.relative_to(self.workspace.root).as_posix()
+            result = session.screenshot(relative)
+            after = _file_sha256(target)
+            self.state.changed_files[relative] = ChangedFileReceipt(
+                path=relative,
+                before_sha256=(f"sha256:{before}" if before is not None else None),
+                after_sha256=f"sha256:{after}",
+            )
+        elif call.name == "browser.wait":
+            arguments = _exact_arguments(
+                call, required=frozenset({"milliseconds"}), optional=frozenset()
+            )
+            result = session.wait(_required_integer(arguments, "milliseconds"))
+        elif call.name == "browser.close":
+            _exact_arguments(call, required=frozenset(), optional=frozenset())
+            result = session.close()
+            self._browser = None
+        else:
+            raise ValueError("Unknown browser operation.")
+        return ToolResult(call.call_id, "ok", stable_json(result.as_json()), "application/json")
 
     def _list_files(self, call: ToolCall) -> ToolResult:
         arguments = _exact_arguments(
@@ -833,10 +1027,12 @@ class CodingAgentRunner:
         history: tuple[ConversationTurn, ...] = (),
         images: tuple[InferenceImage, ...] = (),
         mode: AgentMode | str = AgentMode.BUILD,
+        allow_private_browser: bool = False,
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
         policy = mode_policy(mode)
+        broker: WorkspaceExecutionBroker | None = None
         profile = self.providers.get(provider_name)
         session = self.state.create_session(
             metadata={
@@ -889,6 +1085,7 @@ class CodingAgentRunner:
                 allowed_executables=self.allowed_executables,
                 maximum_process_timeout_seconds=timeout,
                 mode=policy.mode,
+                allow_private_browser=allow_private_browser,
             )
             maximum_output_bytes = max(256, min(4_194_304, max_output_tokens * 4))
             orchestrator = AgentOrchestrator(
@@ -941,6 +1138,9 @@ class CodingAgentRunner:
                     f"Session cleanup also failed with {type(cleanup_error).__name__}."
                 )
             raise
+        finally:
+            if broker is not None:
+                broker.close()
 
     async def _advance(
         self,
@@ -1137,6 +1337,13 @@ def _optional_string(arguments: dict[str, object], name: str, *, default: str) -
 
 def _optional_integer(arguments: dict[str, object], name: str, *, default: int) -> int:
     value = arguments.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer.")
+    return value
+
+
+def _required_integer(arguments: dict[str, object], name: str) -> int:
+    value = arguments.get(name)
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an integer.")
     return value

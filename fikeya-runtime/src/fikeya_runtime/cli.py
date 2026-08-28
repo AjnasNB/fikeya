@@ -182,6 +182,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Read one bounded start message and exact approval decisions as JSON Lines.",
     )
     agent_execute.add_argument("--allow-network", action="store_true")
+    agent_execute.add_argument(
+        "--allow-private-browser",
+        action="store_true",
+        help=(
+            "Permit explicitly approved browser actions to private or loopback hosts. "
+            "Off by default."
+        ),
+    )
     agent_execute.add_argument("--timeout", type=float, default=60.0)
     agent_execute.add_argument("--max-output-tokens", type=int, default=1_024)
     agent_execute.add_argument(
@@ -859,6 +867,7 @@ def _run_coding_agent(
                     history=history,
                     images=images,
                     mode=args.mode,
+                    allow_private_browser=args.allow_private_browser,
                 )
             )
     except ProviderConnectivityError as error:
