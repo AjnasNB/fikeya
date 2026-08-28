@@ -2158,7 +2158,10 @@ def _lease_seconds(value: float) -> float:
 
 def _is_transient_sqlite_lock(error: sqlite3.OperationalError) -> bool:
     code = getattr(error, "sqlite_errorcode", None)
-    if code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+    # SQLite has kept BUSY=5 and LOCKED=6 stable since the result-code API was
+    # introduced. Mask extended codes to their primary result code. Python 3.10
+    # does not expose sqlite3.SQLITE_BUSY/sqlite3.SQLITE_LOCKED as attributes.
+    if isinstance(code, int) and code & 0xFF in {5, 6}:
         return True
     message = str(error).casefold()
     return "database is locked" in message or "database table is locked" in message
