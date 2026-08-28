@@ -199,7 +199,7 @@ class PathTests(unittest.TestCase):
                     "id": "runtime",
                     "kind": "python",
                     "path": "fikeya-runtime",
-                    "version": "0.1.0b6",
+                    "version": "0.1.0b7",
                     "constraints": "scripts/fikeya/runtime-constraints.txt",
                 }
             ],
