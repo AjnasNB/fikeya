@@ -37,11 +37,13 @@ The integrated runtime provides canonical workspace file operations with SHA-256
 - Provider HTTP responses, redirects, timeouts, and response sizes are bounded.
 - Ordinary configuration and tests do not contact a provider unless the user explicitly invokes a network operation.
 
-### Browser and crawler preset boundary
+### Native browser and external crawler boundaries
 
-Browser and crawler presets are configuration only. They start disabled, are bound to the exact reviewed manifest digest when enabled, and do not start a child merely by being listed or enabled.
+Native Playwright browser actions are available only through typed, approval-gated tool calls. The runtime bounds URLs, selectors, typed input, navigation and wait time, response text, screenshots, action count, and session lifetime. It strips URL credentials, blocks unsafe schemes, treats page content as untrusted, disables downloads and service workers, and requires a separate explicit opt-in for private or loopback navigation. Browser cancellation closes the dedicated session; a non-wait action may acknowledge cancellation only after its already-bounded Playwright timeout returns.
 
-The preset loader uses a fixed executable without a shell, a minimal environment, root-bound metadata, and bounded request/response/session limits. Complete MCP framing, upstream robots/redirect/network policy, provenance verification, and forced child termination on protocol failure remain caller responsibilities.
+The beta.5 Windows x64 Desktop and VSIX runtime embed one pinned Chromium Headless Shell payload and verify its version, file set, digest, and required licenses. The source and standalone CLI paths must install the Runtime `browser` extra and provision the matching browser separately. No embedded browser package is shipped for macOS, Linux, or ARM64.
+
+Cockroach Browser and Cockroach Crawler presets remain configuration only. They start disabled, bind enablement to an exact reviewed manifest digest, and do not start a child merely by being listed or enabled. Their loader uses a fixed executable without a shell, a minimal environment, root-bound metadata, and bounded request/response/session limits. Complete MCP framing, crawler robots and redirect policy, provenance verification, and forced child termination on protocol failure remain caller responsibilities.
 
 ### Memory and privacy boundary
 
@@ -53,7 +55,7 @@ The Qarinah sidecar is root-bound, imposes request-size and response-shape limit
 
 The integrated provider path records request and response hashes, byte counts, latency, status, provider/model identifiers, and exact provider-reported input/output/cache tokens when present. Missing usage is recorded as `unavailable`; it is not estimated.
 
-This is not yet a complete record of patches, affected paths, tests, sandbox identity, or tool outcomes because the full agent-core/execution-broker path is not integrated.
+The integrated coding and Project paths now bind exact approvals, affected-file identities, process and browser outcomes, test evidence, plan and audit digests, and deterministic workspace snapshots into content-free receipts. This is still not a transactional patch log, filesystem rollback system, or proof of OS sandbox identity. A successful pre-execution approval is never presented as a successful tool outcome.
 
 ## Standalone component enforcement
 
@@ -129,6 +131,8 @@ Before a stable release, tests must cover:
 - extension/plugin manifest and hash failure.
 
 Passing focused component tests does not satisfy this gate until the integrated Desktop/CLI path exercises the same boundaries on supported platforms.
+
+The beta.5 release workflow signs and verifies the outer Windows installer only. Nested executables, the VSIX, wheels, and source distributions are covered by hashes and release provenance, not claimed to carry independent Authenticode signatures. macOS, Linux, and ARM64 installers are not currently shipped.
 
 ## Vulnerability reporting
 

@@ -4,7 +4,7 @@ Fikeya Agent Core is the first native, provider-neutral coding-agent orchestrati
 session through `plan -> act -> observe -> review`, pauses every proposed tool call for an explicit approval, and delegates all
 execution to an injected broker.
 
-This is an alpha orchestration kernel. It is not a complete IDE agent and does not claim feature parity with Claude Code,
+This is a beta orchestration component. It is not by itself a complete IDE agent and does not claim feature parity with Claude Code,
 Codex, Cursor, Deep Agents, or any other agent product.
 
 ## Implemented
@@ -113,7 +113,7 @@ not truth or prompt-injection immunity. Tools remain brokered and approval-gated
 
 ## LangGraph and Deep Agents
 
-This alpha does not bundle LangGraph or Deep Agents. Their official public APIs are the only acceptable basis for a future
+This beta does not bundle LangGraph or Deep Agents. Their official public APIs are the only acceptable basis for a future
 optional adapter; Fikeya will not copy private middleware or checkpoint internals. Keeping them optional preserves offline tests
 and prevents an upstream harness from bypassing Fikeya's broker and approval boundaries.
 
@@ -129,6 +129,6 @@ demonstrate that official LangGraph interrupts/checkpointers or Deep Agents tool
 - Subagents, repository maps, symbol indexes, compaction, skills, or agent marketplaces.
 - Remote or multi-tenant checkpoint storage, event retention, billing, or enterprise administration.
 - A LangGraph or Deep Agents adapter.
-- Desktop, CLI, interop-gateway, and Qarinah-sidecar wiring.
+- The package does not bundle Desktop, CLI, interop-gateway, or Qarinah-sidecar code. Fikeya Runtime and the Desktop extension integrate the core through its public provider, broker, checkpoint, approval, cancellation, and event interfaces.
 
 See [SECURITY.md](SECURITY.md) before connecting a real provider or execution broker.

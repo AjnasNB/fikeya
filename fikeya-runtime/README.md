@@ -14,7 +14,8 @@ silently send project content to a model, or persist API keys in JSON or SQLite.
 ```console
 python -m venv .venv
 .venv\Scripts\python -m pip install -e "../fikeya-agent-core"
-.venv\Scripts\python -m pip install -e ".[azure,test]"
+.venv\Scripts\python -m pip install -e ".[azure,browser,test]"
+.venv\Scripts\python -m playwright install chromium-headless-shell
 .venv\Scripts\python -m pytest
 ```
 
@@ -115,6 +116,34 @@ printf '%s' "Continue the current implementation" | fikeya agent run . \
 Use `--memory required` to stop before contacting the model when cited project
 context cannot be prepared. Use `--memory off` for a deliberately memory-free
 turn.
+
+## Run a durable audited project
+
+`fikeya project` drives one bounded, restart-resumable lifecycle:
+
+```text
+plan -> audit plan -> execute -> audit code -> verify -> completed
+```
+
+The goal enters through the JSON-lines protocol on standard input. The runtime
+persists the exact plan, audit envelopes, one-use approvals, deterministic
+workspace snapshot, verification criteria, transition history, leases, and
+content-free evidence digests. It can resume after a normal restart or a stale
+lease takeover. It does not run forever: cancellation, a denied approval,
+exhausted transition or retry limits, repeated lack of progress, failed evidence
+binding, or a safety boundary stops the run.
+
+```console
+fikeya project start . --provider work --protocol-stdin --json-lines --allow-network
+fikeya project show run_example --workspace . --json
+fikeya project resume run_example --workspace . --provider work --protocol-stdin --json-lines --allow-network
+fikeya project cancel run_example --workspace . --json
+```
+
+Plan review and tool approval remain separate decisions. Resuming requires the
+same goal identity, and execution cannot reach `completed` until the plan audit,
+code audit, and final verification agree with the same plan and workspace
+evidence.
 
 ## Propose, review, and run a durable plan
 
@@ -260,6 +289,24 @@ dry-run mode. Real execution additionally requires all of the following:
 
 Changing an argument, directory, or environment key invalidates the approval.
 
+### Native browser verification
+
+Build and Project runs can use typed `browser.navigate`, `browser.snapshot`,
+`browser.click`, `browser.type`, `browser.scroll`, `browser.wait`,
+`browser.assert_text`, `browser.screenshot`, and `browser.close` calls. Each
+side-effecting or workspace-writing action remains bound to the reviewed plan and
+its exact approval. The browser runs in a dedicated Playwright session with
+bounded navigation, selectors, typed input, page text, screenshots, time, and
+action count. URL credentials and unsafe schemes are rejected, web content stays
+untrusted, and private or loopback navigation requires the explicit
+`--allow-private-browser` opt-in.
+
+The beta.5 Windows x64 Desktop and Windows x64 VSIX embed the reviewed Chromium
+Headless Shell payload. The standalone CLI wheel does not contain a browser
+binary. Source and CLI users install the `browser` extra and provision the pinned
+Playwright browser as shown in the development setup. Fikeya does not currently
+ship macOS, Linux, Windows ARM64, or macOS ARM64 installers.
+
 ### Reviewed external tool presets
 
 Fikeya Runtime ships configuration-only presets for separately installed
@@ -291,7 +338,7 @@ responsible for MCP message framing, cancellation, and terminating the child
 on a protocol failure.
 
 External executable provenance and version verification is intentionally an
-explicit diagnostic warning in this alpha. On Windows, `.cmd`, `.bat`, and
+explicit diagnostic warning in this beta. On Windows, `.cmd`, `.bat`, and
 PowerShell shims are rejected because the no-shell boundary requires a native
 executable entry point.
 

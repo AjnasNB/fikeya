@@ -1,6 +1,6 @@
 # Fikeya interoperability gateway
 
-This alpha package gives Fikeya one bounded interface for local coding agents and tools:
+This beta package gives Fikeya one bounded interface for local coding agents and tools:
 
 - Agent Client Protocol (ACP) agents through the official `agent-client-protocol` Python SDK.
 - Codex app-server through its stable local JSONL stdio protocol.
@@ -58,7 +58,7 @@ surface so callers do not depend directly on upstream SDK objects.
 
 ## Current limits
 
-- Local stdio only. Remote ACP, MCP, and Codex WebSocket transports are intentionally excluded from this alpha.
+- Local stdio only. Remote ACP, MCP, and Codex WebSocket transports are intentionally excluded from this beta.
 - ACP terminal callbacks are disabled. Commands must route through Fikeya's execution broker.
 - MCP annotations are untrusted hints. A tool is treated as side-effecting unless it explicitly marks itself read-only, and the
   allowlist still applies.
