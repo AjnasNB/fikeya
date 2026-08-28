@@ -45,6 +45,7 @@ from .inference import (
     ProviderExecutor,
     provider_request_fingerprint,
 )
+from .modes import AgentMode, ModePolicy, mode_policy
 from .providers import ProviderProfile, ProviderStore
 from .qarinah import select_qarinah_adapter
 from .state import StateStore
@@ -230,6 +231,7 @@ class WorkspaceExecutionBroker:
         *,
         allowed_executables: frozenset[str] = _DEFAULT_ALLOWED_EXECUTABLES,
         maximum_process_timeout_seconds: float = 120.0,
+        mode: AgentMode | str = AgentMode.BUILD,
     ) -> None:
         if (
             isinstance(maximum_process_timeout_seconds, bool)
@@ -240,6 +242,7 @@ class WorkspaceExecutionBroker:
             )
         self.workspace = workspace
         self.state = _BrokerState()
+        self.mode_policy: ModePolicy = mode_policy(mode)
         self.maximum_process_timeout_seconds = maximum_process_timeout_seconds
         self._process_broker = ToolBroker(
             boundary=workspace.boundary,
@@ -253,7 +256,7 @@ class WorkspaceExecutionBroker:
         self, cancellation: CancellationToken
     ) -> tuple[ToolDefinition, ...]:
         cancellation.raise_if_cancelled()
-        return (
+        tools = (
             ToolDefinition(
                 "workspace.list_files",
                 "List bounded project-relative files. Generated and metadata directories are omitted.",
@@ -339,6 +342,7 @@ class WorkspaceExecutionBroker:
                 },
             ),
         )
+        return tuple(tool for tool in tools if self.mode_policy.allows(tool.name))
 
     async def execute(
         self,
@@ -351,6 +355,14 @@ class WorkspaceExecutionBroker:
         cached = self.state.results.get(idempotency_key)
         if cached is not None:
             return cached
+        if not self.mode_policy.allows(call.name):
+            result = ToolResult(
+                call.call_id,
+                "error",
+                f"Tool is unavailable in {self.mode_policy.mode.value} mode.",
+            )
+            self.state.results[idempotency_key] = result
+            return result
         try:
             if call.name == "workspace.list_files":
                 result = self._list_files(call)
@@ -820,13 +832,16 @@ class CodingAgentRunner:
         context_max_characters: int = 12_000,
         history: tuple[ConversationTurn, ...] = (),
         images: tuple[InferenceImage, ...] = (),
+        mode: AgentMode | str = AgentMode.BUILD,
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
+        policy = mode_policy(mode)
         profile = self.providers.get(provider_name)
         session = self.state.create_session(
             metadata={
                 "mode": "coding-agent",
+                "agentMode": policy.mode.value,
                 "model": profile.model,
                 "provider": profile.name,
                 "priorConversationTurns": len(history),
@@ -873,6 +888,7 @@ class CodingAgentRunner:
                 self.workspace,
                 allowed_executables=self.allowed_executables,
                 maximum_process_timeout_seconds=timeout,
+                mode=policy.mode,
             )
             maximum_output_bytes = max(256, min(4_194_304, max_output_tokens * 4))
             orchestrator = AgentOrchestrator(

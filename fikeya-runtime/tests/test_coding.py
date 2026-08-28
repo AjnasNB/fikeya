@@ -16,6 +16,7 @@ from fikeya_agent_core import ApprovalDecision, CancellationToken, ToolCall
 from fikeya_runtime.coding import CodingAgentRunner, WorkspaceExecutionBroker
 from fikeya_runtime.credentials import CredentialResolver
 from fikeya_runtime.inference import JsonResponse, ProviderExecutor
+from fikeya_runtime.modes import AgentMode
 from fikeya_runtime.providers import ProviderKind, ProviderStore, build_profile
 from fikeya_runtime.workspace import initialize_workspace
 
@@ -215,6 +216,81 @@ def test_coding_loop_inspects_edits_tests_and_returns_structured_outcome(
         assert connection.execute(
             "SELECT COUNT(*) FROM provider_call_receipts"
         ).fetchone() == (7,)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_tools"),
+    [
+        (
+            AgentMode.ASK,
+            {
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+            },
+        ),
+        (
+            AgentMode.PLAN,
+            {
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+            },
+        ),
+        (
+            AgentMode.REVIEW,
+            {
+                "workspace.list_files",
+                "workspace.read_file",
+                "workspace.search_text",
+                "process.run",
+            },
+        ),
+    ],
+)
+def test_non_build_modes_expose_only_their_mechanical_tool_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: AgentMode,
+    expected_tools: set[str],
+) -> None:
+    root = tmp_path / mode.value
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    broker = WorkspaceExecutionBroker(workspace, mode=mode)
+    tools = _run(broker.list_tools(CancellationToken()), monkeypatch)
+    assert {tool.name for tool in tools} == expected_tools
+
+
+def test_review_mode_rejects_a_forged_write_call_even_if_execution_is_invoked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "review"
+    root.mkdir()
+    target = root / "answer.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    workspace, _ = initialize_workspace(root)
+    broker = WorkspaceExecutionBroker(workspace, mode=AgentMode.REVIEW)
+    result = _run(
+        broker.execute(
+            ToolCall(
+                "write:forged",
+                "workspace.write_file",
+                {
+                    "content": "VALUE = 2\n",
+                    "expectedSha256": None,
+                    "path": "answer.py",
+                },
+            ),
+            CancellationToken(),
+            idempotency_key="review-forged-write",
+        ),
+        monkeypatch,
+    )
+    assert result.status == "error"
+    assert result.output == "Tool is unavailable in review mode."
+    assert target.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
 def test_denied_edit_leaves_the_file_unchanged(
