@@ -13,8 +13,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,11 +23,12 @@ from fikeya_agent_core import ApprovalDecision
 from fikeya_runtime.autonomy import (
     AUTONOMY_REVIEW_PROTOCOL,
     AutonomousProjectLoop,
-    AutonomyStore,
     AutonomyLimits,
     AutonomyProtocolError,
     AutonomyStage,
+    AutonomyStore,
     ProviderOptions,
+    _AutonomyLeaseGuard,
     decode_audit_result,
 )
 from fikeya_runtime.errors import CancellationError, StateError
@@ -695,78 +695,41 @@ def test_active_lease_rejects_concurrent_advance_without_duplicate_provider_call
     assert control.lease_owner is None
 
 
-def test_transient_heartbeat_lock_does_not_cancel_an_active_run(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, plans = _workspace(tmp_path)
-    planner = _BlockingPlanner()
-    coding = _FakeCodingRunner([])
-    loop = AutonomousProjectLoop(
-        workspace,
-        planner,
-        coding,
-        plans=plans,
-        lease_seconds=2,
-        heartbeat_seconds=0.05,
-    )
-    started = loop.start("Survive one transient SQLite heartbeat lock.")
-    injected = threading.Event()
-    original_heartbeat = loop.store.heartbeat
+def test_transient_heartbeat_lock_is_tolerated_only_until_lease_expiry() -> None:
+    class LockedStore:
+        def __init__(self) -> None:
+            self.current = 100.0
 
-    def heartbeat_with_one_transient_lock(
-        run_id: str,
-        owner: str,
-        *,
-        lease_seconds: float,
-    ) -> str | None:
-        if (
-            threading.current_thread().name.startswith("fikeya-autonomy-")
-            and not injected.is_set()
-        ):
-            injected.set()
+        def now(self) -> float:
+            return self.current
+
+        def heartbeat(
+            self,
+            _run_id: str,
+            _owner: str,
+            *,
+            lease_seconds: float,
+        ) -> str | None:
+            assert lease_seconds == 15
             raise sqlite3.OperationalError("database is locked")
-        return original_heartbeat(
-            run_id,
-            owner,
-            lease_seconds=lease_seconds,
-        )
 
-    monkeypatch.setattr(loop.store, "heartbeat", heartbeat_with_one_transient_lock)
-    monkeypatch.setattr(socket.socket, "connect", _ORIGINAL_SOCKET_CONNECT)
-    results: list[object] = []
-    failures: list[BaseException] = []
+    store = LockedStore()
+    cancellation = CancellationToken()
+    guard = _AutonomyLeaseGuard(  # type: ignore[arg-type]
+        store,
+        "aut_transient_lock",
+        "lease_transient_lock",
+        cancellation,
+        lease_seconds=15,
+        heartbeat_seconds=0.5,
+    )
 
-    def run_active() -> None:
-        try:
-            results.append(
-                asyncio.run(
-                    loop.advance(
-                        started.run_id,
-                        goal="Survive one transient SQLite heartbeat lock.",
-                        provider=_options(),
-                        cancellation=CancellationToken(),
-                        approval_handler=_approve,
-                    )
-                )
-            )
-        except BaseException as error:  # noqa: BLE001 - asserted below.
-            failures.append(error)
+    assert guard.poll() is None
+    assert not cancellation.cancelled
 
-    thread = threading.Thread(target=run_active, daemon=True)
-    thread.start()
-    assert planner.entered.wait(5)
-    assert injected.wait(5)
-    assert thread.is_alive()
-
-    pending = loop.cancel(started.run_id, "transient lock test cleanup")
-    assert pending.stage is AutonomyStage.PLAN
-    thread.join(timeout=8)
-    assert not thread.is_alive()
-    assert failures == []
-    assert len(results) == 1
-    assert results[0].stage is AutonomyStage.STOPPED
-    assert results[0].stop_reason == "transient lock test cleanup"
+    store.current += 15
+    with pytest.raises(StateError, match="could not be renewed before expiry"):
+        guard.poll()
 
 
 def test_separate_process_cancel_waits_for_active_provider_acknowledgement(
