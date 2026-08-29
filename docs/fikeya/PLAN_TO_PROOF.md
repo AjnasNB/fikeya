@@ -31,11 +31,11 @@ Fikeya optimizes for verified work per token. It selects bounded, cited project 
 
 ### Enterprise administrator
 
-- Uses the separate private Maqam control plane for identity, policy, provider and model allowlists, budgets, revocation, central approvals, and audit export.
+- Uses Fikeya Enterprise, the separate private control plane for identity, policy, provider and model allowlists, budgets, revocation, central approvals, and audit export.
 - Does not receive a copy of source code or chat bodies by default. Endpoints disclose only the policy and evidence fields the organization has configured.
 - Can require human approval before high-risk execution and can stop or revoke an endpoint.
 
-The public Fikeya runtime remains useful without Maqam. The enterprise boundary must not be simulated in the public client with a fake administrator selector.
+The public Fikeya runtime remains useful without Fikeya Enterprise. The enterprise boundary must not be simulated in the public client with a fake administrator selector.
 
 ## Canonical flow
 
@@ -163,7 +163,7 @@ The provider proposal receipt separately records the provider call identity, pro
 
 ## Enterprise control boundary
 
-Maqam is the optional private enterprise model gateway and agent safety/policy layer. It may add:
+Fikeya Enterprise is the optional private model gateway and agent safety/policy layer. Its internal service and package names remain implementation details behind a versioned Fikeya endpoint contract. It may add:
 
 - SSO and directory-provisioned identity;
 - tenant and project policy;
@@ -182,7 +182,7 @@ Policy distribution and central approval do not replace endpoint enforcement. A 
 - **Product** - code-first and agent-first layouts, Plan-to-proof workflow, Qarinah context, providers, and tools.
 - **Proof** - reproducible fixtures, task receipts, benchmark method, security checks, and scoped results.
 - **Docs** - install, initialize, configure a provider, run the first task, inspect the graph, and troubleshoot.
-- **Enterprise** - Maqam safety/policy layer, deployment boundary, administrator workflow, and contact path.
+- **Enterprise** - Fikeya Enterprise safety/policy layer, deployment boundary, administrator workflow, and contact path.
 - **Download** - Windows, VSIX, and CLI artifacts with version, checksums, signature state, and platform requirements.
 
 The home page may call the editor free only with the nearby explanation that provider or infrastructure usage can still incur charges. It must not claim Fikeya is the only free editor.
