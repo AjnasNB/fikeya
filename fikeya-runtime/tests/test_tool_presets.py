@@ -27,6 +27,83 @@ from fikeya_runtime.tool_presets import (
 from fikeya_runtime.workspace import initialize_workspace
 
 
+_NPM_PRESET_FIXTURES = {
+    "cockroach-browser": {
+        "package": "cockroach-browser",
+        "version": "0.4.1",
+        "entrypoint": "dist/cli.js",
+    },
+    "cockroach-crawler": {
+        "package": "cockroach-crawler",
+        "version": "0.7.0",
+        "entrypoint": "bin/cockroach-mcp.js",
+    },
+}
+
+
+def _npm_cmd_install(
+    tmp_path: Path,
+    preset_id: str,
+    *,
+    layout: str = "local",
+    version: str | None = None,
+    target: str | None = None,
+    shim_body: str | None = None,
+) -> tuple[Path, Path]:
+    fixture = _NPM_PRESET_FIXTURES[preset_id]
+    package_name = fixture["package"]
+    entrypoint_name = fixture["entrypoint"]
+    windows_entrypoint = entrypoint_name.replace("/", "\\")
+    command = preset_id if preset_id == "cockroach-browser" else "cockroach-mcp"
+    prefix = tmp_path / f"npm-{layout}-{preset_id}"
+    if layout == "local":
+        package_root = prefix / "node_modules" / package_name
+        bin_root = prefix / "node_modules" / ".bin"
+        target_fragment = f"..\\{package_name}\\{windows_entrypoint}"
+    elif layout == "global":
+        package_root = prefix / "node_modules" / package_name
+        bin_root = prefix
+        target_fragment = f"node_modules\\{package_name}\\{windows_entrypoint}"
+    else:
+        raise AssertionError(f"unexpected npm test layout: {layout}")
+    entrypoint = package_root / entrypoint_name
+    entrypoint.parent.mkdir(parents=True, exist_ok=True)
+    entrypoint.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    (package_root / "package.json").write_text(
+        json.dumps(
+            {
+                "name": package_name,
+                "version": version or fixture["version"],
+                "bin": {command: entrypoint_name},
+            }
+        ),
+        encoding="utf-8",
+    )
+    bin_root.mkdir(parents=True, exist_ok=True)
+    shim = bin_root / f"{command}.cmd"
+    selected_target = target or target_fragment
+    generated = (
+        "@ECHO off\r\n"
+        "GOTO start\r\n"
+        ":find_dp0\r\n"
+        "SET dp0=%~dp0\r\n"
+        "EXIT /b\r\n"
+        ":start\r\n"
+        "SETLOCAL\r\n"
+        "CALL :find_dp0\r\n\r\n"
+        'IF EXIST "%dp0%\\node.exe" (\r\n'
+        '  SET "_prog=%dp0%\\node.exe"\r\n'
+        ") ELSE (\r\n"
+        '  SET "_prog=node"\r\n'
+        "  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n"
+        ")\r\n\r\n"
+        "endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "
+        f'"%_prog%"  "%dp0%\\{selected_target}" %*\r\n'
+    )
+    shim.write_text(shim_body or generated, encoding="utf-8", newline="")
+    return shim, entrypoint.resolve()
+
+
 def test_cli_lists_disabled_presets_and_requires_workspace_confirmation(
     tmp_path: Path,
     capsys: object,
@@ -355,6 +432,148 @@ def test_prepare_and_spawn_are_shell_free_and_never_invoke_a_real_tool(
         assert captured["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         assert captured["start_new_session"] is True
+
+
+@pytest.mark.parametrize(
+    ("preset_id", "layout"),
+    [("cockroach-browser", "local"), ("cockroach-crawler", "global")],
+)
+def test_prepare_launch_unwraps_reviewed_npm_cmd_shims_without_a_shell(
+    tmp_path: Path, preset_id: str, layout: str
+) -> None:
+    root = tmp_path / f"project-{preset_id}"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    preset = PresetCatalog().get(preset_id)
+    ToolEnablementStore(workspace).enable(preset, confirmed=True)
+    shim, entrypoint = _npm_cmd_install(tmp_path, preset_id, layout=layout)
+    loader = ToolPresetLoader()
+    kwargs: dict[str, object] = {
+        "configuration": (
+            {"COCKROACH_ALLOWED_ORIGINS": "https://example.com"}
+            if preset_id == "cockroach-crawler"
+            else {"COCKROACH_BROWSER_URL": "http://127.0.0.1:43110"}
+        ),
+        "executable_resolver": lambda _command: str(shim),
+    }
+    if preset_id == "cockroach-browser":
+        kwargs["secret_resolver"] = lambda _name: "ephemeral-test-token"
+
+    plan = loader.prepare_launch(workspace, preset_id, **kwargs)
+
+    assert Path(plan.argv[0]).name.casefold() in {"node", "node.exe"}
+    assert plan.argv[1] == str(entrypoint)
+    assert plan.argv[2:] == (("mcp",) if preset_id == "cockroach-browser" else ())
+    assert plan.npm_shim == shim.resolve()
+    assert (
+        loader.diagnostic(
+            preset, executable_resolver=lambda _command: str(shim)
+        ).executable_found
+        is True
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_process_factory(argv: list[str], **spawn_kwargs: object) -> object:
+        captured["argv"] = argv
+        captured.update(spawn_kwargs)
+        return object()
+
+    loader.spawn(plan, process_factory=fake_process_factory)
+    assert captured["argv"] == list(plan.argv)
+    assert captured["shell"] is False
+
+
+def test_npm_cmd_unwrap_rejects_arbitrary_batch_content(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    preset = PresetCatalog().get("cockroach-crawler")
+    ToolEnablementStore(workspace).enable(preset, confirmed=True)
+    shim, _entrypoint = _npm_cmd_install(
+        tmp_path,
+        preset.preset_id,
+        shim_body="@echo off\r\nnode attacker.js %*\r\n",
+    )
+    loader = ToolPresetLoader()
+
+    with pytest.raises(ToolPresetError, match="reviewed npm-generated form"):
+        loader.prepare_launch(
+            workspace,
+            preset.preset_id,
+            configuration={"COCKROACH_ALLOWED_ORIGINS": "https://example.com"},
+            executable_resolver=lambda _command: str(shim),
+        )
+    assert (
+        loader.diagnostic(
+            preset, executable_resolver=lambda _command: str(shim)
+        ).executable_found
+        is False
+    )
+
+
+def test_npm_cmd_unwrap_rejects_target_or_version_substitution(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    preset = PresetCatalog().get("cockroach-crawler")
+    ToolEnablementStore(workspace).enable(preset, confirmed=True)
+    wrong_target, _entrypoint = _npm_cmd_install(
+        tmp_path,
+        preset.preset_id,
+        target="..\\other-package\\bin\\cockroach-mcp.js",
+    )
+    loader = ToolPresetLoader()
+    with pytest.raises((OSError, ToolPresetError)):
+        loader.prepare_launch(
+            workspace,
+            preset.preset_id,
+            configuration={"COCKROACH_ALLOWED_ORIGINS": "https://example.com"},
+            executable_resolver=lambda _command: str(wrong_target),
+        )
+
+    wrong_version, _entrypoint = _npm_cmd_install(
+        tmp_path / "version",
+        preset.preset_id,
+        version="0.8.0",
+    )
+    with pytest.raises(ToolPresetError, match="outside the reviewed range"):
+        loader.prepare_launch(
+            workspace,
+            preset.preset_id,
+            configuration={"COCKROACH_ALLOWED_ORIGINS": "https://example.com"},
+            executable_resolver=lambda _command: str(wrong_version),
+        )
+
+
+def test_spawn_revalidates_npm_package_binding_after_prepare(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    preset = PresetCatalog().get("cockroach-crawler")
+    ToolEnablementStore(workspace).enable(preset, confirmed=True)
+    shim, entrypoint = _npm_cmd_install(tmp_path, preset.preset_id)
+    loader = ToolPresetLoader()
+    plan = loader.prepare_launch(
+        workspace,
+        preset.preset_id,
+        configuration={"COCKROACH_ALLOWED_ORIGINS": "https://example.com"},
+        executable_resolver=lambda _command: str(shim),
+    )
+    package_manifest = entrypoint.parents[1] / "package.json"
+    document = json.loads(package_manifest.read_text(encoding="utf-8"))
+    document["version"] = "0.8.0"
+    package_manifest.write_text(json.dumps(document), encoding="utf-8")
+    invoked = False
+
+    def fake_process_factory(*_args: object, **_kwargs: object) -> object:
+        nonlocal invoked
+        invoked = True
+        return object()
+
+    with pytest.raises(ToolPresetError, match="outside the reviewed range"):
+        loader.spawn(plan, process_factory=fake_process_factory)
+    assert invoked is False
 
 
 def test_unsafe_budget_is_rejected_before_process_factory(tmp_path: Path) -> None:

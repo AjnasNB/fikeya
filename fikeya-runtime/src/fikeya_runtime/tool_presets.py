@@ -54,6 +54,30 @@ _LIMIT_BOUNDS = {
 }
 _EXECUTABLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,79}$")
+_SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+_VERSION_RANGE = re.compile(
+    r"^>=(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*) "
+    r"<(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+)
+_NPM_CMD_SHIM = re.compile(
+    r"\A@ECHO off\n"
+    r"GOTO start\n"
+    r":find_dp0\n"
+    r"SET dp0=%~dp0\n"
+    r"EXIT /b\n"
+    r":start\n"
+    r"SETLOCAL\n"
+    r"CALL :find_dp0\n\n"
+    r'IF EXIST "%dp0%\\node\.exe" \(\n'
+    r'  SET "_prog=%dp0%\\node\.exe"\n'
+    r"\) ELSE \(\n"
+    r'  SET "_prog=node"\n'
+    r"  SET PATHEXT=%PATHEXT:;\.JS;=;%\n"
+    r"\)\n\n"
+    r"endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & "
+    r'"%_prog%" +"%dp0%\\(?P<target>[^"\r\n]+)" %\*\n?\Z',
+    re.IGNORECASE,
+)
 _SECRET_VALUE = re.compile(
     r"(?:sk-(?:or-)?[A-Za-z0-9_-]{16,}|nvapi-[A-Za-z0-9_-]{16,}|"
     r"-----BEGIN [A-Z ]+PRIVATE KEY-----)"
@@ -72,14 +96,16 @@ _SHELL_NAMES = {
     "zsh",
 }
 _PROVENANCE_WARNING = (
-    "Executable presence is checked by name only. Fikeya has not verified the "
-    "installed package provenance or the declared version range."
+    "Executable discovery is local only. Signed artifact provenance is not verified, "
+    "even when an npm shim's package identity, version, and bin target pass "
+    "structural validation."
 )
 
 _CONTRACTS: dict[str, dict[str, object]] = {
     "cockroach-browser": {
         "command": "cockroach-browser",
         "args": ["mcp"],
+        "npmEntrypoint": "dist/cli.js",
         "dependency": {
             "package": "cockroach-browser",
             "versionRange": ">=0.4.1 <0.5.0",
@@ -117,6 +143,7 @@ _CONTRACTS: dict[str, dict[str, object]] = {
     "cockroach-crawler": {
         "command": "cockroach-mcp",
         "args": [],
+        "npmEntrypoint": "bin/cockroach-mcp.js",
         "dependency": {
             "package": "cockroach-crawler",
             "versionRange": ">=0.7.0 <0.8.0",
@@ -236,6 +263,7 @@ class ToolLaunchPlan:
     cwd: Path
     limits: ToolLimits
     environment: Mapping[str, str] = field(repr=False, compare=False)
+    npm_shim: Path | None = field(default=None, repr=False, compare=False)
 
 
 class PresetCatalog:
@@ -416,9 +444,14 @@ class ToolPresetLoader:
         *,
         executable_resolver: Callable[[str], str | None] = shutil.which,
     ) -> ToolDiagnostic:
-        return ToolDiagnostic(
-            executable_found=executable_resolver(preset.command) is not None
-        )
+        executable = executable_resolver(preset.command)
+        if executable is None:
+            return ToolDiagnostic(executable_found=False)
+        try:
+            _resolve_launch_argv(preset, executable)
+        except (OSError, ToolPresetError):
+            return ToolDiagnostic(executable_found=False)
+        return ToolDiagnostic(executable_found=True)
 
     def prepare_launch(
         self,
@@ -462,14 +495,15 @@ class ToolPresetLoader:
             raise ToolPresetError(
                 f"Executable is not installed or not discoverable: {preset.command}"
             )
-        executable_path = _validate_resolved_executable(executable)
+        argv, npm_shim = _resolve_launch_argv(preset, executable)
         _validate_limits(preset.limits)
         return ToolLaunchPlan(
             preset_id=preset.preset_id,
-            argv=(str(executable_path), *preset.args),
+            argv=(*argv, *preset.args),
             cwd=workspace.root,
             environment=environment,
             limits=preset.limits,
+            npm_shim=npm_shim,
         )
 
     def spawn(
@@ -490,6 +524,14 @@ class ToolPresetLoader:
         executable = _validate_resolved_executable(plan.argv[0])
         if str(executable) != plan.argv[0]:
             raise ToolPresetError("Launch executable changed after plan validation.")
+        if plan.npm_shim is not None:
+            preset = self.catalog.get(plan.preset_id)
+            resolved_argv, resolved_shim = _resolve_launch_argv(preset, plan.npm_shim)
+            expected = (*resolved_argv, *preset.args)
+            if resolved_shim != plan.npm_shim or expected != plan.argv:
+                raise ToolPresetError(
+                    "npm executable binding changed after plan validation."
+                )
         try:
             process, process_tree = start_managed_process(
                 list(plan.argv),
@@ -794,6 +836,116 @@ def _validate_resolved_executable(value: str | Path) -> Path:
     if os.name != "nt" and not os.access(resolved, os.X_OK):
         raise ToolPresetError("Resolved executable is not executable by this user.")
     return resolved
+
+
+def _resolve_launch_argv(
+    preset: ToolPreset, value: str | Path
+) -> tuple[tuple[str, ...], Path | None]:
+    """Resolve a native executable or unwrap one exact npm-generated Windows shim."""
+
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ToolPresetError("Executable resolution must return an absolute path.")
+    resolved = path.resolve(strict=True)
+    if resolved.suffix.casefold() != ".cmd":
+        executable = _validate_resolved_executable(resolved)
+        return (str(executable),), None
+    node, entrypoint = _resolve_npm_cmd_shim(preset, resolved)
+    return (str(node), str(entrypoint)), resolved
+
+
+def _resolve_npm_cmd_shim(preset: ToolPreset, shim: Path) -> tuple[Path, Path]:
+    """Validate an npm-owned cmd shim, then return native Node plus its JS target."""
+
+    if shim.suffix.casefold() != ".cmd" or not shim.is_file():
+        raise ToolPresetError("Only an npm-generated .cmd shim can be unwrapped.")
+    if shim.name.casefold() != f"{preset.command}.cmd".casefold():
+        raise ToolPresetError(
+            "npm shim name does not match the reviewed preset command."
+        )
+    if shim.stat().st_size > 8 * 1024:
+        raise ToolPresetError("npm command shim exceeds the validation size limit.")
+    try:
+        text = shim.read_text(encoding="utf-8-sig")
+    except UnicodeError as error:
+        raise ToolPresetError("npm command shim must be UTF-8 text.") from error
+    match = _NPM_CMD_SHIM.fullmatch(text.replace("\r\n", "\n"))
+    if match is None:
+        raise ToolPresetError("Command shim is not the reviewed npm-generated form.")
+    fragment = match.group("target")
+    if "%" in fragment or ":" in fragment or fragment.startswith(("\\", "/")):
+        raise ToolPresetError("npm command shim contains an unsafe target path.")
+
+    contract = _CONTRACTS[preset.preset_id]
+    package_name = str(_object(contract["dependency"], "dependency")["package"])
+    entrypoint_name = str(contract["npmEntrypoint"])
+    package_roots = [shim.parent / "node_modules" / package_name]
+    if shim.parent.name.casefold() == ".bin":
+        package_roots.append(shim.parent.parent / package_name)
+    target = (shim.parent / Path(fragment.replace("\\", os.sep))).resolve(strict=True)
+    package_root: Path | None = None
+    expected_entrypoint: Path | None = None
+    for candidate in package_roots:
+        try:
+            canonical_root = candidate.resolve(strict=True)
+            canonical_entrypoint = (canonical_root / entrypoint_name).resolve(
+                strict=True
+            )
+        except OSError:
+            continue
+        if target == canonical_entrypoint and target.is_relative_to(canonical_root):
+            package_root = canonical_root
+            expected_entrypoint = canonical_entrypoint
+            break
+    if package_root is None or expected_entrypoint is None:
+        raise ToolPresetError(
+            "npm command shim does not target the reviewed package entrypoint."
+        )
+    _validate_npm_package(preset, package_root, entrypoint_name)
+
+    node_value = shutil.which("node.exe") or shutil.which("node")
+    if node_value is None:
+        raise ToolPresetError("A native Node.js executable is required for npm tools.")
+    node = _validate_resolved_executable(node_value)
+    if os.name == "nt" and node.suffix.casefold() != ".exe":
+        raise ToolPresetError("The npm tool requires a native node.exe executable.")
+    return node, expected_entrypoint
+
+
+def _validate_npm_package(
+    preset: ToolPreset, package_root: Path, entrypoint_name: str
+) -> None:
+    manifest_path = package_root / "package.json"
+    if not manifest_path.is_file() or manifest_path.stat().st_size > 256 * 1024:
+        raise ToolPresetError("npm package manifest is missing or too large.")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ToolPresetError("npm package manifest is invalid.") from error
+    if not isinstance(manifest, dict):
+        raise ToolPresetError("npm package manifest must be an object.")
+    dependency = _object(preset.dependency, "preset dependency")
+    if manifest.get("name") != dependency["package"]:
+        raise ToolPresetError("npm package name does not match the reviewed preset.")
+    version = manifest.get("version")
+    if not isinstance(version, str) or not _version_in_range(
+        version, str(dependency["versionRange"])
+    ):
+        raise ToolPresetError("npm package version is outside the reviewed range.")
+    bins = manifest.get("bin")
+    if not isinstance(bins, dict) or bins.get(preset.command) != entrypoint_name:
+        raise ToolPresetError("npm package bin mapping does not match the preset.")
+
+
+def _version_in_range(version: str, version_range: str) -> bool:
+    value = _SEMVER.fullmatch(version)
+    bounds = _VERSION_RANGE.fullmatch(version_range)
+    if value is None or bounds is None:
+        return False
+    parsed = tuple(int(part) for part in value.groups())
+    lower = tuple(int(part) for part in bounds.groups()[:3])
+    upper = tuple(int(part) for part in bounds.groups()[3:])
+    return lower <= parsed < upper
 
 
 def _validate_limits(limits: ToolLimits) -> None:
