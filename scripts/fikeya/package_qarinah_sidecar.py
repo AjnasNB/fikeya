@@ -22,6 +22,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "fikeya-runtime" / "src"))
 
 from fikeya_runtime.artifact import (
+    MAX_ARTIFACT_BYTES,
+    MAX_ARTIFACT_FILES,
     artifact_file_sha256,
     artifact_sha256,
     create_artifact_manifest,
@@ -33,9 +35,20 @@ PACKAGE_NAME = "@fikeya/qarinah-sidecar"
 PROTOCOL = "fikeya.qarinah-sidecar.v1"
 ARTIFACT_DIRECTORY = "qarinah-sidecar"
 BINDING_NAME = "qarinah-sidecar-binding.json"
+PACKAGE_JSON_PATH = "package.json"
+SIDECAR_PATH = "src/sidecar.mjs"
 FIXED_ZIP_TIME = (2020, 1, 1, 0, 0, 0)
+FIXED_ZIP_VERSION = 20
 RELEASE_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$")
 SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+WINDOWS_RESERVED_NAMES = {
+    "AUX",
+    "CON",
+    "NUL",
+    "PRN",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 class SidecarPackageError(ValueError):
@@ -52,6 +65,8 @@ def package_sidecar(
 ) -> Path:
     """Stage, attest, archive, and optionally execute the production sidecar."""
 
+    if source_root.is_symlink() or _is_reparse(source_root):
+        raise SidecarPackageError("Sidecar source root must not be a link.")
     source_root = source_root.resolve(strict=True)
     output_directory = output_directory.resolve()
     if not source_root.is_dir() or not output_directory.is_dir():
@@ -66,12 +81,20 @@ def package_sidecar(
         artifact_root = temporary_root / ARTIFACT_DIRECTORY
         artifact_root.mkdir()
         for name in ("LICENSE", "README.md", "package-lock.json", "package.json"):
-            _copy_regular_file(source_root / name, artifact_root / name)
-        _copy_regular_tree(source_root / "src", artifact_root / "src")
+            _copy_normalized_text_file(source_root / name, artifact_root / name)
+        _copy_regular_tree(
+            source_root / "src",
+            artifact_root / "src",
+            normalize_text=True,
+        )
         _copy_regular_tree(
             source_root / "node_modules",
             artifact_root / "node_modules",
-            excluded_names={".bin"},
+            # npm creates platform-specific command shims and a generated
+            # installation snapshot here. Neither is a runtime input: the
+            # sidecar imports Qarinah through Node's package resolver and the
+            # canonical top-level package-lock.json remains in the artifact.
+            excluded_names={".bin", ".package-lock.json"},
         )
 
         manifest = create_artifact_manifest(artifact_root)
@@ -83,21 +106,25 @@ def package_sidecar(
                 "deploymentBound": True,
                 "engines": package["engines"]["node"],
             },
-            "packageJsonPath": "package.json",
-            "packageJsonSha256": artifact_file_sha256(artifact_root / "package.json"),
+            "packageJsonPath": PACKAGE_JSON_PATH,
+            "packageJsonSha256": artifact_file_sha256(
+                artifact_root / PACKAGE_JSON_PATH
+            ),
             "packageName": PACKAGE_NAME,
             "protocol": PROTOCOL,
             "qarinahVersion": qarinah_version,
             "releaseVersion": release_version,
             "schema": BUNDLE_SCHEMA,
-            "sidecarPath": "src/sidecar.mjs",
+            "sidecarPath": SIDECAR_PATH,
             "sidecarSha256": artifact_file_sha256(
-                artifact_root / "src" / "sidecar.mjs"
+                artifact_root / SIDECAR_PATH
             ),
             "version": package["version"],
         }
         receipt_path = temporary_root / BINDING_NAME
-        receipt_path.write_text(stable_json(receipt) + "\n", encoding="utf-8")
+        receipt_path.write_text(
+            stable_json(receipt) + "\n", encoding="utf-8", newline="\n"
+        )
         _write_deterministic_zip(bundle_path, temporary_root)
 
     verify_sidecar_bundle(
@@ -122,8 +149,7 @@ def verify_sidecar_bundle(
     with tempfile.TemporaryDirectory(prefix="fikeya-qarinah-verify-") as temporary:
         extracted = Path(temporary)
         with zipfile.ZipFile(bundle_path) as archive:
-            _validate_zip_members(archive)
-            archive.extractall(extracted)
+            _extract_validated_zip(archive, extracted)
         receipt = _read_json_object(extracted / BINDING_NAME)
         if set(receipt) != {
             "artifactDirectory",
@@ -142,17 +168,36 @@ def verify_sidecar_bundle(
             "version",
         }:
             raise SidecarPackageError("Sidecar binding receipt keys are not exact.")
+        node = receipt["node"]
         if (
             receipt["schema"] != BUNDLE_SCHEMA
             or receipt["releaseVersion"] != expected_release_version
             or receipt["artifactDirectory"] != ARTIFACT_DIRECTORY
             or receipt["packageName"] != PACKAGE_NAME
             or receipt["protocol"] != PROTOCOL
+            or receipt["packageJsonPath"] != PACKAGE_JSON_PATH
+            or receipt["sidecarPath"] != SIDECAR_PATH
+            or not _is_exact_semver(receipt["version"])
+            or not _is_exact_semver(receipt["qarinahVersion"])
+            or not isinstance(node, dict)
+            or set(node) != {"deploymentBound", "engines"}
+            or node["deploymentBound"] is not True
+            or not _is_exact_text(node["engines"], max_bytes=128)
         ):
             raise SidecarPackageError("Sidecar binding receipt identity is invalid.")
-        artifact_root = extracted / ARTIFACT_DIRECTORY
-        package_json = artifact_root / str(receipt["packageJsonPath"])
-        sidecar = artifact_root / str(receipt["sidecarPath"])
+        try:
+            artifact_root = (extracted / ARTIFACT_DIRECTORY).resolve(strict=True)
+            package_json = (artifact_root / PACKAGE_JSON_PATH).resolve(strict=True)
+            sidecar = (artifact_root / SIDECAR_PATH).resolve(strict=True)
+        except OSError as error:
+            raise SidecarPackageError(
+                "Sidecar binding receipt path is invalid."
+            ) from error
+        if not (
+            package_json.is_relative_to(artifact_root)
+            and sidecar.is_relative_to(artifact_root)
+        ):
+            raise SidecarPackageError("Sidecar binding receipt path is invalid.")
         if (
             receipt["artifactManifest"] != create_artifact_manifest(artifact_root)
             or receipt["artifactSha256"] != artifact_sha256(artifact_root)
@@ -160,12 +205,15 @@ def verify_sidecar_bundle(
             or receipt["sidecarSha256"] != artifact_file_sha256(sidecar)
         ):
             raise SidecarPackageError("Sidecar binding receipt digest is invalid.")
-        package = _read_json_object(package_json)
+        package, installed_qarinah_version = _validate_source_identity(artifact_root)
         if (
             package.get("name") != PACKAGE_NAME
             or package.get("version") != receipt["version"]
             or not isinstance(package.get("dependencies"), dict)
             or package["dependencies"].get("qarinah") != receipt["qarinahVersion"]
+            or installed_qarinah_version != receipt["qarinahVersion"]
+            or not isinstance(package.get("engines"), dict)
+            or package["engines"].get("node") != node["engines"]
         ):
             raise SidecarPackageError("Sidecar package identity is invalid.")
         if run_smoke:
@@ -199,11 +247,11 @@ def _validate_source_identity(source_root: Path) -> tuple[dict[str, Any], str]:
     if (
         package.get("name") != PACKAGE_NAME
         or not isinstance(package.get("version"), str)
-        or SEMVER_PATTERN.fullmatch(package["version"]) is None
+        or not _is_exact_semver(package["version"])
         or not isinstance(qarinah_version, str)
-        or SEMVER_PATTERN.fullmatch(qarinah_version) is None
+        or not _is_exact_semver(qarinah_version)
         or not isinstance(engines, dict)
-        or not isinstance(engines.get("node"), str)
+        or not _is_exact_text(engines.get("node"), max_bytes=128)
         or not isinstance(lock_root, dict)
         or lock_root.get("version") != package["version"]
         or not isinstance(lock_qarinah, dict)
@@ -215,6 +263,23 @@ def _validate_source_identity(source_root: Path) -> tuple[dict[str, Any], str]:
             "Run locked npm ci: sidecar package, lock, and installed Qarinah differ."
         )
     return package, qarinah_version
+
+
+def _is_exact_text(value: object, *, max_bytes: int) -> bool:
+    return (
+        isinstance(value, str)
+        and value == value.strip()
+        and bool(value)
+        and len(value.encode("utf-8")) <= max_bytes
+    )
+
+
+def _is_exact_semver(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and _is_exact_text(value, max_bytes=128)
+        and SEMVER_PATTERN.fullmatch(value) is not None
+    )
 
 
 def _run_production_smoke(node: Path, sidecar: Path, receipt: dict[str, Any]) -> None:
@@ -368,8 +433,9 @@ def _copy_regular_tree(
     destination: Path,
     *,
     excluded_names: set[str] | None = None,
+    normalize_text: bool = False,
 ) -> None:
-    if not source.is_dir() or source.is_symlink():
+    if not source.is_dir() or source.is_symlink() or _is_reparse(source):
         raise SidecarPackageError(f"Required sidecar directory is invalid: {source}")
     destination.mkdir()
     excluded = excluded_names or set()
@@ -380,9 +446,12 @@ def _copy_regular_tree(
         if child.is_symlink() or _is_reparse(child):
             raise SidecarPackageError(f"Sidecar package contains a link: {child}")
         if child.is_dir():
-            _copy_regular_tree(child, target)
+            _copy_regular_tree(child, target, normalize_text=normalize_text)
         elif child.is_file():
-            _copy_regular_file(child, target)
+            if normalize_text:
+                _copy_normalized_text_file(child, target)
+            else:
+                _copy_regular_file(child, target)
         else:
             raise SidecarPackageError(f"Sidecar package path is not regular: {child}")
 
@@ -392,7 +461,22 @@ def _copy_regular_file(source: Path, destination: Path) -> None:
         raise SidecarPackageError(f"Required sidecar file is invalid: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
-    os.chmod(destination, stat.S_IMODE(source.stat().st_mode))
+    os.chmod(destination, 0o644)
+
+
+def _copy_normalized_text_file(source: Path, destination: Path) -> None:
+    if not source.is_file() or source.is_symlink() or _is_reparse(source):
+        raise SidecarPackageError(f"Required sidecar text file is invalid: {source}")
+    try:
+        content = source.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeDecodeError) as error:
+        raise SidecarPackageError(
+            f"Required sidecar text file is not valid UTF-8: {source}"
+        ) from error
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    destination.write_text(normalized, encoding="utf-8", newline="\n")
+    os.chmod(destination, 0o644)
 
 
 def _is_reparse(path: Path) -> bool:
@@ -416,31 +500,119 @@ def _write_deterministic_zip(destination: Path, source_root: Path) -> None:
         )
         for path in files:
             relative = path.relative_to(source_root).as_posix()
+            if not relative.isascii():
+                raise SidecarPackageError(
+                    "Sidecar bundle member names must be portable ASCII paths."
+                )
             info = zipfile.ZipInfo(relative, FIXED_ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3
-            info.external_attr = (stat.S_IMODE(path.stat().st_mode) & 0o777) << 16
+            info.create_version = FIXED_ZIP_VERSION
+            info.extract_version = FIXED_ZIP_VERSION
+            info.flag_bits = 0
+            info.internal_attr = 0
+            info.volume = 0
+            info.extra = b""
+            info.comment = b""
+            info.external_attr = (stat.S_IFREG | 0o644) << 16
             archive.writestr(info, path.read_bytes(), compresslevel=9)
 
 
-def _validate_zip_members(archive: zipfile.ZipFile) -> None:
+def _validated_zip_members(
+    archive: zipfile.ZipFile,
+) -> list[tuple[zipfile.ZipInfo, int]]:
+    if archive.comment:
+        raise SidecarPackageError("Sidecar bundle contains an unsafe comment.")
     names: set[str] = set()
+    portable_names: set[str] = set()
+    members: list[tuple[zipfile.ZipInfo, int]] = []
+    total_bytes = 0
     for info in archive.infolist():
         path = PurePosixPath(info.filename)
+        archived_mode = (info.external_attr >> 16) & 0xFFFF
+        file_type = stat.S_IFMT(archived_mode)
+        permissions = archived_mode & 0o777
+        portable_name = info.filename.casefold()
         if (
             info.filename in names
+            or portable_name in portable_names
             or path.is_absolute()
             or not path.parts
+            or not info.filename.isascii()
+            or not _is_bounded_utf8(info.filename, max_bytes=4_096)
+            or info.filename != path.as_posix()
             or any(part in {"", ".", ".."} for part in path.parts)
+            or any(not _is_portable_member_part(part) for part in path.parts)
             or "\\" in info.filename
-            or (info.external_attr >> 16) & 0o170000 == stat.S_IFLNK
+            or info.is_dir()
+            or info.create_system != 3
+            or info.create_version != FIXED_ZIP_VERSION
+            or info.extract_version != FIXED_ZIP_VERSION
+            or file_type != stat.S_IFREG
+            or permissions != 0o644
+            or info.date_time != FIXED_ZIP_TIME
+            or info.compress_type != zipfile.ZIP_DEFLATED
+            or info.flag_bits != 0
+            or info.internal_attr != 0
+            or info.volume != 0
+            or bool(info.extra)
+            or bool(info.comment)
         ):
             raise SidecarPackageError("Sidecar bundle contains an unsafe member.")
         names.add(info.filename)
+        portable_names.add(portable_name)
+        total_bytes += info.file_size
+        if (
+            len(members) >= MAX_ARTIFACT_FILES + 1
+            or total_bytes > MAX_ARTIFACT_BYTES + 2_097_152
+        ):
+            raise SidecarPackageError("Sidecar bundle exceeds its resource limits.")
+        members.append((info, permissions))
+    if [info.filename for info, _ in members] != sorted(names):
+        raise SidecarPackageError("Sidecar bundle member ordering is invalid.")
     if BINDING_NAME not in names or not any(
         name.startswith(f"{ARTIFACT_DIRECTORY}/") for name in names
     ):
         raise SidecarPackageError("Sidecar bundle is incomplete.")
+    return members
+
+
+def _is_portable_member_part(value: str) -> bool:
+    if (
+        not value
+        or any(ord(character) < 32 or character in '<>:"|?*' for character in value)
+        or value.endswith((".", " "))
+    ):
+        return False
+    stem = value.split(".", 1)[0].upper()
+    return stem not in WINDOWS_RESERVED_NAMES
+
+
+def _is_bounded_utf8(value: str, *, max_bytes: int) -> bool:
+    try:
+        return len(value.encode("utf-8", errors="strict")) <= max_bytes
+    except UnicodeEncodeError:
+        return False
+
+
+def _extract_validated_zip(archive: zipfile.ZipFile, destination: Path) -> None:
+    """Extract only validated regular files with canonical archive modes."""
+
+    for info, permissions in _validated_zip_members(archive):
+        relative = PurePosixPath(info.filename)
+        target = destination.joinpath(*relative.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with archive.open(info, "r") as source, target.open("xb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+            if target.stat().st_size != info.file_size:
+                raise SidecarPackageError("Sidecar bundle member size is invalid.")
+            if os.name != "nt":
+                os.chmod(target, permissions)
+        except (OSError, RuntimeError, zipfile.BadZipFile) as error:
+            raise SidecarPackageError(
+                "Sidecar bundle member could not be extracted safely."
+            ) from error
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

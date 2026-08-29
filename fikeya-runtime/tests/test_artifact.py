@@ -29,9 +29,6 @@ def test_artifact_manifest_is_content_free_sorted_and_deterministic(
     helper.write_bytes(b"print('bounded fixture')\n")
     executable.chmod(0o755)
     helper.chmod(0o644)
-    helper_mode = 0 if os.name == "nt" else helper.stat().st_mode & 0o777
-    executable_mode = 0 if os.name == "nt" else executable.stat().st_mode & 0o777
-
     manifest = create_artifact_manifest(root.resolve())
 
     assert manifest == {
@@ -40,13 +37,13 @@ def test_artifact_manifest_is_content_free_sorted_and_deterministic(
             {
                 "path": "lib/helper.py",
                 "size": len(b"print('bounded fixture')\n"),
-                "mode": helper_mode,
+                "mode": 0,
                 "sha256": sha256_text("print('bounded fixture')\n"),
             },
             {
                 "path": "qarinah",
                 "size": len(b"#!/usr/bin/env python3\n"),
-                "mode": executable_mode,
+                "mode": 0,
                 "sha256": sha256_text("#!/usr/bin/env python3\n"),
             },
         ],
@@ -57,18 +54,22 @@ def test_artifact_manifest_is_content_free_sorted_and_deterministic(
     assert artifact_sha256(root.resolve()) == artifact_sha256(root.resolve())
 
 
-def test_artifact_manifest_uses_platform_portable_modes(tmp_path: Path) -> None:
+def test_artifact_manifest_normalizes_host_file_modes(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     root.mkdir()
     artifact = root / "tool.cmd"
     artifact.write_bytes(b"@echo off\r\n")
 
-    entry = create_artifact_manifest(root.resolve())["files"][0]
+    initial_manifest = create_artifact_manifest(root.resolve())
+    initial_digest = artifact_sha256(root.resolve())
 
-    if os.name == "nt":
-        assert entry["mode"] == 0
-    else:
-        assert entry["mode"] == artifact.stat().st_mode & 0o777
+    artifact.chmod(0o755)
+    changed_manifest = create_artifact_manifest(root.resolve())
+    changed_digest = artifact_sha256(root.resolve())
+
+    assert initial_manifest["files"][0]["mode"] == 0
+    assert changed_manifest == initial_manifest
+    assert changed_digest == initial_digest
 
 
 def test_artifact_manifest_rejects_links_and_shared_hardlinks(tmp_path: Path) -> None:

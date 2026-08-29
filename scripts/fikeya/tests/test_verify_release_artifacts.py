@@ -12,9 +12,15 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
-from scripts.fikeya.package_qarinah_sidecar import package_sidecar
+from scripts.fikeya.package_qarinah_sidecar import (
+    BINDING_NAME,
+    SidecarPackageError,
+    package_sidecar,
+    verify_sidecar_bundle,
+)
 from scripts.fikeya.verify_release_artifacts import (
     CHECKSUM_NAME,
     CLI_INSTALL_NAME,
@@ -29,6 +35,12 @@ from scripts.fikeya.verify_release_artifacts import (
 PUBLIC_VERSION = "0.1.0-beta.8"
 EXTENSION_VERSION = "0.1.0-beta.8"
 EXPECTED_COMMIT = "a" * 40
+EXPECTED_SIDECAR_FIXTURE_ZIP_SHA256 = (
+    "3c37bc0040d70d41cf18fba2b6c9b3f628d98dbcaa52db907ecdc197955e45c3"
+)
+EXPECTED_SIDECAR_FIXTURE_ARTIFACT_SHA256 = (
+    "sha256:7292bc716462daff18c0f6e90e25eb8fa0080222dee2f876b18a5b13e940cdf9"
+)
 
 
 class ReleaseArtifactVerificationTests(unittest.TestCase):
@@ -100,6 +112,153 @@ class ReleaseArtifactVerificationTests(unittest.TestCase):
             )
 
             self.assertEqual(report["installerAuthenticodeStatus"], "not-present")
+
+    def test_sidecar_zip_is_stable_across_line_endings_and_source_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source_lf = root / "source-lf"
+            source_crlf = root / "source-crlf"
+            output_lf = root / "output-lf"
+            output_crlf = root / "output-crlf"
+            output_lf.mkdir()
+            output_crlf.mkdir()
+            _write_sidecar_source(source_lf)
+            shutil.copytree(source_lf, source_crlf)
+
+            owned_text = (
+                "LICENSE",
+                "README.md",
+                "package-lock.json",
+                "package.json",
+                "src/sidecar.mjs",
+            )
+            for relative in owned_text:
+                path = source_crlf / relative
+                path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+            (source_lf / "node_modules" / ".package-lock.json").write_text(
+                '{"host":"lf"}\n', encoding="utf-8"
+            )
+            (source_crlf / "node_modules" / ".package-lock.json").write_text(
+                '{"host":"crlf"}\r\n', encoding="utf-8"
+            )
+            for source, mode in ((source_lf, 0o755), (source_crlf, 0o600)):
+                shim = source / "node_modules" / ".bin" / "host-shim"
+                shim.parent.mkdir()
+                shim.write_text(f"host mode {mode:o}\n", encoding="utf-8")
+                for path in source.rglob("*"):
+                    if path.is_file():
+                        path.chmod(mode)
+
+            bundle_lf = package_sidecar(
+                source_lf, output_lf, PUBLIC_VERSION, run_smoke=False
+            )
+            bundle_crlf = package_sidecar(
+                source_crlf, output_crlf, PUBLIC_VERSION, run_smoke=False
+            )
+
+            self.assertEqual(
+                _zip_payloads(bundle_crlf),
+                _zip_payloads(bundle_lf),
+            )
+            self.assertEqual(bundle_crlf.read_bytes(), bundle_lf.read_bytes())
+            self.assertEqual(
+                _sha256(bundle_lf), EXPECTED_SIDECAR_FIXTURE_ZIP_SHA256
+            )
+            self.assertEqual(
+                _sidecar_receipt(bundle_lf)["artifactSha256"],
+                EXPECTED_SIDECAR_FIXTURE_ARTIFACT_SHA256,
+            )
+
+    def test_sidecar_verifier_rejects_noncanonical_zip_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            output = root / "output"
+            output.mkdir()
+            _write_sidecar_source(source)
+            bundle = package_sidecar(
+                source, output, PUBLIC_VERSION, run_smoke=False
+            )
+            tampered = root / "noncanonical.zip"
+
+            def mutate(
+                index: int, info: zipfile.ZipInfo, payload: bytes
+            ) -> tuple[zipfile.ZipInfo, bytes]:
+                if index == 0:
+                    info.external_attr = (0o100755) << 16
+                return info, payload
+
+            _rewrite_sidecar_zip(bundle, tampered, mutate)
+
+            with self.assertRaisesRegex(SidecarPackageError, "unsafe member"):
+                verify_sidecar_bundle(
+                    tampered,
+                    expected_release_version=PUBLIC_VERSION,
+                    run_smoke=False,
+                )
+
+    def test_sidecar_verifier_rejects_noncanonical_receipt_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            output = root / "output"
+            output.mkdir()
+            _write_sidecar_source(source)
+            bundle = package_sidecar(
+                source, output, PUBLIC_VERSION, run_smoke=False
+            )
+            tampered = root / "traversal.zip"
+
+            def mutate(
+                _index: int, info: zipfile.ZipInfo, payload: bytes
+            ) -> tuple[zipfile.ZipInfo, bytes]:
+                if info.filename == BINDING_NAME:
+                    receipt = json.loads(payload)
+                    receipt["sidecarPath"] = "../outside.mjs"
+                    payload = (
+                        json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+                        + "\n"
+                    ).encode("utf-8")
+                return info, payload
+
+            _rewrite_sidecar_zip(bundle, tampered, mutate)
+
+            with self.assertRaisesRegex(SidecarPackageError, "identity is invalid"):
+                verify_sidecar_bundle(
+                    tampered,
+                    expected_release_version=PUBLIC_VERSION,
+                    run_smoke=False,
+                )
+
+    def test_sidecar_packager_rejects_linked_source_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            linked = root / "linked"
+            output = root / "output"
+            output.mkdir()
+            _write_sidecar_source(source)
+            try:
+                linked.symlink_to(source, target_is_directory=True)
+            except OSError:
+                self.skipTest("Directory links are unavailable on this host.")
+
+            with self.assertRaisesRegex(SidecarPackageError, "must not be a link"):
+                package_sidecar(linked, output, PUBLIC_VERSION, run_smoke=False)
+
+    def test_sidecar_packager_rejects_non_ascii_member_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            output = root / "output"
+            output.mkdir()
+            _write_sidecar_source(source)
+            (source / "src" / "mémoire.mjs").write_text(
+                "// non-portable fixture\n", encoding="utf-8", newline="\n"
+            )
+
+            with self.assertRaisesRegex(SidecarPackageError, "portable ASCII"):
+                package_sidecar(source, output, PUBLIC_VERSION, run_smoke=False)
 
     def test_rejects_wrong_wheel_metadata_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -305,6 +464,16 @@ def _build_release(root: Path, *, include_installer: bool = False) -> ReleaseIde
 
 def _write_sidecar_bundle(root: Path, identity: ReleaseIdentity) -> None:
     source = root / "_sidecar-source"
+    _write_sidecar_source(source)
+    package_sidecar(
+        source,
+        root,
+        identity.public_version,
+        run_smoke=False,
+    )
+
+
+def _write_sidecar_source(source: Path) -> None:
     (source / "src").mkdir(parents=True)
     (source / "node_modules" / "qarinah").mkdir(parents=True)
     package = {
@@ -326,21 +495,23 @@ def _write_sidecar_bundle(root: Path, identity: ReleaseIdentity) -> None:
         "requires": True,
         "version": "0.1.0",
     }
-    (source / "LICENSE").write_text("fixture license\n", encoding="utf-8")
-    (source / "README.md").write_text("fixture sidecar\n", encoding="utf-8")
-    (source / "package.json").write_text(json.dumps(package), encoding="utf-8")
-    (source / "package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+    (source / "LICENSE").write_text(
+        "fixture license\n", encoding="utf-8", newline="\n"
+    )
+    (source / "README.md").write_text(
+        "fixture sidecar\n", encoding="utf-8", newline="\n"
+    )
+    (source / "package.json").write_text(
+        json.dumps(package, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+    (source / "package-lock.json").write_text(
+        json.dumps(lock, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     (source / "src" / "sidecar.mjs").write_text(
-        "// fixture sidecar\n", encoding="utf-8"
+        "// fixture sidecar\n", encoding="utf-8", newline="\n"
     )
     (source / "node_modules" / "qarinah" / "package.json").write_text(
         json.dumps({"name": "qarinah", "version": "0.4.0"}), encoding="utf-8"
-    )
-    package_sidecar(
-        source,
-        root,
-        identity.public_version,
-        run_smoke=False,
     )
 
 
@@ -446,6 +617,48 @@ def _installer_metadata(identity: ReleaseIdentity) -> dict[str, str | None]:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _zip_payloads(path: Path) -> dict[str, bytes]:
+    with zipfile.ZipFile(path) as archive:
+        return {info.filename: archive.read(info) for info in archive.infolist()}
+
+
+def _sidecar_receipt(path: Path) -> dict[str, object]:
+    with zipfile.ZipFile(path) as archive:
+        receipt = json.loads(archive.read(BINDING_NAME))
+    if not isinstance(receipt, dict):
+        raise AssertionError("fixture binding receipt is not an object")
+    return receipt
+
+
+def _rewrite_sidecar_zip(
+    source_path: Path,
+    destination_path: Path,
+    mutate: Callable[
+        [int, zipfile.ZipInfo, bytes], tuple[zipfile.ZipInfo, bytes]
+    ],
+) -> None:
+    with (
+        zipfile.ZipFile(source_path) as source,
+        zipfile.ZipFile(
+            destination_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+        ) as destination,
+    ):
+        for index, original in enumerate(source.infolist()):
+            info = zipfile.ZipInfo(original.filename, original.date_time)
+            info.compress_type = original.compress_type
+            info.create_system = original.create_system
+            info.create_version = original.create_version
+            info.extract_version = original.extract_version
+            info.flag_bits = original.flag_bits
+            info.internal_attr = original.internal_attr
+            info.volume = original.volume
+            info.extra = original.extra
+            info.comment = original.comment
+            info.external_attr = original.external_attr
+            info, payload = mutate(index, info, source.read(original))
+            destination.writestr(info, payload, compresslevel=9)
 
 
 if __name__ == "__main__":
