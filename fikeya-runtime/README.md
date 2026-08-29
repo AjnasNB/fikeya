@@ -396,10 +396,14 @@ cancellation or a protocol failure also terminates descendants.
 The loader resolves a fixed executable without a shell, constructs a minimal
 child environment that does not inherit home/profile directories or provider
 credentials, and rejects filesystem-root workspaces, escaped metadata paths,
-shell-script shims, unknown configuration fields, URL credentials, private
-literal crawler IPs, and non-finite or widened limits. Credentials are resolved
-from the OS keyring at launch and redacted from schemas, results, remote errors,
-and diagnostics.
+unreviewed shell-script shims, unknown configuration fields, URL credentials,
+private literal crawler IPs, and non-finite or widened limits. On Windows, an
+exact npm-generated `.cmd` shim is accepted only when its canonical target,
+package name, compatible version, and bin mapping match the reviewed preset;
+Fikeya then invokes that JavaScript entry point through the absolute native
+`node.exe` path instead of executing the shim. Credentials are resolved from
+the OS keyring at launch and redacted from schemas, results, remote errors, and
+diagnostics.
 
 An enabled preset is trusted local executable code, not an OS sandbox. Exact
 approval controls when Fikeya calls it; it does not remove the executable's
