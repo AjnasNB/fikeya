@@ -216,6 +216,32 @@
 					"default": true,
 					"scope": "resource",
 					"description": "%configuration.agent.autoSaveWorkspaceEdits.description%"
+				},
+				"fikeya.browser.engine": {
+					"type": "string",
+					"enum": [
+						"playwright",
+						"puppeteer"
+					],
+					"enumDescriptions": [
+						"Use the bundled or separately provisioned Playwright Chromium transport.",
+						"Use an explicitly configured local Puppeteer or Puppeteer Core installation."
+					],
+					"default": "playwright",
+					"scope": "resource",
+					"description": "%configuration.browser.engine.description%"
+				},
+				"fikeya.browser.puppeteerRoot": {
+					"type": "string",
+					"default": "",
+					"scope": "resource",
+					"description": "%configuration.browser.puppeteerRoot.description%"
+				},
+				"fikeya.browser.chromeExecutable": {
+					"type": "string",
+					"default": "",
+					"scope": "resource",
+					"description": "%configuration.browser.chromeExecutable.description%"
 				}
 			}
 		},

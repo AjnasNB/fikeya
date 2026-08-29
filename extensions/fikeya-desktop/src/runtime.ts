@@ -23,6 +23,12 @@ const processTerminationGraceMilliseconds = 2_000;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
+function isBrowserLaunchOptions(value: FikeyaBrowserLaunchOptions): boolean {
+	return (value.engine === 'playwright' || value.engine === 'puppeteer')
+		&& [value.puppeteerRoot, value.chromeExecutable].every(candidate => candidate === undefined
+			|| (candidate.length > 0 && candidate.length <= 4096 && !candidate.includes('\0')));
+}
+
 export type FikeyaRuntimeFailure = 'none' | 'not-found' | 'timeout' | 'output-limit' | 'runtime-error' | 'provider-error' | 'provider-unreachable' | 'agent-no-progress' | 'authentication' | 'quota' | 'invalid-json' | 'cancelled';
 
 export type FikeyaRuntimeCommand = 'doctor' | 'init';
@@ -76,6 +82,13 @@ export interface FikeyaAgentUsage {
 
 export type FikeyaMemoryMode = 'auto' | 'off' | 'required';
 export type FikeyaExecutionMode = 'ask' | 'build' | 'review' | 'research';
+export type FikeyaBrowserEngine = 'playwright' | 'puppeteer';
+
+export interface FikeyaBrowserLaunchOptions {
+	readonly engine: FikeyaBrowserEngine;
+	readonly puppeteerRoot?: string;
+	readonly chromeExecutable?: string;
+}
 
 export interface FikeyaAgentMemory {
 	readonly status: 'off' | 'unavailable' | 'used';
@@ -373,6 +386,25 @@ export function buildFikeyaRuntimeEnvironment(
 	return result;
 }
 
+/** Adds only explicit, non-secret browser transport metadata to one child environment. */
+export function buildFikeyaBrowserEnvironment(
+	options: FikeyaBrowserLaunchOptions,
+	environment: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+	const result: NodeJS.ProcessEnv = { ...environment, FIKEYA_BROWSER_ENGINE: options.engine };
+	delete result.FIKEYA_PUPPETEER_ROOT;
+	delete result.FIKEYA_CHROME_EXECUTABLE;
+	if (options.engine === 'puppeteer') {
+		if (options.puppeteerRoot) {
+			result.FIKEYA_PUPPETEER_ROOT = options.puppeteerRoot;
+		}
+		if (options.chromeExecutable) {
+			result.FIKEYA_CHROME_EXECUTABLE = options.chromeExecutable;
+		}
+	}
+	return result;
+}
+
 /** Runs a bounded Fikeya workspace command with no shell interpolation. */
 export async function runFikeyaRuntime(
 	command: FikeyaRuntimeCommand,
@@ -439,7 +471,8 @@ export function startFikeyaAgentRun(
 	images: readonly FikeyaImageInput[] = [],
 	mode: FikeyaExecutionMode = 'build',
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment(),
+	browser: FikeyaBrowserLaunchOptions = { engine: 'playwright' }
 ): FikeyaAgentRunHandle {
 	if (!identifierPattern.test(providerName)
 		|| !prompt.trim()
@@ -452,6 +485,7 @@ export function startFikeyaAgentRun(
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
 		|| !['ask', 'build', 'review', 'research'].includes(mode)
+		|| !isBrowserLaunchOptions(browser)
 		|| !isValidProviderHistory(history)
 		|| !isImageInputs(images)) {
 		return {
@@ -462,7 +496,7 @@ export function startFikeyaAgentRun(
 	}
 
 	const operation = startAgentProtocolCli(
-		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode, mode),
+		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode, mode, browser.engine),
 		workspacePath,
 		prompt,
 		history,
@@ -471,7 +505,7 @@ export function startFikeyaAgentRun(
 		agentTimeoutMilliseconds,
 		maximumAgentOutputBytes,
 		invocation,
-		environment
+		buildFikeyaBrowserEnvironment(browser, environment)
 	);
 	return operation;
 }
@@ -500,7 +534,8 @@ export function startFikeyaProject(
 	completionCriteria: readonly string[] = [],
 	allowPrivateBrowser = false,
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment(),
+	browser: FikeyaBrowserLaunchOptions = { engine: 'playwright' }
 ): FikeyaProjectRunHandle {
 	if (!identifierPattern.test(providerName)
 		|| !goal.trim()
@@ -508,6 +543,7 @@ export function startFikeyaProject(
 		|| (action === 'resume' && (!runId || !identifierPattern.test(runId)))
 		|| (action === 'start' && runId !== undefined)
 		|| completionCriteria.length > 64
+		|| !isBrowserLaunchOptions(browser)
 		|| completionCriteria.some(criterion => !criterion.trim() || Buffer.byteLength(criterion.trim(), 'utf8') > 4_096)) {
 		return { result: Promise.resolve(invalidLocalRequest()), onStarted: () => () => undefined, cancel: () => undefined };
 	}
@@ -515,14 +551,14 @@ export function startFikeyaProject(
 		? { type: 'start' as const, goal: goal.trim(), ...(completionCriteria.length ? { completionCriteria: completionCriteria.map(value => value.trim()) } : {}) }
 		: { type: 'resume' as const, runId: runId!, goal: goal.trim() };
 	return startProjectProtocolCli(
-		buildProjectRunArguments(action, providerName, runId, allowPrivateBrowser),
+		buildProjectRunArguments(action, providerName, runId, allowPrivateBrowser, browser.engine),
 		workspacePath,
 		initialMessage,
 		approvalHandler,
 		agentTimeoutMilliseconds,
 		maximumProjectOutputBytes,
 		invocation,
-		environment
+		buildFikeyaBrowserEnvironment(browser, environment)
 	);
 }
 
@@ -658,18 +694,19 @@ export function startFikeyaPlan(
 	workspacePath: string,
 	allowPrivateBrowser = false,
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment(),
+	browser: FikeyaBrowserLaunchOptions = { engine: 'playwright' }
 ): FikeyaPlanRunHandle {
-	if (!identifierPattern.test(planId)) {
+	if (!identifierPattern.test(planId) || !isBrowserLaunchOptions(browser)) {
 		return { result: Promise.resolve(invalidLocalRequest()), onProgress: () => () => undefined, cancel: () => undefined };
 	}
 	return startPlanProtocolCli(
-		buildPlanActionArguments(action, planId, allowPrivateBrowser),
+		buildPlanActionArguments(action, planId, allowPrivateBrowser, browser.engine),
 		workspacePath,
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
 		invocation,
-		environment,
+		buildFikeyaBrowserEnvironment(browser, environment),
 		[0, 2]
 	);
 }
@@ -706,11 +743,15 @@ export function buildPlanProposalArguments(
 export function buildPlanActionArguments(
 	action: 'show' | 'review' | 'run' | 'resume' | 'cancel',
 	planId: string,
-	allowPrivateBrowser = false
+	allowPrivateBrowser = false,
+	browserEngine: FikeyaBrowserEngine = 'playwright'
 ): readonly string[] {
 	const args = ['plan', action, planId, '--workspace', '.'];
 	if (allowPrivateBrowser && (action === 'run' || action === 'resume')) {
 		args.push('--allow-private-browser');
+	}
+	if (action === 'run' || action === 'resume') {
+		args.push('--browser-engine', browserEngine);
 	}
 	args.push('--json');
 	return args;
@@ -797,7 +838,8 @@ export function buildAgentRunArguments(
 	maxOutputTokens: number,
 	contextMaxCharacters: number,
 	memoryMode: FikeyaMemoryMode,
-	mode: FikeyaExecutionMode = 'build'
+	mode: FikeyaExecutionMode = 'build',
+	browserEngine: FikeyaBrowserEngine = 'playwright'
 ): readonly string[] {
 	return [
 		'agent',
@@ -815,6 +857,8 @@ export function buildAgentRunArguments(
 		memoryMode,
 		'--mode',
 		mode,
+		'--browser-engine',
+		browserEngine,
 		'--json-lines'
 	];
 }
@@ -824,7 +868,8 @@ export function buildProjectRunArguments(
 	action: 'start' | 'resume',
 	providerName: string,
 	runId?: string,
-	allowPrivateBrowser = false
+	allowPrivateBrowser = false,
+	browserEngine: FikeyaBrowserEngine = 'playwright'
 ): readonly string[] {
 	const args = action === 'start'
 		? ['project', 'start', '.', '--provider', providerName]
@@ -833,6 +878,7 @@ export function buildProjectRunArguments(
 	if (allowPrivateBrowser) {
 		args.push('--allow-private-browser');
 	}
+	args.push('--browser-engine', browserEngine);
 	args.push('--json-lines');
 	return args;
 }

@@ -29,5 +29,8 @@
 	"configuration.startupMode.description": "Choose the first surface shown by Fikeya Desktop. Project UI is the default Codex-style coding-agent workspace.",
 	"configuration.chat.openAtStartup.description": "Open Fikeya Chat once when this extension is first activated in VS Code or another compatible editor.",
 	"configuration.chat.persistWorkspaceHistory.description": "Persist a bounded, credential-redacted copy of Fikeya Chat messages in this workspace. Disabled by default; when disabled, Chat remains process-local.",
-	"configuration.agent.autoSaveWorkspaceEdits.description": "Save dirty file-backed documents inside the current Fikeya workspace before an agent run so tools operate on the latest editor contents. Files outside the workspace and untitled documents are never saved by this setting."
+	"configuration.agent.autoSaveWorkspaceEdits.description": "Save dirty file-backed documents inside the current Fikeya workspace before an agent run so tools operate on the latest editor contents. Files outside the workspace and untitled documents are never saved by this setting.",
+	"configuration.browser.engine.description": "Choose the browser transport used only after an approved browser tool call. Playwright remains the default; Puppeteer is explicit and never a silent fallback.",
+	"configuration.browser.puppeteerRoot.description": "Absolute path to a reviewed directory whose package.json resolves puppeteer or puppeteer-core. Used only when the Puppeteer engine is selected.",
+	"configuration.browser.chromeExecutable.description": "Optional absolute path to a reviewed Chrome or Chromium executable. Required for Puppeteer Core unless that package is configured with its own executable."
 }

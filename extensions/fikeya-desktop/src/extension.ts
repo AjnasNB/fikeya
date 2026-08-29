@@ -47,6 +47,7 @@ import {
 	FikeyaAgentMemory,
 	FikeyaAgentRunHandle,
 	FikeyaAgentUsage,
+	FikeyaBrowserLaunchOptions,
 	FikeyaCodingOutcome,
 	FikeyaMemoryMode,
 	FikeyaPlanRecord,
@@ -74,6 +75,20 @@ import {
 	startFikeyaPlan,
 	testFikeyaProvider
 } from './runtime';
+
+function configuredBrowserLaunchOptions(): FikeyaBrowserLaunchOptions {
+	const configuration = vscode.workspace.getConfiguration('fikeya');
+	const engine = configuration.get<string>('browser.engine') === 'puppeteer'
+		? 'puppeteer'
+		: 'playwright';
+	const puppeteerRoot = configuration.get<string>('browser.puppeteerRoot')?.trim();
+	const chromeExecutable = configuration.get<string>('browser.chromeExecutable')?.trim();
+	return {
+		engine,
+		...(engine === 'puppeteer' && puppeteerRoot ? { puppeteerRoot } : {}),
+		...(engine === 'puppeteer' && chromeExecutable ? { chromeExecutable } : {})
+	};
+}
 
 export interface ProviderDefinition {
 	readonly id: string;
@@ -1454,7 +1469,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			request => this.approveAgentTool(request),
 			providerHistory,
 			images,
-			composerMode
+			composerMode,
+			undefined,
+			undefined,
+			configuredBrowserLaunchOptions()
 		);
 		this.activeAgentRun = operation;
 		const disposeProgress = operation.onProgress(progress => {
@@ -2006,7 +2024,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 		const operation = startFikeyaProject(
 			'start', providerName, goal, workspacePath,
-			request => this.approveAgentTool(request)
+			request => this.approveAgentTool(request),
+			undefined,
+			[],
+			false,
+			undefined,
+			undefined,
+			configuredBrowserLaunchOptions()
 		);
 		this.activeProjectRun = operation;
 		const stopStartedObserver = operation.onStarted(started => {
@@ -2110,7 +2134,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 		const operation = startFikeyaProject(
 			'resume', providerName, goal, workspacePath,
-			request => this.approveAgentTool(request), view.runId, [], allowPrivateBrowser
+			request => this.approveAgentTool(request), view.runId, [], allowPrivateBrowser,
+			undefined, undefined, configuredBrowserLaunchOptions()
 		);
 		this.activeProjectRun = operation;
 		this.activeProjectRunId = view.runId;
@@ -2344,7 +2369,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 
-		const operation = startFikeyaPlan(action, plan.planId, workspacePath, allowPrivateBrowser);
+		const operation = startFikeyaPlan(
+			action,
+			plan.planId,
+			workspacePath,
+			allowPrivateBrowser,
+			undefined,
+			undefined,
+			configuredBrowserLaunchOptions()
+		);
 		this.activePlanRun = operation;
 		const disposeProgress = operation.onProgress(progress => {
 			if (this.activePlanRun !== operation) {
