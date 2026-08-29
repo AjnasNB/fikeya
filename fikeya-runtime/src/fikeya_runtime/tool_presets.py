@@ -22,6 +22,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .errors import ToolPresetError
+from .process_tree import ManagedProcessTree, start_managed_process
 from .state import StateStore
 from .util import sha256_text, stable_json, utc_now
 from .workspace import Workspace
@@ -476,8 +477,8 @@ class ToolPresetLoader:
         plan: ToolLaunchPlan,
         *,
         process_factory: Callable[..., Any] = subprocess.Popen,
-    ) -> tuple[Any, ToolBudget]:
-        """Spawn a prepared stdio process; callers must frame MCP within ToolBudget."""
+    ) -> tuple[Any, ToolBudget, ManagedProcessTree]:
+        """Spawn a prepared stdio process inside a managed process tree."""
 
         _validate_limits(plan.limits)
         workspace = Workspace.load(plan.cwd)
@@ -489,17 +490,21 @@ class ToolPresetLoader:
         executable = _validate_resolved_executable(plan.argv[0])
         if str(executable) != plan.argv[0]:
             raise ToolPresetError("Launch executable changed after plan validation.")
-        process = process_factory(
-            list(plan.argv),
-            cwd=str(plan.cwd),
-            env=dict(plan.environment),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            text=False,
-        )
-        return process, ToolBudget(plan.limits)
+        try:
+            process, process_tree = start_managed_process(
+                list(plan.argv),
+                cwd=plan.cwd,
+                environment=plan.environment,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                process_factory=process_factory,
+            )
+        except OSError as error:
+            raise ToolPresetError(
+                "External tool could not start inside a managed process tree."
+            ) from error
+        return process, ToolBudget(plan.limits), process_tree
 
 
 def _read_document(text: str, label: str) -> dict[str, object]:
@@ -764,15 +769,12 @@ def _validate_ephemeral_secret(value: str) -> None:
 
 def _minimal_process_environment() -> dict[str, str]:
     allowed = {
-        "HOME",
         "LANG",
         "LC_ALL",
-        "LOCALAPPDATA",
         "SYSTEMROOT",
         "TEMP",
         "TMP",
         "TMPDIR",
-        "USERPROFILE",
         "WINDIR",
     }
     return {name: value for name, value in os.environ.items() if name in allowed}

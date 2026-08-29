@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .errors import ToolPresetError
+from .process_tree import ManagedProcessTree
 from .tool_presets import (
     ToolBudget,
     ToolLaunchPlan,
@@ -39,15 +40,12 @@ _VERSION_RANGE = re.compile(
     r"<(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
 )
 _SAFE_BASE_ENVIRONMENT = {
-    "HOME",
     "LANG",
     "LC_ALL",
-    "LOCALAPPDATA",
     "SYSTEMROOT",
     "TEMP",
     "TMP",
     "TMPDIR",
-    "USERPROFILE",
     "WINDIR",
 }
 _SECRET_SHAPE = re.compile(
@@ -155,6 +153,7 @@ class McpStdioHost:
         preset: ToolPreset,
         plan: ToolLaunchPlan,
         process: subprocess.Popen[bytes],
+        process_tree: ManagedProcessTree,
         budget: ToolBudget,
         protocol_version: str,
         stderr_capture_bytes: int,
@@ -162,6 +161,7 @@ class McpStdioHost:
         self.preset = preset
         self.plan = plan
         self.process = process
+        self.process_tree = process_tree
         self.budget = budget
         self.protocol_version = protocol_version
         self._stderr_capture_bytes = stderr_capture_bytes
@@ -232,12 +232,15 @@ class McpStdioHost:
                 "Prepared tool launch does not match the selected preset."
             )
         _validate_launch_environment(preset, plan)
-        process, budget = loader.spawn(plan, process_factory=process_factory)
+        process, budget, process_tree = loader.spawn(
+            plan, process_factory=process_factory
+        )
         _require_process_pipes(process)
         host = cls(
             preset=preset,
             plan=plan,
             process=process,
+            process_tree=process_tree,
             budget=budget,
             protocol_version=protocol_version,
             stderr_capture_bytes=stderr_capture_bytes,
@@ -349,41 +352,46 @@ class McpStdioHost:
         if self._closed:
             return
         self._closed = True
-        stdin = self.process.stdin
-        if stdin is not None:
-            try:
-                stdin.close()
-            except OSError:
-                pass
-        if self.process.poll() is None and not force:
-            try:
-                self.process.wait(
-                    timeout=self.preset.limits.shutdown_timeout_ms / 1_000
-                )
-            except subprocess.TimeoutExpired:
-                pass
-        if self.process.poll() is None:
-            try:
-                self.process.terminate()
-            except OSError:
-                pass
-            try:
-                self.process.wait(
-                    timeout=self.preset.limits.shutdown_timeout_ms / 1_000
-                )
-            except subprocess.TimeoutExpired:
+        try:
+            stdin = self.process.stdin
+            if stdin is not None:
                 try:
-                    self.process.kill()
+                    stdin.close()
                 except OSError:
                     pass
+            if self.process.poll() is None and not force:
                 try:
-                    self.process.wait(timeout=1.0)
-                except subprocess.TimeoutExpired as error:
-                    raise McpProtocolError(
-                        "MCP subprocess did not stop after force-kill."
-                    ) from error
-        self._stdout_thread.join(timeout=0.5)
-        self._stderr_thread.join(timeout=0.5)
+                    self.process.wait(
+                        timeout=self.preset.limits.shutdown_timeout_ms / 1_000
+                    )
+                except subprocess.TimeoutExpired:
+                    pass
+            try:
+                # Always terminate the owned tree, even if the MCP parent exited
+                # after creating a surviving descendant.
+                self.process_tree.terminate()
+            except OSError:
+                pass
+            if self.process.poll() is None:
+                try:
+                    self.process.wait(
+                        timeout=self.preset.limits.shutdown_timeout_ms / 1_000
+                    )
+                except subprocess.TimeoutExpired:
+                    try:
+                        self.process.kill()
+                    except OSError:
+                        pass
+                    try:
+                        self.process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired as error:
+                        raise McpProtocolError(
+                            "MCP subprocess did not stop after force-kill."
+                        ) from error
+        finally:
+            self._stdout_thread.join(timeout=0.5)
+            self._stderr_thread.join(timeout=0.5)
+            self.process_tree.close()
 
     def _initialize(self) -> None:
         result = self._request(
@@ -569,11 +577,14 @@ class McpStdioHost:
             self._kill_from_reader()
 
     def _kill_from_reader(self) -> None:
-        if self.process.poll() is None:
-            try:
-                self.process.kill()
-            except OSError:
-                pass
+        try:
+            self.process_tree.terminate()
+        except OSError:
+            if self.process.poll() is None:
+                try:
+                    self.process.kill()
+                except OSError:
+                    pass
 
 
 def _parse_response(payload: bytes, expected_id: int) -> object:
