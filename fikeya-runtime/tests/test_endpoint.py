@@ -18,7 +18,7 @@ import pytest
 from fikeya_agent_core import ApprovalDecision, CancellationToken
 
 from fikeya_runtime.cli import main
-from fikeya_runtime.coding import WorkspaceExecutionBroker
+from fikeya_runtime.coding import CodingAgentRunner, WorkspaceExecutionBroker
 from fikeya_runtime.endpoint import (
     ENDPOINT_PROTOCOL,
     ENDPOINT_REQUEST_SCHEMA,
@@ -30,6 +30,7 @@ from fikeya_runtime.endpoint import (
     validate_endpoint_request,
 )
 from fikeya_runtime.errors import ProviderError, StateError, WorkspaceError
+from fikeya_runtime.inference import JsonResponse, ProviderExecutor
 from fikeya_runtime.modes import AgentMode
 from fikeya_runtime.providers import ProviderKind, ProviderStore, build_profile
 from fikeya_runtime.util import sha256_text, stable_json
@@ -110,6 +111,39 @@ class _FakeRunner:
             usage=self.usage,
             tool_calls=tuple(receipts),
         )
+
+
+class _UsageTransport:
+    def __init__(self, output_tokens: list[int]) -> None:
+        self.output_tokens = output_tokens
+        self.calls = 0
+        self.requested_max_tokens: list[int] = []
+
+    def post(self, *arguments: object, **keyword_arguments: object) -> JsonResponse:
+        del keyword_arguments
+        request_body = json.loads(cast(bytes, arguments[2]))
+        self.requested_max_tokens.append(cast(int, request_body["max_tokens"]))
+        decisions = (
+            {"kind": "plan", "content": "Return one bounded answer."},
+            {"kind": "answer", "content": "Bounded answer."},
+            {
+                "kind": "review",
+                "reviewAction": "complete",
+                "content": "Bounded reviewed answer.",
+            },
+        )
+        index = self.calls
+        self.calls += 1
+        body = {
+            "choices": [{"message": {"content": stable_json(decisions[index])}}],
+            "usage": {
+                "completion_tokens": self.output_tokens[index],
+                "prompt_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": 4},
+            },
+        }
+        raw = stable_json(body).encode("utf-8")
+        return JsonResponse(200, body, raw)
 
 
 def _run(coroutine: object, monkeypatch: pytest.MonkeyPatch) -> object:
@@ -434,29 +468,69 @@ def test_endpoint_accepts_aggregate_usage_above_the_per_call_output_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     value, providers, root = _fixture(tmp_path, tools=[], max_tool_calls=0)
+    value["allowNetwork"] = True
+    _rescope(value)
     request = validate_endpoint_request(value, cwd=root)
-    runner = _FakeRunner(
-        steps=3,
-        usage={
-            "cachedInputTokens": 120,
-            "inputTokens": 1_200,
-            "measurement": "provider-reported",
-            "outputTokens": 900,
-        },
-    )
+    transport = _UsageTransport([400, 400, 400])
     result = _run(
         execute_endpoint_request(
             request,
             providers,
-            runner_factory=lambda _workspace, _providers: runner,
+            runner_factory=lambda workspace, store: CodingAgentRunner(
+                workspace,
+                store,
+                executor=ProviderExecutor(transport),
+                allowed_executables=frozenset(),
+            ),
         ),
         monkeypatch,
     )
     payload = result.as_json()
 
-    assert runner.kwargs["max_output_tokens"] == 512
+    assert transport.calls == 3
+    assert transport.requested_max_tokens == [512, 512, 512]
     assert payload["status"] == "succeeded"
-    assert cast(dict[str, object], payload["usage"])["outputTokens"] == 900
+    assert cast(dict[str, object], payload["usage"])["outputTokens"] == 1_200
+
+
+def test_endpoint_settles_a_provider_call_that_reports_over_its_output_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value, providers, root = _fixture(tmp_path, tools=[], max_tool_calls=0)
+    value["allowNetwork"] = True
+    _rescope(value)
+    request = validate_endpoint_request(value, cwd=root)
+    transport = _UsageTransport([513])
+    result = _run(
+        execute_endpoint_request(
+            request,
+            providers,
+            runner_factory=lambda workspace, store: CodingAgentRunner(
+                workspace,
+                store,
+                executor=ProviderExecutor(transport),
+                allowed_executables=frozenset(),
+            ),
+        ),
+        monkeypatch,
+    )
+    payload = result.as_json()
+
+    assert transport.calls == 1
+    assert transport.requested_max_tokens == [512]
+    assert payload["status"] == "failed"
+    assert payload["errorCode"] == "FIKEYA_LIMIT_EXCEEDED"
+    assert cast(dict[str, object], payload["usage"]) == {
+        "cachedInputTokens": None,
+        "complete": False,
+        "costMicros": None,
+        "currency": None,
+        "inputTokens": None,
+        "measurement": "unavailable",
+        "outputTokens": None,
+        "reasoningTokens": None,
+    }
 
 
 def test_endpoint_timeout_settles_on_python_310(

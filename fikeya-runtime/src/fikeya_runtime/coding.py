@@ -38,7 +38,7 @@ from .agent import AgentRunner, MemoryPreparation
 from .browser import BrowserActionResult, BrowserEngine, BrowserSession
 from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
-from .errors import ApprovalError, FikeyaError
+from .errors import ApprovalError, FikeyaError, ProviderOutputLimitError
 from .events import EventType
 from .inference import (
     InferenceImage,
@@ -1080,6 +1080,12 @@ class _RecordingExecutor:
             payload,
             causation_id=requested.event_id,
         )
+        if (
+            usage.measurement == "provider-reported"
+            and usage.output_tokens is not None
+            and usage.output_tokens > request.max_output_tokens
+        ):
+            raise ProviderOutputLimitError()
         return result
 
 

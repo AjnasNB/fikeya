@@ -54,6 +54,15 @@ class ProviderHttpError(ProviderError):
         )
 
 
+class ProviderOutputLimitError(ProviderError):
+    """Raised when reported output usage exceeds one provider call's signed cap."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Provider-reported output usage exceeded the configured per-call limit."
+        )
+
+
 class CancellationError(FikeyaError):
     """Raised when a person cancels a bounded runtime operation."""
 
