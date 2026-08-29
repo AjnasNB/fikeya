@@ -95,11 +95,11 @@ def create_artifact_manifest(value: str | Path) -> ArtifactManifest:
                 {
                     "path": relative,
                     "size": information.st_size,
-                    # Windows does not expose a portable POSIX mode.  Python
-                    # and Node also synthesize different execute bits for the
-                    # same file (notably npm .cmd shims), so the cross-language
-                    # manifest deliberately uses zero there.
-                    "mode": 0 if os.name == "nt" else information.st_mode & 0o777,
+                    # File modes are host/checkout metadata rather than stable
+                    # artifact identity. Link, reparse, hardlink, and regular-
+                    # file checks above remain mandatory; the cross-platform
+                    # manifest deliberately normalizes the mode field to zero.
+                    "mode": 0,
                     "sha256": _digest_file(child_path, information),
                 }
             )

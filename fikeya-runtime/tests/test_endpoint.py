@@ -1272,7 +1272,7 @@ def test_packaged_qarinah_sidecar_runs_required_memory_without_mutation(
     extracted.mkdir()
     if node_value is None or not (source_root / "node_modules" / "qarinah").is_dir():
         pytest.skip("Run npm ci in integrations/qarinah-sidecar for packaged proof.")
-    subprocess.run(
+    packaged = subprocess.run(
         [
             sys.executable,
             str(packager),
@@ -1284,10 +1284,13 @@ def test_packaged_qarinah_sidecar_runs_required_memory_without_mutation(
             "0.1.0-beta.8",
             "--skip-smoke",
         ],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=120,
+    )
+    assert packaged.returncode == 0, (
+        "sidecar packager failed: " + packaged.stderr[-2_048:]
     )
     with zipfile.ZipFile(bundle) as archive:
         archive.extractall(extracted)
