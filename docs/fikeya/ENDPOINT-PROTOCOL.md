@@ -107,7 +107,20 @@ The exact nested objects are:
   },
   "memory": {
     "mode": "auto",
-    "contextMaxCharacters": 12000
+    "contextMaxCharacters": 12000,
+    "rebuild": false,
+    "adapter": {
+      "kind": "qarinah-node-sidecar",
+      "nodeExecutable": "/canonical/path/to/node",
+      "nodeSha256": "sha256:<64 lowercase hexadecimal characters>",
+      "sidecarPath": "/canonical/path/to/qarinah-sidecar.mjs",
+      "sidecarSha256": "sha256:<64 lowercase hexadecimal characters>",
+      "packageJsonPath": "/canonical/path/to/qarinah-artifact/package.json",
+      "packageJsonSha256": "sha256:<64 lowercase hexadecimal characters>",
+      "artifactRoot": "/canonical/path/to/qarinah-artifact",
+      "artifactSha256": "sha256:<64 lowercase hexadecimal characters>",
+      "version": "registered-version"
+    }
   }
 }
 ```
@@ -118,8 +131,9 @@ digest placeholders are not valid wire values.
 ### Authorization
 
 `decision` must be `allow`. `approvalId` is non-empty and at most 256 UTF-8
-bytes. `expiresAt` is an absolute UTC timestamp ending in `Z` and must remain in
-the future. `scopeSha256` must match the exact scope hash.
+bytes. `expiresAt` uses exactly `YYYY-MM-DDTHH:MM:SS(.1-6)?Z` and must remain in
+the future. Offsets, a space separator, comma fractions, and more than six
+fractional digits are rejected. `scopeSha256` must match the exact scope hash.
 
 Fikeya consumes `approvalId` atomically before the agent starts. Reuse is
 rejected. Scope, expiry, provider identity, capability membership, and the tool
@@ -155,6 +169,24 @@ allowlist requires a positive ceiling. `memory.mode` is `auto`, `off`, or
 `required`; `required` fails rather than running without the requested bounded
 Qarinah context.
 
+Managed memory never discovers Qarinah or Node from `PATH`. For `off`,
+`memory.adapter` is null. For `auto` or `required`, the controller binds the
+canonical Node executable, production sidecar, package manifest, and complete
+sidecar artifact tree with their exact SHA-256 values. The package manifest
+must identify `@fikeya/qarinah-sidecar` and its exact pinned Qarinah version.
+Fikeya invokes the bound Node and sidecar directly with `shell=false`, checks
+the `runtime.version` identity before consuming authorization, and rechecks the
+files and tree after retrieval and after the run. `memory.rebuild` must be
+false. Managed `memory.prepare` also forces `updateCheckpoint:false`, so it
+never repairs or rewrites `.qarinah`; `required` fails closed on unavailable or
+stale state and `auto` records unavailable memory.
+
+Release packages include `fikeya-qarinah-sidecar-<version>.zip`. Its external
+`qarinah-sidecar-binding.json` records the content-free artifact manifest,
+digests, package identity, protocol, and Node engine range. Operators bind the
+exact deployment Node executable separately because the runtime binary is not
+embedded in that archive.
+
 `maxOutputTokens` applies to each provider call in the bounded multi-step run;
 it is not an aggregate whole-run token budget. `maxSteps`, `maxToolCalls`, and
 `timeoutMs` are whole-run ceilings.
@@ -168,8 +200,10 @@ set.
 `workingDirectory` must resolve to an existing absolute directory and must
 match the endpoint process's resolved current working directory. Fikeya must be
 initialized there, and the resolved directory must remain inside that
-workspace's root. This prevents a controller request from selecting a different
-checkout, worktree, or path after process launch.
+workspace's root. Its supplied spelling must already be lexically normalized;
+dot segments, duplicate separators, surrounding whitespace, and link aliases
+are rejected before request hashing. This prevents a controller request from
+selecting a different checkout, worktree, or path after process launch.
 
 ## Capabilities
 
@@ -204,6 +238,21 @@ The result schema is `maqam.endpoint-harness-result.v2` and contains exactly:
   "outcomeSha256": "sha256:<64 lowercase hexadecimal characters>",
   "provider": "configured-profile-name",
   "model": "exact-configured-model",
+  "effects": {
+    "measurement": "local-receipt-chain",
+    "complete": true,
+    "receiptSha256": "sha256:<64 lowercase hexadecimal characters>",
+    "toolCallCount": 1,
+    "writeCount": 0
+  },
+  "memory": {
+    "mode": "off",
+    "status": "off",
+    "complete": true,
+    "receiptId": null,
+    "responseSha256": null,
+    "evidenceCount": 0
+  },
   "usage": {
     "measurement": "provider-reported",
     "complete": true,
@@ -223,6 +272,30 @@ provider and model report the exact local selection. The two hashes let a
 controller correlate the result to the complete request and verify the complete
 outcome envelope.
 
+`effects.measurement: "local-receipt-chain"` binds the ordered local tool
+receipts to `receiptSha256`. The digest input is stable canonical JSON of
+`{"schema":"maqam.endpoint-effect-chain.v1","receipts":[...]}`. Each receipt
+contains exactly `argumentsSha256`, `callId`,
+`outputSha256`, `status`, and `tool`; neither arguments nor output bodies enter
+the wire. Counts are derived from that same array, with `writeCount` covering
+successful `workspace.write_file` and `workspace.replace_text` receipts. A
+successful no-tool run uses the deterministic digest
+`sha256:29ca707cbd81c124eaa849d792efe7aa8c2e1c1a875b689c87d100c42fbc43dd`,
+counts zero, and `complete: true`.
+Failure or cancellation uses a complete partial local chain when the runtime
+returned one, otherwise `measurement: "unavailable"`, `complete: false`, and
+null digest/counts. This proves Fikeya's local receipt chain. It is not an
+independent attestation that an external system observed an effect.
+
+`memory` records only content-free retrieval provenance. Memory-off runs use
+the exact `off` object shown above. A used `auto` or `required` retrieval has
+`status: "used"`, `complete: true`, a bounded receipt identifier, the Qarinah
+response digest, and a non-negative evidence count. An optional retrieval that
+cannot run reports `status: "unavailable"`, `complete: false`, and null receipt,
+digest, and count. A successful `required` run must report a complete used
+receipt. The memory object is part of `outcomeSha256`; no retrieved content is
+returned.
+
 Usage is never inferred. `measurement: "provider-reported"` means the provider
 supplied validated non-negative token counts; the current runtime returns
 `complete: true` with input, cached-input, and output counts. Reasoning tokens,
@@ -231,7 +304,7 @@ cost, and currency remain null when the provider/runtime did not report them.
 currency field to be null. A controller must never reinterpret unavailable
 usage as zero.
 
-No prompt, response, file content, tool arguments, tool output, credential,
+No prompt, response, file content, raw tool arguments, tool output, credential,
 exception text, or Qarinah context body appears in this envelope.
 
 ## Rejection and settled failure
@@ -274,3 +347,8 @@ status and hash verification, not process exit alone, determine settlement.
 7. Distinguish pre-start rejection from a settled v2 result.
 8. Verify `requestSha256` and `outcomeSha256`, retain the status/error code, and
    preserve unavailable usage as unavailable.
+
+The versioned cross-language canonicalization fixture is
+`fikeya-runtime/tests/fixtures/endpoint-v2-conformance.json`. It contains one
+content-free valid request/result hash pair and named invalid expiry, path, and
+identity cases for controller CI.
