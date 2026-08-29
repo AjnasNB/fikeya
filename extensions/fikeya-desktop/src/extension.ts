@@ -11,6 +11,14 @@ import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderProm
 import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscriptions } from './azureDiscovery';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
 import {
+	canEnableDangerousLocalMode,
+	createDangerousLocalModeGrant,
+	dangerousLocalModeConfirmation,
+	dangerousLocalModeDurationMs,
+	dangerousLocalModeIsActive,
+	DangerousLocalModeGrant
+} from './dangerousLocalMode';
+import {
 	appendTextFilesToPrompt,
 	FikeyaTextFileInput,
 	isAllowedTextFileName,
@@ -171,6 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	const provider = new FikeyaWebviewViewProvider(context, hostCapabilities);
 	void vscode.commands.executeCommand('setContext', 'fikeya.isFikeyaProduct', hostCapabilities.isFikeyaProduct);
 	void vscode.commands.executeCommand('setContext', 'fikeya.supportsDesktopWorkbench', hostCapabilities.supportsDesktopWorkbench);
+	void vscode.commands.executeCommand('setContext', 'fikeya.dangerousLocalModeActive', false);
 	context.subscriptions.push(provider);
 	context.subscriptions.push(vscode.window.registerWebviewViewProvider(FikeyaWebviewViewProvider.viewType, provider));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.open', () => provider.openDefaultLayout('chat')));
@@ -194,6 +203,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.runDoctor', async () => {
 		await provider.runRuntimeCommand('doctor');
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.dangerousLocalMode.enable', async () => {
+		await provider.enableDangerousLocalMode();
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.dangerousLocalMode.disable', () => {
+		provider.disableDangerousLocalMode(true);
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.editor', async () => {
 		await provider.focusEditor();
@@ -266,6 +281,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private disposed = false;
 	private readonly agentProfileStore: FikeyaAgentProfileStore;
 	private lastSourceDocument: vscode.Uri | undefined;
+	private dangerousLocalModeGrant: DangerousLocalModeGrant | undefined;
+	private dangerousLocalModeExpiryTimer: NodeJS.Timeout | undefined;
 
 	public constructor(
 		private readonly context: vscode.ExtensionContext,
@@ -309,6 +326,83 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.state = { ...this.state, conversation: [] };
 		this.refresh();
 		void vscode.window.showInformationMessage(vscode.l10n.t('Saved Fikeya Chat history was deleted from this workspace.'));
+	}
+
+	public async enableDangerousLocalMode(): Promise<void> {
+		const folder = vscode.workspace.workspaceFolders?.find(candidate => candidate.uri.scheme === 'file');
+		const workspacePath = folder?.uri.fsPath;
+		const eligible = canEnableDangerousLocalMode({
+			desktopUi: vscode.env.uiKind === vscode.UIKind.Desktop,
+			remoteName: vscode.env.remoteName,
+			trustedWorkspace: vscode.workspace.isTrusted,
+			workspaceScheme: folder?.uri.scheme,
+			workspacePath
+		});
+		if (!eligible || !workspacePath) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Full Access is available only for one trusted local desktop workspace. It is disabled in web, remote, virtual, and untrusted windows.'));
+			return;
+		}
+
+		const continueLabel = vscode.l10n.t('Continue');
+		const selected = await vscode.window.showWarningMessage(
+			vscode.l10n.t('Enable Full Access for 15 minutes?'),
+			{
+				modal: true,
+				detail: vscode.l10n.t('Fikeya will approve its own workspace and process tool requests for this exact local folder until the timer expires. Path containment, secret redaction, output limits, network controls, receipts, and cancellation stay enforced. This grant is process-local and is never restored after restart.')
+			},
+			continueLabel
+		);
+		if (selected !== continueLabel) {
+			return;
+		}
+
+		const phrase = dangerousLocalModeConfirmation(folder.name);
+		const confirmation = await vscode.window.showInputBox({
+			title: vscode.l10n.t('Confirm temporary Full Access'),
+			prompt: vscode.l10n.t('Type exactly: {0}', phrase),
+			placeHolder: phrase,
+			ignoreFocusOut: true,
+			validateInput: value => value === phrase ? undefined : vscode.l10n.t('The confirmation phrase must match exactly.')
+		});
+		if (confirmation !== phrase) {
+			return;
+		}
+
+		this.dangerousLocalModeGrant = createDangerousLocalModeGrant(workspacePath);
+		this.scheduleDangerousLocalModeExpiry();
+		void vscode.commands.executeCommand('setContext', 'fikeya.dangerousLocalModeActive', true);
+		this.refresh();
+		void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya Full Access is active for this folder for 15 minutes. Tool requests are still recorded with exact receipts.'));
+	}
+
+	public disableDangerousLocalMode(showMessage = false): void {
+		if (this.dangerousLocalModeExpiryTimer) {
+			clearTimeout(this.dangerousLocalModeExpiryTimer);
+			this.dangerousLocalModeExpiryTimer = undefined;
+		}
+		const wasActive = this.dangerousLocalModeGrant !== undefined;
+		this.dangerousLocalModeGrant = undefined;
+		void vscode.commands.executeCommand('setContext', 'fikeya.dangerousLocalModeActive', false);
+		if (!this.disposed) {
+			this.refresh();
+		}
+		if (showMessage && wasActive) {
+			void vscode.window.showInformationMessage(vscode.l10n.t('Fikeya Full Access was disabled. Tool requests require approval again.'));
+		}
+	}
+
+	private scheduleDangerousLocalModeExpiry(): void {
+		if (this.dangerousLocalModeExpiryTimer) {
+			clearTimeout(this.dangerousLocalModeExpiryTimer);
+		}
+		const grant = this.dangerousLocalModeGrant;
+		if (!grant) {
+			return;
+		}
+		this.dangerousLocalModeExpiryTimer = setTimeout(() => {
+			this.disableDangerousLocalMode(false);
+			void vscode.window.showInformationMessage(vscode.l10n.t('Fikeya Full Access expired. Tool requests require approval again.'));
+		}, Math.max(1, Math.min(dangerousLocalModeDurationMs, grant.expiresAt - Date.now())));
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -464,6 +558,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 	public dispose(): void {
 		this.disposed = true;
+		this.disableDangerousLocalMode(false);
 		this.projectPanelRequired = false;
 		this.activeAgentRun?.cancel();
 		this.activeAgentRun = undefined;
@@ -1834,6 +1929,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	}
 
 	private async approveAgentTool(request: FikeyaAgentApproval): Promise<FikeyaAgentApprovalDecision> {
+		const workspacePath = getLocalWorkspacePath();
+		if (dangerousLocalModeIsActive(this.dangerousLocalModeGrant, workspacePath)) {
+			return 'allow_once';
+		}
+		if (this.dangerousLocalModeGrant) {
+			this.disableDangerousLocalMode(false);
+		}
 		const allow = vscode.l10n.t('Allow Once');
 		const deny = vscode.l10n.t('Deny Once');
 		const cancel = vscode.l10n.t('Cancel Run');
@@ -2420,6 +2522,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			? this.state.activeMode
 			: '';
 		const providerDefinitionOptions = getProviderDefinitions().map((definition, index) => `<option value="${escapeHtml(definition.id)}" data-label="${escapeHtml(definition.label)}" data-detail="${escapeHtml(definition.detail)}" data-base-url="${escapeHtml(definition.defaultBaseUrl)}" data-requires-secret="${definition.secretPrompt ? 'true' : 'false'}"${index === 0 ? ' selected' : ''}>${escapeHtml(definition.label)}</option>`).join('');
+		const fullAccessActive = dangerousLocalModeIsActive(this.dangerousLocalModeGrant, getLocalWorkspacePath());
+		const fullAccessRemainingMinutes = fullAccessActive && this.dangerousLocalModeGrant
+			? Math.max(1, Math.ceil((this.dangerousLocalModeGrant.expiresAt - Date.now()) / 60_000))
+			: 0;
 		const setupCards = `<section class="grid two compact-grid">
 			<article class="card">
 				<div class="card-heading"><h2>${escapeHtml(strings.getStarted)}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
@@ -2430,6 +2536,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				<div class="card-heading"><h2>${escapeHtml(strings.providers)}</h2><span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span></div>
 				<div class="providers">${providerCards}</div>
 				<div class="actions"><button data-provider-modal-open type="button">${escapeHtml(strings.configureProvider)}</button><button data-command="fikeya.configureProvider" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Azure CLI discovery'))}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
+			</article>
+			<article class="card full-access-card" data-active="${fullAccessActive}">
+				<div class="card-heading"><h2>${escapeHtml(vscode.l10n.t('Temporary Full Access'))}</h2><span class="badge">${escapeHtml(fullAccessActive ? vscode.l10n.t('{0} min left', fullAccessRemainingMinutes) : vscode.l10n.t('Off'))}</span></div>
+				<p>${escapeHtml(vscode.l10n.t('For a trusted local folder only. Fikeya skips repeated tool approval dialogs for 15 minutes while keeping containment, limits, redaction, cancellation, and receipts. It is never enabled remotely or restored after restart.'))}</p>
+				<div class="actions">${fullAccessActive
+					? `<button data-command="fikeya.dangerousLocalMode.disable" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Disable now'))}</button>`
+					: `<button data-command="fikeya.dangerousLocalMode.enable" type="button">${escapeHtml(vscode.l10n.t('Enable for 15 minutes'))}</button>`}</div>
 			</article>
 		</section>`;
 		const usageSurface = `${statisticsSurface}${this.state.agent.outcome ? `<section class="card">${renderCodingOutcome(this.state.agent.outcome, strings)}</section>` : ''}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
@@ -2829,6 +2942,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.memory-graph[data-expanded="true"] { position: fixed; inset: 0; z-index: 1000; align-content: start; overflow: auto; padding: 12px; background: var(--vscode-editor-background); }
 		.memory-graph[data-expanded="true"] .graph-viewport, .memory-graph[data-expanded="true"] .graph-canvas { min-height: calc(100vh - 160px); }
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
+		.full-access-card { border-color: var(--vscode-editorWarning-foreground); }
+		.full-access-card[data-active="true"] { box-shadow: inset 3px 0 0 var(--vscode-editorWarning-foreground); }
 		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
 			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 		@media (max-width: 900px) { .graph-workspace, .plan-workspace { grid-template-columns: 1fr; } .graph-details { max-height: none; } }

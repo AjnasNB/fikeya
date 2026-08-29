@@ -16,6 +16,8 @@
 	"command.chat.deleteSavedHistory.title": "Delete Saved Chat History",
 	"command.initializeWorkspace.title": "Initialize Workspace",
 	"command.runDoctor.title": "Run Doctor",
+	"command.dangerousLocalMode.enable.title": "Enable Temporary Full Access",
+	"command.dangerousLocalMode.disable.title": "Disable Temporary Full Access",
 	"command.mode.editor.title": "Open Editor Mode",
 	"command.mode.agent.title": "Open Chat",
 	"command.mode.terminal.title": "Open Terminal Mode",

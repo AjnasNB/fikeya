@@ -33,6 +33,8 @@
 		"onCommand:fikeya.configureAgents",
 		"onCommand:fikeya.initializeWorkspace",
 		"onCommand:fikeya.runDoctor",
+		"onCommand:fikeya.dangerousLocalMode.enable",
+		"onCommand:fikeya.dangerousLocalMode.disable",
 		"onCommand:fikeya.mode.research",
 		"onCommand:fikeya.view.usage",
 		"onCommand:fikeya.view.setup"
@@ -118,6 +120,18 @@
 				"title": "%command.runDoctor.title%",
 				"category": "%command.category%",
 				"icon": "$(pulse)"
+			},
+			{
+				"command": "fikeya.dangerousLocalMode.enable",
+				"title": "%command.dangerousLocalMode.enable.title%",
+				"category": "%command.category%",
+				"enablement": "isWorkspaceTrusted && fikeya.supportsDesktopWorkbench && !fikeya.dangerousLocalModeActive"
+			},
+			{
+				"command": "fikeya.dangerousLocalMode.disable",
+				"title": "%command.dangerousLocalMode.disable.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.dangerousLocalModeActive"
 			},
 			{
 				"command": "fikeya.mode.editor",
