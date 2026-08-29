@@ -123,7 +123,11 @@ the future. `scopeSha256` must match the exact scope hash.
 
 Fikeya consumes `approvalId` atomically before the agent starts. Reuse is
 rejected. Scope, expiry, provider identity, capability membership, and the tool
-call ceiling are rechecked at each internal approval boundary. The whole-run
+call ceiling are rechecked at each internal approval boundary. Scope, expiry,
+and provider identity are checked again before any final success is accepted.
+The expiry boundary is exclusive: authorization is invalid when current UTC
+time equals `expiresAt`. A controller should therefore issue an expiry covering
+dispatch time, `timeoutMs`, and its settlement grace. The whole-run
 authorization does not become blanket tool approval: each proposed tool call
 receives a distinct one-use decision only when its tool name is in
 `allowedTools` and the call count remains below `maxToolCalls`.
@@ -253,6 +257,7 @@ codes:
 | `failed` | `FIKEYA_RUNTIME_FAILED` | Runtime failed without disclosing internals |
 | `failed` | `FIKEYA_CAPABILITY_DENIED` | An unlisted or excess tool call was proposed |
 | `failed` | `FIKEYA_LIMIT_EXCEEDED` | Step or tool-call ceiling was exceeded |
+| `failed` | `FIKEYA_AUTHORIZATION_EXPIRED` | Whole-run authorization expired after execution started |
 | `failed` | `FIKEYA_AGENT_FAILED` | The bounded agent did not complete |
 | `failed` | `FIKEYA_USAGE_INVALID` | Reported usage was malformed or contradictory |
 

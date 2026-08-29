@@ -71,6 +71,10 @@ class StateError(FikeyaError):
     """Raised when session state violates an invariant."""
 
 
+class EndpointAuthorizationExpiredError(StateError):
+    """Raised when a managed endpoint authorization expires during its run."""
+
+
 class ApprovalError(FikeyaError):
     """Raised when tool execution lacks a matching live approval."""
 

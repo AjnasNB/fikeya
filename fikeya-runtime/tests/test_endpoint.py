@@ -9,6 +9,7 @@ import json
 import socket
 import sys
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -144,6 +145,25 @@ class _UsageTransport:
         }
         raw = stable_json(body).encode("utf-8")
         return JsonResponse(200, body, raw)
+
+
+class _MutableClock:
+    def __init__(self, current: datetime) -> None:
+        self.current = current
+
+    def __call__(self) -> datetime:
+        return self.current
+
+
+class _ClockAdvancingRunner(_FakeRunner):
+    def __init__(self, clock: _MutableClock, finish_at: datetime) -> None:
+        super().__init__()
+        self.clock = clock
+        self.finish_at = finish_at
+
+    async def run(self, **kwargs: object) -> object:
+        self.clock.current = self.finish_at
+        return await super().run(**kwargs)
 
 
 def _run(coroutine: object, monkeypatch: pytest.MonkeyPatch) -> object:
@@ -554,6 +574,80 @@ def test_endpoint_timeout_settles_on_python_310(
     assert payload["status"] == "cancelled"
     assert payload["errorCode"] == "FIKEYA_TIMEOUT"
     assert cast(dict[str, object], payload["usage"])["measurement"] == "unavailable"
+
+
+def test_no_tool_run_cannot_succeed_after_authorization_expires(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expires_at = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    starts_at = expires_at - timedelta(seconds=1)
+    value, providers, root = _fixture(tmp_path, tools=[], max_tool_calls=0)
+    cast(dict[str, object], value["authorization"])["expiresAt"] = (
+        expires_at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
+    request = validate_endpoint_request(value, cwd=root, clock=lambda: starts_at)
+    clock = _MutableClock(starts_at)
+    runner = _ClockAdvancingRunner(clock, expires_at + timedelta(microseconds=1))
+    result = _run(
+        execute_endpoint_request(
+            request,
+            providers,
+            runner_factory=lambda _workspace, _providers: runner,
+            clock=clock,
+        ),
+        monkeypatch,
+    )
+    payload = result.as_json()
+
+    assert runner.kwargs["allowed_tools"] == frozenset()
+    assert payload["requestSha256"] == request.request_sha256
+    assert payload["status"] == "failed"
+    assert payload["errorCode"] == "FIKEYA_AUTHORIZATION_EXPIRED"
+    assert cast(dict[str, object], payload["usage"])["measurement"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("finish_at_expiry", "expected_status", "expected_error"),
+    [
+        (False, "succeeded", None),
+        (True, "failed", "FIKEYA_AUTHORIZATION_EXPIRED"),
+    ],
+)
+def test_authorization_expiry_boundary_is_exclusive_for_final_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    finish_at_expiry: bool,
+    expected_status: str,
+    expected_error: str | None,
+) -> None:
+    expires_at = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    starts_at = expires_at - timedelta(seconds=1)
+    finish_at = (
+        expires_at
+        if finish_at_expiry
+        else expires_at - timedelta(microseconds=1)
+    )
+    value, providers, root = _fixture(tmp_path, tools=[], max_tool_calls=0)
+    cast(dict[str, object], value["authorization"])["expiresAt"] = (
+        expires_at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
+    request = validate_endpoint_request(value, cwd=root, clock=lambda: starts_at)
+    clock = _MutableClock(starts_at)
+    result = _run(
+        execute_endpoint_request(
+            request,
+            providers,
+            runner_factory=lambda _workspace, _providers: _ClockAdvancingRunner(
+                clock, finish_at
+            ),
+            clock=clock,
+        ),
+        monkeypatch,
+    ).as_json()
+
+    assert result["status"] == expected_status
+    assert result["errorCode"] == expected_error
 
 
 @pytest.mark.parametrize(

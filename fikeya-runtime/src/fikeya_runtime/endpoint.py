@@ -25,6 +25,7 @@ from fikeya_agent_core import ApprovalDecision, CancellationToken
 from .coding import CodingAgentRunner, CodingRunResult
 from .errors import (
     CancellationError,
+    EndpointAuthorizationExpiredError,
     ProviderError,
     ProviderOutputLimitError,
     StateError,
@@ -155,11 +156,16 @@ class EndpointRequest:
         if sha256_text(self.scope_canonical_json) != self.authorization.scope_sha256:
             raise StateError("Endpoint authorization scope changed during execution.")
 
-    def recheck_expiry(self) -> None:
+    def recheck_expiry(self, clock: Callable[[], datetime] | None = None) -> None:
         """Reject authorization that expires after initial parsing."""
 
-        if self.authorization.expires_at <= datetime.now(timezone.utc):
-            raise StateError("Endpoint authorization expired during execution.")
+        now = (clock or (lambda: datetime.now(timezone.utc)))()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        if self.authorization.expires_at <= now.astimezone(timezone.utc):
+            raise EndpointAuthorizationExpiredError(
+                "Endpoint authorization expired during execution."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,12 +360,13 @@ async def execute_endpoint_request(
     providers: ProviderStore,
     *,
     runner_factory: Callable[[Workspace, ProviderStore], EndpointRunner] | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> EndpointResult:
     """Consume authorization and run only through the existing agent/tool boundary."""
 
     profile = select_endpoint_provider(providers, request.provider)
     request.recheck_scope()
-    request.recheck_expiry()
+    request.recheck_expiry(clock)
     StateStore(request.workspace.state_path).consume_endpoint_authorization(
         approval_id=request.authorization.approval_id,
         request_sha256=request.request_sha256,
@@ -378,7 +385,7 @@ async def execute_endpoint_request(
     async def approve(exact_request: dict[str, object]) -> ApprovalDecision:
         nonlocal approved_calls, denied_call
         request.recheck_scope()
-        request.recheck_expiry()
+        request.recheck_expiry(clock)
         select_endpoint_provider(providers, request.provider)
         tool_name = exact_request.get("toolName")
         if (
@@ -429,6 +436,15 @@ async def execute_endpoint_request(
     except (CancellationError, asyncio.CancelledError):
         cancellation.cancel()
         return _failed_result(request, profile, endpoint_session_id, "cancelled", "FIKEYA_CANCELLED")
+    except EndpointAuthorizationExpiredError:
+        cancellation.cancel()
+        return _failed_result(
+            request,
+            profile,
+            endpoint_session_id,
+            "failed",
+            "FIKEYA_AUTHORIZATION_EXPIRED",
+        )
     except ProviderOutputLimitError:
         cancellation.cancel()
         return _failed_result(
@@ -483,6 +499,9 @@ async def execute_endpoint_request(
                 request, profile, endpoint_session_id, "failed", "FIKEYA_USAGE_INVALID"
             )
         measurement, complete, input_tokens, cached_tokens, output_tokens = usage
+        request.recheck_scope()
+        select_endpoint_provider(providers, request.provider)
+        request.recheck_expiry(clock)
         return EndpointResult(
             request_sha256=request.request_sha256,
             status="succeeded",
@@ -495,6 +514,14 @@ async def execute_endpoint_request(
             input_tokens=input_tokens,
             cached_input_tokens=cached_tokens,
             output_tokens=output_tokens,
+        )
+    except EndpointAuthorizationExpiredError:
+        return _failed_result(
+            request,
+            profile,
+            endpoint_session_id,
+            "failed",
+            "FIKEYA_AUTHORIZATION_EXPIRED",
         )
     except Exception:  # noqa: BLE001 - settle post-start normalization failures.
         return _failed_result(
