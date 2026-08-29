@@ -34,3 +34,12 @@ npm test
 ```
 
 The integration test creates an isolated temporary workspace, approves its capture policy, writes a real decision to Qarinah, compiles a cited context pack, and removes the workspace afterward.
+
+The Fikeya release packager publishes this sidecar as a deterministic archive.
+Repository-owned UTF-8 text is normalized to LF; npm-generated `.bin` shims and
+the nested installation snapshot are excluded; member paths must be portable
+ASCII; archive entries use fixed timestamps, ordering, compression, and
+regular `0644` metadata. The binding receipt attests canonical paths, sizes,
+and file hashes with artifact modes normalized to zero, while link, reparse,
+hardlink, special-file, containment, resource-limit, and mutation checks
+remain mandatory.
