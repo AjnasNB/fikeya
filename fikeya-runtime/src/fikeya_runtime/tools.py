@@ -502,4 +502,3 @@ def _is_cancellation_requested(callback: Callable[[], bool] | None) -> bool:
         # A broken cancellation channel cannot safely authorize continued execution.
         return True
 
-
