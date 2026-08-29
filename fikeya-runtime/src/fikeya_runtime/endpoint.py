@@ -422,7 +422,7 @@ async def execute_endpoint_request(
             ),
             timeout=request.limits.timeout_ms / 1_000,
         )
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         cancellation.cancel()
         return _failed_result(request, profile, endpoint_session_id, "cancelled", "FIKEYA_TIMEOUT")
     except (CancellationError, asyncio.CancelledError):
@@ -431,53 +431,65 @@ async def execute_endpoint_request(
     except Exception:  # noqa: BLE001 - post-start errors settle without leaking details.
         return _failed_result(request, profile, endpoint_session_id, "failed", "FIKEYA_RUNTIME_FAILED")
 
-    usage = _safe_usage(result)
-    if denied_call:
-        return _failed_result(
-            request,
-            profile,
-            endpoint_session_id,
-            "failed",
-            "FIKEYA_CAPABILITY_DENIED",
-            usage=usage,
+    try:
+        usage = _safe_usage(result)
+        if denied_call:
+            return _failed_result(
+                request,
+                profile,
+                endpoint_session_id,
+                "failed",
+                "FIKEYA_CAPABILITY_DENIED",
+                usage=usage,
+            )
+        if result.session_id != endpoint_session_id:
+            return _failed_result(
+                request, profile, endpoint_session_id, "failed", "FIKEYA_RUNTIME_FAILED"
+            )
+        if (
+            result.steps > request.limits.max_steps
+            or len(result.tool_calls) > request.limits.max_tool_calls
+        ):
+            return _failed_result(
+                request,
+                profile,
+                endpoint_session_id,
+                "failed",
+                "FIKEYA_LIMIT_EXCEEDED",
+                usage=usage,
+            )
+        if result.status != "completed":
+            status = "cancelled" if result.status == "cancelled" else "failed"
+            return _failed_result(
+                request,
+                profile,
+                endpoint_session_id,
+                status,
+                "FIKEYA_CANCELLED" if status == "cancelled" else "FIKEYA_AGENT_FAILED",
+                usage=usage,
+            )
+        if usage is None:
+            return _failed_result(
+                request, profile, endpoint_session_id, "failed", "FIKEYA_USAGE_INVALID"
+            )
+        measurement, complete, input_tokens, cached_tokens, output_tokens = usage
+        return EndpointResult(
+            request_sha256=request.request_sha256,
+            status="succeeded",
+            session_id=endpoint_session_id,
+            provider=profile.name,
+            model=profile.model,
+            error_code=None,
+            measurement=measurement,
+            complete=complete,
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_tokens,
+            output_tokens=output_tokens,
         )
-    if result.session_id != endpoint_session_id:
-        return _failed_result(request, profile, endpoint_session_id, "failed", "FIKEYA_RUNTIME_FAILED")
-    if result.steps > request.limits.max_steps or len(result.tool_calls) > request.limits.max_tool_calls:
+    except Exception:  # noqa: BLE001 - settle post-start normalization failures.
         return _failed_result(
-            request,
-            profile,
-            endpoint_session_id,
-            "failed",
-            "FIKEYA_LIMIT_EXCEEDED",
-            usage=usage,
+            request, profile, endpoint_session_id, "failed", "FIKEYA_RUNTIME_FAILED"
         )
-    if result.status != "completed":
-        status = "cancelled" if result.status == "cancelled" else "failed"
-        return _failed_result(
-            request,
-            profile,
-            endpoint_session_id,
-            status,
-            "FIKEYA_CANCELLED" if status == "cancelled" else "FIKEYA_AGENT_FAILED",
-            usage=usage,
-        )
-    if usage is None:
-        return _failed_result(request, profile, endpoint_session_id, "failed", "FIKEYA_USAGE_INVALID")
-    measurement, complete, input_tokens, cached_tokens, output_tokens = usage
-    return EndpointResult(
-        request_sha256=request.request_sha256,
-        status="succeeded",
-        session_id=endpoint_session_id,
-        provider=profile.name,
-        model=profile.model,
-        error_code=None,
-        measurement=measurement,
-        complete=complete,
-        input_tokens=input_tokens,
-        cached_input_tokens=cached_tokens,
-        output_tokens=output_tokens,
-    )
 
 
 def select_endpoint_provider(

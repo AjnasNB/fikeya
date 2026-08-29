@@ -459,6 +459,29 @@ def test_endpoint_accepts_aggregate_usage_above_the_per_call_output_limit(
     assert cast(dict[str, object], payload["usage"])["outputTokens"] == 900
 
 
+def test_endpoint_timeout_settles_on_python_310(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value, providers, root = _fixture(tmp_path, tools=[], max_tool_calls=0)
+    cast(dict[str, object], value["limits"])["timeoutMs"] = 1
+    _rescope(value)
+    request = validate_endpoint_request(value, cwd=root)
+    result = _run(
+        execute_endpoint_request(
+            request,
+            providers,
+            runner_factory=lambda _workspace, _providers: _FakeRunner(delay=0.1),
+        ),
+        monkeypatch,
+    )
+    payload = result.as_json()
+
+    assert payload["status"] == "cancelled"
+    assert payload["errorCode"] == "FIKEYA_TIMEOUT"
+    assert cast(dict[str, object], payload["usage"])["measurement"] == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("runner", "status", "error_code", "measurement"),
     [
