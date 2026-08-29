@@ -17,7 +17,9 @@ would create a second approval/execution boundary outside Fikeya.
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import importlib.util
+import sys
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
@@ -61,12 +63,46 @@ class DeepAgentsDependencyStatus:
 
     deepagents: bool
     langgraph: bool
+    python_supported: bool
 
     @property
     def available(self) -> bool:
         """Return whether both packages needed by a real graph are importable."""
 
-        return self.deepagents and self.langgraph
+        return self.python_supported and self.deepagents and self.langgraph
+
+
+@dataclass(frozen=True, slots=True)
+class DeepAgentsIntegrationDiagnostic:
+    """Content-free support report for CLI, Desktop, and host diagnostics."""
+
+    adapter_api_version: int
+    dependencies: DeepAgentsDependencyStatus
+    deepagents_version: str | None
+    langgraph_version: str | None
+    graph_supplied: bool
+    graph_compatible: bool
+    install_extra: str
+    tool_boundary: str
+
+    def as_json(self) -> dict[str, JsonValue]:
+        """Return a stable JSON representation without model or workspace data."""
+
+        return {
+            "adapterApiVersion": self.adapter_api_version,
+            "dependencies": {
+                "available": self.dependencies.available,
+                "deepagents": self.dependencies.deepagents,
+                "langgraph": self.dependencies.langgraph,
+                "pythonSupported": self.dependencies.python_supported,
+            },
+            "deepagentsVersion": self.deepagents_version,
+            "graphCompatible": self.graph_compatible,
+            "graphSupplied": self.graph_supplied,
+            "installExtra": self.install_extra,
+            "langgraphVersion": self.langgraph_version,
+            "toolBoundary": self.tool_boundary,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +155,7 @@ def deep_agents_dependency_status() -> DeepAgentsDependencyStatus:
     return DeepAgentsDependencyStatus(
         deepagents=_module_available("deepagents"),
         langgraph=_module_available("langgraph"),
+        python_supported=sys.version_info >= (3, 11),
     )
 
 
@@ -128,14 +165,37 @@ def require_deep_agents_dependencies() -> None:
     status = deep_agents_dependency_status()
     if status.available:
         return
+    if not status.python_supported:
+        raise ConfigurationError(
+            "Optional Deep Agents support requires Python 3.11 or newer; "
+            "the dependency-free native Fikeya engine continues to support Python 3.10"
+        )
     missing = [
         name
         for name, present in (("deepagents", status.deepagents), ("langgraph", status.langgraph))
         if not present
     ]
     raise ConfigurationError(
-        "Optional Deep Agents support is unavailable; install the missing package(s) in the host environment: "
+        "Optional Deep Agents support is unavailable; install fikeya-agent-core[deep-agents] "
+        "or add the missing package(s) to the host environment: "
         + ", ".join(missing)
+    )
+
+
+def deep_agents_diagnostic(graph: object | None = None) -> DeepAgentsIntegrationDiagnostic:
+    """Report installed support and whether one host-supplied graph is compatible."""
+
+    dependencies = deep_agents_dependency_status()
+    supplied = graph is not None
+    return DeepAgentsIntegrationDiagnostic(
+        adapter_api_version=1,
+        dependencies=dependencies,
+        deepagents_version=_module_version("deepagents") if dependencies.deepagents else None,
+        langgraph_version=_module_version("langgraph") if dependencies.langgraph else None,
+        graph_supplied=supplied,
+        graph_compatible=supplied and callable(getattr(graph, "ainvoke", None)),
+        install_extra="fikeya-agent-core[deep-agents]",
+        tool_boundary="fikeya-propose-only",
     )
 
 
@@ -438,3 +498,10 @@ def _module_available(name: str) -> bool:
         return importlib.util.find_spec(name) is not None
     except (ImportError, ModuleNotFoundError, ValueError):
         return False
+
+
+def _module_version(name: str) -> str | None:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None

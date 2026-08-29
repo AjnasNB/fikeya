@@ -119,6 +119,7 @@ def test_dependency_probe_is_clean_and_missing_packages_are_actionable(monkeypat
         return None
 
     monkeypatch.setattr("fikeya_agent_core.deep_agents.importlib.util.find_spec", missing)
+    monkeypatch.setattr("fikeya_agent_core.deep_agents.sys.version_info", (3, 11))
 
     status = deep_agents_dependency_status()
 
