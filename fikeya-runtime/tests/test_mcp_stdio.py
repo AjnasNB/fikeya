@@ -53,7 +53,7 @@ def test_real_stdio_child_initializes_lists_and_calls_with_typed_results(
     ) as host:
         assert host.server_identity is not None
         assert host.server_identity.name == "cockroach-browser"
-        assert host.server_identity.version == "0.2.1"
+        assert host.server_identity.version == "0.4.1"
         assert [tool.name for tool in host.list_tools()] == _TOOLS
         result = host.call_tool("browser_capabilities", {"message": "bounded test"})
         assert result.is_error is False
@@ -247,7 +247,7 @@ for line in sys.stdin:
         continue
     method = request.get("method")
     if method == "initialize":
-        version = "0.4.0" if MODE == "wrong-version" else "0.2.1"
+        version = "0.3.9" if MODE == "wrong-version" else "0.4.1"
         send(request["id"], {{
             "protocolVersion": request["params"]["protocolVersion"],
             "capabilities": {{"tools": {{"listChanged": False}}}},

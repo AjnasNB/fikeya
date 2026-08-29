@@ -41,7 +41,7 @@ const CONTRACTS = {
     args: ["mcp"],
     dependency: {
       package: "cockroach-browser",
-      versionRange: ">=0.2.1 <0.3.0",
+      versionRange: ">=0.4.1 <0.5.0",
       license: "AGPL-3.0-or-later",
       source: "https://github.com/AjnasNB/cockroach-browser",
       homepage: "https://cockroachbrowser.com"
