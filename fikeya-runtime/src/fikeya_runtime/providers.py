@@ -47,7 +47,7 @@ class ProviderDefinition:
     kind: ProviderKind
     default_base_url: str | None
     default_credential_type: str
-    secret_required: bool
+    credential_required: bool
     default_api_mode: str
     supported_api_modes: tuple[str, ...]
 
@@ -57,7 +57,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.AZURE_OPENAI,
         default_base_url=None,
         default_credential_type="entra-id",
-        secret_required=False,
+        credential_required=False,
         default_api_mode="responses",
         supported_api_modes=("responses", "chat-completions"),
     ),
@@ -65,7 +65,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.OPENAI,
         default_base_url="https://api.openai.com/v1",
         default_credential_type="bearer",
-        secret_required=True,
+        credential_required=True,
         default_api_mode="responses",
         supported_api_modes=("responses", "chat-completions"),
     ),
@@ -73,7 +73,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.ANTHROPIC,
         default_base_url="https://api.anthropic.com/v1",
         default_credential_type="api-key",
-        secret_required=True,
+        credential_required=True,
         default_api_mode="native",
         supported_api_modes=("native",),
     ),
@@ -81,7 +81,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.OPENROUTER,
         default_base_url="https://openrouter.ai/api/v1",
         default_credential_type="bearer",
-        secret_required=True,
+        credential_required=True,
         default_api_mode="chat-completions",
         supported_api_modes=("responses", "chat-completions"),
     ),
@@ -89,7 +89,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.NVIDIA_NIM,
         default_base_url="https://integrate.api.nvidia.com/v1",
         default_credential_type="bearer",
-        secret_required=True,
+        credential_required=True,
         default_api_mode="chat-completions",
         supported_api_modes=("responses", "chat-completions"),
     ),
@@ -97,7 +97,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.GOOGLE_GEMINI,
         default_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         default_credential_type="bearer",
-        secret_required=True,
+        credential_required=True,
         default_api_mode="chat-completions",
         supported_api_modes=("chat-completions",),
     ),
@@ -105,7 +105,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.HUGGING_FACE,
         default_base_url="https://router.huggingface.co/v1",
         default_credential_type="bearer",
-        secret_required=True,
+        credential_required=True,
         default_api_mode="chat-completions",
         supported_api_modes=("chat-completions",),
     ),
@@ -113,7 +113,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.GROQ,
         default_base_url="https://api.groq.com/openai/v1",
         default_credential_type="bearer",
-        secret_required=True,
+        credential_required=True,
         default_api_mode="chat-completions",
         supported_api_modes=("chat-completions",),
     ),
@@ -121,7 +121,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.OLLAMA,
         default_base_url="http://127.0.0.1:11434/v1",
         default_credential_type="none",
-        secret_required=False,
+        credential_required=False,
         default_api_mode="chat-completions",
         supported_api_modes=("chat-completions",),
     ),
@@ -129,7 +129,7 @@ PROVIDER_REGISTRY: dict[ProviderKind, ProviderDefinition] = {
         kind=ProviderKind.OPENAI_COMPATIBLE,
         default_base_url=None,
         default_credential_type="bearer",
-        secret_required=False,
+        credential_required=False,
         default_api_mode="chat-completions",
         supported_api_modes=("responses", "chat-completions"),
     ),
@@ -364,7 +364,7 @@ def build_profile(
     if selected_url is None:
         raise ConfigurationError(f"{kind.value} requires --base-url.")
     selected_credential = credential_type or definition.default_credential_type
-    if definition.secret_required and selected_credential in {"none", "entra-id"}:
+    if definition.credential_required and selected_credential in {"none", "entra-id"}:
         raise ConfigurationError(
             f"{kind.value} requires an authenticated credential type."
         )

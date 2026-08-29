@@ -418,6 +418,25 @@ def test_cli_init_and_provider_listing_make_no_network_calls(
     listed = json.loads(capsys.readouterr().out)
     assert listed["providers"][0]["name"] == "local"
 
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "provider",
+                "list",
+                "--available",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    available = json.loads(capsys.readouterr().out)["providers"]
+    by_kind = {entry["kind"]: entry for entry in available}
+    assert by_kind["openai"]["credentialRequired"] is True
+    assert by_kind["ollama"]["credentialRequired"] is False
+    assert all("secretRequired" not in entry for entry in available)
+
     assert main(["--home", str(home), "provider", "test", "local", "--json"]) == 2
     denied = json.loads(capsys.readouterr().out)
     assert "Network probe denied" in denied["error"]

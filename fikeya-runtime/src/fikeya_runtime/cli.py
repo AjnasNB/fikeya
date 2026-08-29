@@ -653,7 +653,7 @@ def _run_provider(args: argparse.Namespace) -> int:
                     "defaultBaseUrl": definition.default_base_url,
                     "defaultCredentialType": definition.default_credential_type,
                     "kind": definition.kind.value,
-                    "secretRequired": definition.secret_required,
+                    "credentialRequired": definition.credential_required,
                 }
                 for definition in PROVIDER_REGISTRY.values()
             ]
