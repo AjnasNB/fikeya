@@ -364,15 +364,16 @@ ship macOS, Linux, Windows ARM64, or macOS ARM64 installers.
 
 ### Reviewed external tool presets
 
-Fikeya Runtime ships configuration-only presets for separately installed
-Cockroach Browser and Cockroach Crawler CLIs. Both start disabled. Listing a
-preset only checks whether its executable name is discoverable; it does not
-run the executable, contact a network service, or claim that the installed
-package or version is authentic.
+Fikeya Runtime ships reviewed presets and a bounded local MCP-over-stdio host
+for separately installed Cockroach Browser and Cockroach Crawler CLIs. Both
+start disabled. Listing a preset only checks whether its executable name is
+discoverable; it does not run the executable, contact a network service, or
+claim that the installed package or version is authentic.
 
 ```console
 fikeya tool list --json
 fikeya tool enable cockroach-browser --workspace . --confirm-workspace
+fikeya tool credential-set cockroach-browser COCKROACH_BROWSER_TOKEN --workspace . --secret-stdin
 fikeya tool status --workspace . --json
 fikeya tool disable cockroach-browser --workspace .
 ```
@@ -383,17 +384,31 @@ until it is confirmed again. SQLite stores only the preset identifier, digest,
 and enablement timestamp. Configuration values and credentials are never
 stored in the enablement record, and enabling a preset does not start it.
 
-The runtime loader resolves a fixed executable without a shell, constructs a
-minimal child environment, and rejects filesystem-root workspaces, escaped
-metadata paths, shell-script shims, unknown configuration fields, URL
-credentials, private literal crawler IPs, and non-finite or widened limits.
-Request bytes, response bytes, request count, concurrency, request timeout,
-and total session duration are guarded by the loader. The caller remains
-responsible for MCP message framing, cancellation, and terminating the child
-on a protocol failure.
+In Build and Research modes, enabled presets expose only their reviewed MCP
+tools under the `mcp.<preset>.<tool>` namespace. Each call still crosses the
+normal exact, single-use Agent Core approval before the execution broker can
+invoke it. The host validates MCP initialization, package name, compatible
+stable version, complete tool allowlist, JSON-RPC identifiers, tool schemas,
+typed results, sizes, counts, timeouts, and session duration. It captures only
+a bounded redacted stderr tail and owns the whole child process tree so
+cancellation or a protocol failure also terminates descendants.
 
-External executable provenance and version verification is intentionally an
-explicit diagnostic warning in this beta. On Windows, `.cmd`, `.bat`, and
+The loader resolves a fixed executable without a shell, constructs a minimal
+child environment that does not inherit home/profile directories or provider
+credentials, and rejects filesystem-root workspaces, escaped metadata paths,
+shell-script shims, unknown configuration fields, URL credentials, private
+literal crawler IPs, and non-finite or widened limits. Credentials are resolved
+from the OS keyring at launch and redacted from schemas, results, remote errors,
+and diagnostics.
+
+An enabled preset is trusted local executable code, not an OS sandbox. Exact
+approval controls when Fikeya calls it; it does not remove the executable's
+desktop-user filesystem or network permissions. Install only reviewed binaries
+or add an external OS sandbox for stronger isolation.
+
+External executable provenance remains an explicit diagnostic warning in this
+beta. The MCP peer's reported package name and version are checked, but that is
+not cryptographic artifact verification. On Windows, `.cmd`, `.bat`, and
 PowerShell shims are rejected because the no-shell boundary requires a native
 executable entry point.
 

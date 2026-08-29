@@ -44,7 +44,7 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Coordinated team run: **integrated beta candidate** - selected read-only planning, research, and review specialists run through a bounded parallel pool before one selected lead model verifies their findings and enters the normal approval-gated coding loop. Parallel writers and delegated worktree merges are not claimed.
 - Deep Agents and LangGraph integration: **planned** - the current native core does not require or bundle them.
 - ACP client boundary: **standalone implemented** - local stdio session start/resume/fork, negotiation, cancellation, permissions, and bounded callbacks exist; product wiring and a native ACP agent remain planned.
-- MCP client boundary: **standalone implemented** - discovery, allowlists, normalized calls, permission checks, limits, cancellation, and receipts exist; a product-level session manager, server, and registry remain planned.
+- MCP client boundary: **reviewed presets integrated** - Cockroach Browser and Cockroach Crawler use a product-level local-stdio registry with exact preset digests, server identity/version checks, allowlisted schemas, normalized results, limits, credential redaction, process-tree ownership, and the existing execution-broker approval path. Arbitrary manifests and remote MCP remain excluded.
 - Codex app-server adapter: **standalone implemented** - local stdio contracts and the process manifest exist; Desktop/CLI wiring remains planned.
 - Claude Agent SDK adapter: **planned**.
 - Repository map, Tree-sitter symbols, LSP enrichment, and token-budget ranking: **planned**.
@@ -52,7 +52,7 @@ Fikeya's primary outcome is provider-neutral AI-assisted development with better
 - Context compaction: **partial** - Qarinah provides bounded cited preparation/compaction; provider-backed optional summarization and an integrated product policy remain planned.
 - Session resume and fork: **standalone implemented** in runtime/core state; integrated Desktop controls remain planned.
 - Browser and crawler presets: **integrated alpha** as reviewed disabled configuration only.
-- Browser and crawler tool sessions behind approvals: **planned** - MCP framing, execution-broker routing, and Desktop approval UX are not integrated.
+- Browser and crawler tool sessions behind approvals: **runtime integrated** - enabled reviewed presets become namespaced Build/Research tools and every call pauses at the existing exact one-use approval. Desktop enablement/configuration UX and an OS sandbox remain planned.
 - Patch checkpoints, rollback, lint, tests, and repair loop: **planned**.
 - Linux and macOS clean-install evidence: **planned**.
 

@@ -45,7 +45,9 @@ Puppeteer and its transitive dependencies are trusted local executable code, not
 
 The beta.8 Windows x64 Desktop and VSIX runtime embed one pinned Chromium Headless Shell payload and verify its version, file set, digest, and required licenses. The source and standalone CLI paths must install the Runtime `browser` extra and provision the matching browser separately. No embedded browser package is shipped for macOS, Linux, or ARM64.
 
-Cockroach Browser and Cockroach Crawler presets remain configuration only. They start disabled, bind enablement to an exact reviewed manifest digest, and do not start a child merely by being listed or enabled. Their loader uses a fixed executable without a shell, a minimal environment, root-bound metadata, and bounded request/response/session limits. Complete MCP framing, crawler robots and redirect policy, provenance verification, and forced child termination on protocol failure remain caller responsibilities.
+Cockroach Browser and Cockroach Crawler presets start disabled, bind enablement to an exact reviewed manifest digest, and do not start a child merely by being listed or enabled. Build and Research runs expose only namespaced allowlisted tools. The host uses a fixed executable without a shell, a minimal environment without home/profile directories or provider credentials, root-bound metadata, exact Agent Core approval, bounded MCP framing and typed results, resolved-secret redaction, and complete process-tree termination on cancellation or protocol failure. Crawler robots/redirect policy remains upstream, and server-reported identity/version is not cryptographic provenance verification.
+
+These presets run trusted local executables with the operating-system permissions of the desktop user. Exact approval limits when a call may begin; it is not a filesystem or network sandbox. Environment minimization and descendant cleanup reduce exposure but do not replace dependency review, artifact verification, or OS isolation.
 
 ### Memory and privacy boundary
 
