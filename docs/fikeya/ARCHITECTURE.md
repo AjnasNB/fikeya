@@ -190,4 +190,4 @@ Tenant billing, SSO, SCIM, and enterprise administration are not part of the pub
 
 ## Release gate
 
-Fikeya must not be described as stable until the same fixture succeeds through each claimed Desktop and CLI package, rejected operations leave the worktree unchanged, cancellation terminates active work, recovery survives sidecar/runtime restart, secrets are absent from artifacts, and clean-install tests pass on every shipped platform. Beta.5 currently targets Windows x64 packaging only; macOS, Linux, and ARM64 installers are not shipped.
+Fikeya must not be described as stable until the same fixture succeeds through each claimed Desktop and CLI package, rejected operations leave the worktree unchanged, cancellation terminates active work, recovery survives sidecar/runtime restart, secrets are absent from artifacts, and clean-install tests pass on every shipped platform. Beta.8 currently targets Windows x64 packaging only; macOS, Linux, and ARM64 installers are not shipped.
