@@ -26,6 +26,7 @@ from .coding import CodingAgentRunner, CodingRunResult
 from .errors import (
     CancellationError,
     ProviderError,
+    ProviderOutputLimitError,
     StateError,
     WorkspaceError,
 )
@@ -428,6 +429,15 @@ async def execute_endpoint_request(
     except (CancellationError, asyncio.CancelledError):
         cancellation.cancel()
         return _failed_result(request, profile, endpoint_session_id, "cancelled", "FIKEYA_CANCELLED")
+    except ProviderOutputLimitError:
+        cancellation.cancel()
+        return _failed_result(
+            request,
+            profile,
+            endpoint_session_id,
+            "failed",
+            "FIKEYA_LIMIT_EXCEEDED",
+        )
     except Exception:  # noqa: BLE001 - post-start errors settle without leaking details.
         return _failed_result(request, profile, endpoint_session_id, "failed", "FIKEYA_RUNTIME_FAILED")
 
