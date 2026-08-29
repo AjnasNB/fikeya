@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-from fikeya_runtime.errors import StateError
+from fikeya_runtime.errors import EndpointAuthorizationExpiredError, StateError
 from fikeya_runtime.events import EventType
 from fikeya_runtime.state import StateStore
 
@@ -16,6 +16,41 @@ def _store(tmp_path: Path) -> StateStore:
     store = StateStore(tmp_path / "state.sqlite3")
     store.initialize()
     return store
+
+
+def test_endpoint_authorization_consumption_rejects_expiry_and_replay(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    arguments = {
+        "approval_id": "approval-boundary",
+        "request_sha256": "sha256:" + ("a" * 64),
+        "tenant_id": "tenant-boundary",
+        "endpoint_id": "endpoint-boundary",
+        "command_id": "command-boundary",
+        "run_id": "run-boundary",
+        "tool_call_id": "tool-boundary",
+    }
+
+    with pytest.raises(EndpointAuthorizationExpiredError, match="expired"):
+        store.consume_endpoint_authorization(
+            **arguments,
+            expires_at=now.isoformat().replace("+00:00", "Z"),
+            clock=lambda: now,
+        )
+
+    store.consume_endpoint_authorization(
+        **arguments,
+        expires_at=(now + timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+        clock=lambda: now,
+    )
+    with pytest.raises(StateError, match="already been consumed"):
+        store.consume_endpoint_authorization(
+            **arguments,
+            expires_at=(now + timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+            clock=lambda: now,
+        )
 
 
 def test_stream_resume_cancel_and_terminal_invariant(tmp_path: Path) -> None:

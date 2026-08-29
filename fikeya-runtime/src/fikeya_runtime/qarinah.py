@@ -10,9 +10,11 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,12 +46,26 @@ class QarinahQueryResult:
     receipt: QarinahReceipt
 
 
+@dataclass(frozen=True, slots=True)
+class QarinahSidecarVersion:
+    """Exact package identity reported by the pinned sidecar process."""
+
+    name: str
+    protocol: str
+    version: str
+    qarinah_version: str
+
+
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 FIKEYA_NODE_EXECUTABLE = "FIKEYA_NODE_EXECUTABLE"
 FIKEYA_QARINAH_SIDECAR = "FIKEYA_QARINAH_SIDECAR"
 MAXIMUM_SIDECAR_RESPONSE_BYTES = 1024 * 1024
 _SIDECAR_REQUEST_ID = "fikeya-memory-prepare"
+_SIDECAR_VERSION_REQUEST_ID = "fikeya-memory-version"
+_SIDECAR_PROTOCOL = "fikeya.qarinah-sidecar.v1"
+_SIDECAR_PACKAGE_NAME = "@fikeya/qarinah-sidecar"
+_SIDECAR_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 _SHELL_WRAPPER_SUFFIXES = frozenset({".bat", ".cmd", ".ps1"})
 _HASH_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _WORKSPACE_ID_PATTERN = re.compile(r"^ws_[0-9a-f]{32}$")
@@ -284,6 +300,7 @@ class QarinahSidecarAdapter:
         sidecar_path: str | Path,
         runner: Runner = subprocess.run,
         environment: Mapping[str, str] | None = None,
+        rebuild: bool = True,
     ) -> None:
         self.boundary = WorkspaceBoundary(workspace_root)
         self.state = state
@@ -299,6 +316,7 @@ class QarinahSidecarAdapter:
         )
         self._runner = runner
         self._environment = _sidecar_environment(environment, self.boundary.root)
+        self._rebuild = rebuild
         if self.node_executable.name.lower() not in {"node", "node.exe"}:
             self._environment["ELECTRON_RUN_AS_NODE"] = "1"
 
@@ -322,7 +340,8 @@ class QarinahSidecarAdapter:
             "minimumCoverage": minimum_coverage,
             "minimumEvidence": minimum_coverage,
             "query": query,
-            "rebuild": True,
+            "rebuild": self._rebuild,
+            "updateCheckpoint": self._rebuild,
         }
         request = stable_json(
             {
@@ -334,7 +353,8 @@ class QarinahSidecarAdapter:
         )
         start = time.monotonic()
         try:
-            completed = self._runner(
+            completed = _run_sidecar_process(
+                self._runner,
                 [
                     str(self.node_executable),
                     str(self.sidecar_path),
@@ -344,11 +364,7 @@ class QarinahSidecarAdapter:
                 cwd=self.boundary.root,
                 env=self._environment,
                 input=f"{request}\n",
-                text=True,
-                capture_output=True,
                 timeout=timeout_seconds,
-                check=False,
-                shell=False,
             )
         except (OSError, subprocess.SubprocessError) as error:
             raise FikeyaError(
@@ -408,6 +424,39 @@ class QarinahSidecarAdapter:
         )
         return QarinahQueryResult(content=content, receipt=receipt)
 
+    def version(self, *, timeout_seconds: float = 15.0) -> QarinahSidecarVersion:
+        """Probe the exact sidecar process for its signed runtime version."""
+
+        request = stable_json(
+            {
+                "id": _SIDECAR_VERSION_REQUEST_ID,
+                "jsonrpc": "2.0",
+                "method": "runtime.version",
+                "params": {},
+            }
+        )
+        try:
+            completed = _run_sidecar_process(
+                self._runner,
+                [
+                    str(self.node_executable),
+                    str(self.sidecar_path),
+                    "--root",
+                    str(self.boundary.root),
+                ],
+                cwd=self.boundary.root,
+                env=self._environment,
+                input=f"{request}\n",
+                timeout=timeout_seconds,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise FikeyaError(
+                "The configured Qarinah sidecar version probe failed."
+            ) from error
+        if completed.returncode != 0:
+            raise FikeyaError("The configured Qarinah sidecar version probe failed.")
+        return _parse_sidecar_version(completed.stdout)
+
     def _record_receipt(
         self,
         session_id: str,
@@ -441,6 +490,90 @@ class QarinahSidecarAdapter:
             coverage=coverage,
             evidence_count=evidence_count,
         )
+
+
+def _run_sidecar_process(
+    runner: Runner,
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    input: str,
+    timeout: float,
+) -> subprocess.CompletedProcess[str]:
+    """Run one sidecar request and synchronously reap its process tree."""
+
+    if runner is not subprocess.run:
+        return runner(
+            argv,
+            cwd=cwd,
+            env=env,
+            input=input,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            shell=False,
+        )
+
+    creation_flags = (
+        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
+    )
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+        start_new_session=os.name != "nt",
+        creationflags=creation_flags,
+    )
+    try:
+        stdout, stderr = process.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_sidecar_process_tree(process)
+        raise
+    return subprocess.CompletedProcess(
+        argv,
+        process.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _kill_sidecar_process_tree(process: subprocess.Popen[str]) -> None:
+    """Force-stop and reap a timed-out managed sidecar and its descendants."""
+
+    if process.poll() is not None:
+        process.wait()
+        return
+    if os.name == "nt":
+        system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR")
+        taskkill = (
+            Path(system_root) / "System32" / "taskkill.exe" if system_root else None
+        )
+        if taskkill is not None and taskkill.is_file():
+            with suppress(OSError, subprocess.SubprocessError):
+                subprocess.run(
+                    [str(taskkill), "/PID", str(process.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    check=False,
+                    shell=False,
+                )
+    else:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
+    if process.poll() is None:
+        with suppress(OSError):
+            process.kill()
+    with suppress(OSError, subprocess.TimeoutExpired):
+        process.wait(timeout=5)
 
 
 def select_qarinah_adapter(
@@ -602,6 +735,68 @@ def _parse_sidecar_result(content: str) -> dict[str, object]:
     if not isinstance(result, dict):
         raise FikeyaError("Qarinah sidecar returned no context result.")
     return result
+
+
+def _parse_sidecar_version(content: str) -> QarinahSidecarVersion:
+    if len(content.encode("utf-8")) > 16_384:
+        raise FikeyaError("Qarinah sidecar version response exceeds its limit.")
+    lines = content.splitlines()
+    if len(lines) != 1 or not lines[0]:
+        raise FikeyaError("Qarinah sidecar returned an invalid version response.")
+    try:
+        message = json.loads(
+            lines[0],
+            object_pairs_hook=_unique_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"invalid JSON constant: {value}")
+            ),
+        )
+    except (json.JSONDecodeError, ValueError) as error:
+        raise FikeyaError(
+            "Qarinah sidecar returned an invalid version response."
+        ) from error
+    if not isinstance(message, dict) or set(message) != {"id", "jsonrpc", "result"}:
+        raise FikeyaError("Qarinah sidecar returned an invalid version response.")
+    if (
+        message["jsonrpc"] != "2.0"
+        or message["id"] != _SIDECAR_VERSION_REQUEST_ID
+        or not isinstance(message["result"], dict)
+    ):
+        raise FikeyaError("Qarinah sidecar returned an unmatched version response.")
+    result = message["result"]
+    if set(result) != {"name", "protocol", "qarinahVersion", "version"}:
+        raise FikeyaError("Qarinah sidecar returned an invalid version result.")
+    if (
+        result["name"] != _SIDECAR_PACKAGE_NAME
+        or result["protocol"] != _SIDECAR_PROTOCOL
+    ):
+        raise FikeyaError("Qarinah sidecar returned an unsupported runtime identity.")
+    version = result["version"]
+    qarinah_version = result["qarinahVersion"]
+    if (
+        not isinstance(version, str)
+        or len(version.encode("utf-8")) > 128
+        or _SIDECAR_VERSION_PATTERN.fullmatch(version) is None
+        or not isinstance(qarinah_version, str)
+        or len(qarinah_version.encode("utf-8")) > 128
+        or _SIDECAR_VERSION_PATTERN.fullmatch(qarinah_version) is None
+    ):
+        raise FikeyaError("Qarinah sidecar returned an invalid runtime version.")
+    return QarinahSidecarVersion(
+        name=_SIDECAR_PACKAGE_NAME,
+        protocol=_SIDECAR_PROTOCOL,
+        version=version,
+        qarinah_version=qarinah_version,
+    )
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
 
 
 def _parse_context_pack(content: str) -> dict[str, object]:

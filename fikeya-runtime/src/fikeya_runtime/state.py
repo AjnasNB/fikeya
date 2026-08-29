@@ -6,15 +6,21 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .errors import StateError
+from .errors import EndpointAuthorizationExpiredError, StateError
 from .events import EventEnvelope, EventType, SessionRecord, StreamPage, encode_payload
 from .util import utc_now, validate_identifier
+
+_ENDPOINT_EXPIRY = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -614,6 +620,7 @@ class StateStore:
         run_id: str,
         tool_call_id: str,
         expires_at: str,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         """Atomically consume one exact managed-endpoint authorization."""
 
@@ -640,9 +647,30 @@ class StateStore:
             invalid_identity = True
         if invalid_identity:
             raise StateError("Endpoint authorization identity is invalid.")
+        if _ENDPOINT_EXPIRY.fullmatch(expires_at) is None:
+            raise StateError("Endpoint authorization expiry is invalid.")
+        try:
+            if "." in expires_at:
+                timestamp, fraction = expires_at[:-1].split(".", 1)
+                parsed_expiry = f"{timestamp}.{fraction.ljust(6, '0')}+00:00"
+            else:
+                parsed_expiry = f"{expires_at[:-1]}+00:00"
+            expiry = datetime.fromisoformat(parsed_expiry)
+        except ValueError as error:
+            raise StateError("Endpoint authorization expiry is invalid.") from error
+        if expiry.tzinfo is None:
+            raise StateError("Endpoint authorization expiry is invalid.")
         try:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
+                consumed_at = (clock or (lambda: datetime.now(timezone.utc)))()
+                if consumed_at.tzinfo is None:
+                    consumed_at = consumed_at.replace(tzinfo=timezone.utc)
+                consumed_at = consumed_at.astimezone(timezone.utc)
+                if expiry.astimezone(timezone.utc) <= consumed_at:
+                    raise EndpointAuthorizationExpiredError(
+                        "Endpoint authorization expired before it could be consumed."
+                    )
                 connection.execute(
                     """
                     INSERT INTO endpoint_authorizations (
@@ -659,11 +687,15 @@ class StateStore:
                         run_id,
                         tool_call_id,
                         expires_at,
-                        utc_now(),
+                        consumed_at.isoformat(timespec="milliseconds").replace(
+                            "+00:00", "Z"
+                        ),
                     ),
                 )
         except sqlite3.IntegrityError as error:
-            raise StateError("Endpoint authorization has already been consumed.") from error
+            raise StateError(
+                "Endpoint authorization has already been consumed."
+            ) from error
 
     def provider_call_receipts(self, session_id: str) -> tuple[dict[str, object], ...]:
         """Return content-free receipts in deterministic creation order."""
