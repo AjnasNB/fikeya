@@ -409,6 +409,12 @@ class EndpointResult:
                 raise StateError("Provider-reported endpoint usage is inconsistent.")
         else:
             raise StateError("Endpoint usage measurement is invalid.")
+        if self.status == "succeeded" and (
+            self.measurement != "provider-reported" or not self.complete
+        ):
+            raise StateError(
+                "Successful endpoint result requires complete provider-reported usage."
+            )
         effect_values = (
             self.effect_receipt_sha256,
             self.tool_call_count,

@@ -106,5 +106,28 @@ def test_artifact_manifest_rejects_empty_and_noncanonical_roots(tmp_path: Path) 
         alias.symlink_to(root, target_is_directory=True)
     except OSError:
         pytest.skip("This platform does not permit the fixture symlink.")
-    with pytest.raises(ConfigurationError, match="must not traverse"):
+    with pytest.raises(ConfigurationError, match="must not itself"):
         create_artifact_manifest(alias.absolute())
+
+
+def test_artifact_manifest_allows_a_linked_ancestor_but_not_linked_entries(
+    tmp_path: Path,
+) -> None:
+    actual_parent = tmp_path / "actual-parent"
+    actual_root = actual_parent / "runtime"
+    actual_root.mkdir(parents=True)
+    (actual_root / "sidecar.mjs").write_text("export {};\n", encoding="utf-8")
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(actual_parent, target_is_directory=True)
+    except OSError:
+        pytest.skip("This platform does not permit the fixture symlink.")
+
+    assert create_artifact_manifest(linked_parent / "runtime") == (
+        create_artifact_manifest(actual_root.resolve())
+    )
+
+    linked_entry = actual_root / "sidecar-alias.mjs"
+    linked_entry.symlink_to(actual_root / "sidecar.mjs")
+    with pytest.raises(ConfigurationError, match="links or reparse"):
+        create_artifact_manifest(linked_parent / "runtime")

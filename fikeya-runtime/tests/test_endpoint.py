@@ -687,6 +687,20 @@ def test_endpoint_result_rejects_cross_language_wire_mismatches() -> None:
             cached_input_tokens=0,
             output_tokens=1,
         ).as_json()
+    with pytest.raises(StateError, match="complete provider-reported usage"):
+        EndpointResult(
+            request_sha256=cast(str, base["request_sha256"]),
+            status="succeeded",
+            session_id=cast(str, base["session_id"]),
+            provider=cast(str, base["provider"]),
+            model=cast(str, base["model"]),
+            error_code=None,
+            effects_measurement="local-receipt-chain",
+            effects_complete=True,
+            effect_receipt_sha256="sha256:29ca707cbd81c124eaa849d792efe7aa8c2e1c1a875b689c87d100c42fbc43dd",
+            tool_call_count=0,
+            write_count=0,
+        ).as_json()
     with pytest.raises(StateError, match="effect receipt chain"):
         EndpointResult(
             **base,
