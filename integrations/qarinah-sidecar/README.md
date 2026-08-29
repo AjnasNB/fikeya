@@ -16,12 +16,13 @@ Each input line is a JSON-RPC 2.0 request. Output is one JSON-RPC response per l
 
 Supported methods:
 
+- `runtime.version` returns the exact sidecar package, protocol, and pinned Qarinah version
 - `memory.initialize`, `memory.policy`, `memory.approve`, and `memory.status`
 - `memory.record`, `memory.prepare`, `memory.compact`, and `memory.refresh`
 - `memory.inspect`, `memory.receipts`, and `memory.worktrees`
 - `memory.scan`, `memory.symbols`, and `memory.symbolGraph.summary`
 
-Content capture remains opt-in and policy-hash approved. `memory.prepare` rebuilds stale projections by default so a fresh event is immediately retrievable.
+Content capture remains opt-in and policy-hash approved. `memory.prepare` rebuilds stale projections by default so a fresh event is immediately retrievable. A managed endpoint sends `rebuild: false`; that path also forces checkpoint updates off and therefore fails closed instead of changing Qarinah state.
 
 Repository scanning and symbol indexing use hard file, byte, depth, result, and query limits. The graph-summary method returns coverage and hashes instead of sending the complete repository graph across the protocol. Symbol queries return bounded paths, spans, signatures, and reference structure; they do not return source-file bodies.
 
