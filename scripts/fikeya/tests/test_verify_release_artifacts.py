@@ -5,12 +5,16 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
+from scripts.fikeya.package_qarinah_sidecar import package_sidecar
 from scripts.fikeya.verify_release_artifacts import (
     CHECKSUM_NAME,
     CLI_INSTALL_NAME,
@@ -22,13 +26,53 @@ from scripts.fikeya.verify_release_artifacts import (
     verify_release_artifacts,
 )
 
-
 PUBLIC_VERSION = "0.1.0-beta.8"
 EXTENSION_VERSION = "0.1.0-beta.8"
 EXPECTED_COMMIT = "a" * 40
 
 
 class ReleaseArtifactVerificationTests(unittest.TestCase):
+    def test_final_signing_sparse_checkout_can_import_direct_verifier(self) -> None:
+        repository_root = Path(__file__).resolve().parents[3]
+        workflow = (
+            repository_root / ".github" / "workflows" / "fikeya-release.yml"
+        ).read_text(encoding="utf-8")
+        for required in (
+            "scripts/fikeya/verify_release_artifacts.py",
+            "scripts/fikeya/package_qarinah_sidecar.py",
+            "fikeya-runtime/src/fikeya_runtime/**",
+        ):
+            self.assertIn(required, workflow)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            sparse_root = Path(temporary_directory)
+            for relative in (
+                Path("scripts/fikeya/verify_release_artifacts.py"),
+                Path("scripts/fikeya/package_qarinah_sidecar.py"),
+            ):
+                destination = sparse_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(repository_root / relative, destination)
+            shutil.copytree(
+                repository_root / "fikeya-runtime" / "src" / "fikeya_runtime",
+                sparse_root / "fikeya-runtime" / "src" / "fikeya_runtime",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(sparse_root / "scripts/fikeya/verify_release_artifacts.py"),
+                    "--help",
+                ],
+                cwd=sparse_root,
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn(
+                "Verify the complete Fikeya release artifact set", completed.stdout
+            )
+
     def test_accepts_exact_unsigned_beta_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -44,7 +88,7 @@ class ReleaseArtifactVerificationTests(unittest.TestCase):
 
             self.assertTrue(report["ok"])
             self.assertEqual(report["installerAuthenticodeStatus"], "NotSigned")
-            self.assertEqual(report["artifactCount"], 13)
+            self.assertEqual(report["artifactCount"], 14)
 
     def test_accepts_artifact_set_without_optional_installer(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -225,13 +269,18 @@ def _build_release(root: Path, *, include_installer: bool = False) -> ReleaseIde
             '$runtime = Get-OneWheel "fikeya_runtime-"',
             '$interop = Get-OneWheel "fikeya_interop-"',
             '$runtimeRequirement = "fikeya-runtime[azure,browser]"',
-            '& python -m playwright install chromium-headless-shell',
+            "& python -m playwright install chromium-headless-shell",
             '& python -c "import azure.identity; import playwright"',
             "",
         ]
     )
-    (root / CLI_INSTALL_SCRIPT_NAME).write_text(
-        installer_script, encoding="utf-8"
+    (root / CLI_INSTALL_SCRIPT_NAME).write_text(installer_script, encoding="utf-8")
+    sidecar_name = f"fikeya-qarinah-sidecar-{identity.public_version}.zip"
+    _write_sidecar_bundle(root, identity)
+    (root / CLI_INSTALL_NAME).write_text(
+        (root / CLI_INSTALL_NAME).read_text(encoding="utf-8")
+        + f"Extract {sidecar_name} for managed Qarinah memory.\n",
+        encoding="utf-8",
     )
     with zipfile.ZipFile(
         root / f"fikeya-cli-{identity.public_version}.zip", "w", zipfile.ZIP_DEFLATED
@@ -240,6 +289,7 @@ def _build_release(root: Path, *, include_installer: bool = False) -> ReleaseIde
         archive.write(root / CLI_INSTALL_SCRIPT_NAME, CLI_INSTALL_SCRIPT_NAME)
         for wheel_name in wheel_names:
             archive.write(root / wheel_name, wheel_name)
+        archive.write(root / sidecar_name, sidecar_name)
 
     _write_vsix(
         root / f"fikeya-desktop-{identity.extension_version}-{identity.platform}.vsix",
@@ -251,6 +301,47 @@ def _build_release(root: Path, *, include_installer: bool = False) -> ReleaseIde
         ).write_bytes(b"fixture installer")
     _seal_release(root)
     return identity
+
+
+def _write_sidecar_bundle(root: Path, identity: ReleaseIdentity) -> None:
+    source = root / "_sidecar-source"
+    (source / "src").mkdir(parents=True)
+    (source / "node_modules" / "qarinah").mkdir(parents=True)
+    package = {
+        "dependencies": {"qarinah": "0.4.0"},
+        "engines": {"node": "^22.13.0 || ^24.0.0 || ^26.0.0"},
+        "name": "@fikeya/qarinah-sidecar",
+        "version": "0.1.0",
+    }
+    lock = {
+        "lockfileVersion": 3,
+        "name": "@fikeya/qarinah-sidecar",
+        "packages": {
+            "": {
+                "dependencies": {"qarinah": "0.4.0"},
+                "version": "0.1.0",
+            },
+            "node_modules/qarinah": {"version": "0.4.0"},
+        },
+        "requires": True,
+        "version": "0.1.0",
+    }
+    (source / "LICENSE").write_text("fixture license\n", encoding="utf-8")
+    (source / "README.md").write_text("fixture sidecar\n", encoding="utf-8")
+    (source / "package.json").write_text(json.dumps(package), encoding="utf-8")
+    (source / "package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+    (source / "src" / "sidecar.mjs").write_text(
+        "// fixture sidecar\n", encoding="utf-8"
+    )
+    (source / "node_modules" / "qarinah" / "package.json").write_text(
+        json.dumps({"name": "qarinah", "version": "0.4.0"}), encoding="utf-8"
+    )
+    package_sidecar(
+        source,
+        root,
+        identity.public_version,
+        run_smoke=False,
+    )
 
 
 def _write_wheel(path: Path, project: str, version: str) -> None:
