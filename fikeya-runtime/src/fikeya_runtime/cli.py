@@ -1616,6 +1616,14 @@ def _tool_entry(
             "enabledAt": status.enabled_at if status is not None else None,
             "executableFound": diagnostic.executable_found,
             "provenanceWarning": diagnostic.warning,
+            "executionTrust": "trusted-local-executable",
+            "osSandboxed": False,
+            "sandboxWarning": (
+                "Exact approval limits when Fikeya may call this executable; it does "
+                "not restrict the executable's desktop-user filesystem or network "
+                "permissions. Install only reviewed local binaries or add OS sandboxing."
+            ),
+            "processTreeContained": True,
             "requiresExactApproval": True,
             "requiresConfirmation": (
                 status.requires_confirmation if status is not None else False
