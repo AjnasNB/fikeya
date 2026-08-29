@@ -22,6 +22,30 @@ python -m venv .venv
 On macOS or Linux, activate the environment with
 `source .venv/bin/activate` and use `python` directly.
 
+## Optional Deep Agents decision host
+
+`fikeya_runtime.deep_agents_host` binds a host-supplied async Deep Agents/LangGraph decision graph to Fikeya's real
+workspace broker. Fikeya passes strict JSON messages and tool schemas into the graph; it never gives the graph callable tools,
+the broker, a shell, or filesystem objects. Proposed tool calls still stop at the native durable one-use approval before the
+workspace broker may execute them.
+
+The runtime bridge is complete for checkpoint translation, SQLite persistence, tool validation, approval, broker execution,
+denial, review, cancellation, and content-free diagnostics. It does not construct or fabricate a graph, model, provider client,
+or credentials. Those remain host-supplied. Install the optional dependencies on Python 3.11 or newer with
+`pip install "fikeya-agent-core[deep-agents]"`.
+
+```python
+from fikeya_runtime.deep_agents_host import create_deep_agents_workspace_host
+from fikeya_runtime.workspace import Workspace
+
+workspace = Workspace.load(".")
+with create_deep_agents_workspace_host(graph, workspace, mode="build") as host:
+    print(host.diagnostic.as_json())
+```
+
+`deterministic_read_sample_graph()` is a dependency-free, no-model sample used to verify this integration path. It replays a
+fixed plan/read/review sequence and must not be presented as an AI model or production planner.
+
 ## Initialize a workspace
 
 ```console

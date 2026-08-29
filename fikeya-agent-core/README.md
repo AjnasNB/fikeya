@@ -118,6 +118,10 @@ Deep Agents/LangGraph graph. The base package does not bundle or import either d
 remain complete without them. `deep_agents_dependency_status()` and `require_deep_agents_dependencies()` let a host detect the
 optional packages before it constructs a real graph.
 
+The upstream Deep Agents package requires Python 3.11 or newer. On a compatible host, install the bounded optional extra with
+`pip install "fikeya-agent-core[deep-agents]"`. Python 3.10 remains supported by the dependency-free native engine and the
+deterministic adapter diagnostic, but not by the upstream Deep Agents runtime.
+
 The adapter deliberately does not accept callable tools, a backend, a shell, a filesystem, or an `ExecutionBroker` in graph
 input. It passes only strict JSON messages and broker-owned tool schemas. A graph may propose a structured `tool_call`; the
 native engine then checkpoints the exact call, pauses for one-use approval, claims an execution lease, and dispatches it through
@@ -125,8 +129,7 @@ native engine then checkpoints the exact call, pauses for one-use approval, clai
 Fikeya.
 
 ```python
-from fikeya_agent_core import ApprovalDecision
-from fikeya_agent_core.deep_agents import DeepAgentsCompatibilityAdapter
+from fikeya_agent_core import ApprovalDecision, DeepAgentsCompatibilityAdapter
 
 # `graph` is host-created and exposes async `ainvoke`. Compile it as a
 # decision graph without Deep Agents' default filesystem/shell tools.
