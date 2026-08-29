@@ -187,6 +187,17 @@ digests, package identity, protocol, and Node engine range. Operators bind the
 exact deployment Node executable separately because the runtime binary is not
 embedded in that archive.
 
+The sidecar archive has one portable identity across supported hosts. Fikeya
+normalizes repository-owned UTF-8 text to LF, excludes npm-generated command
+shims and installation snapshots, requires portable ASCII member paths, orders
+files lexicographically, fixes ZIP timestamps and compression, and records
+every ZIP member as a regular `0644` file. Artifact manifests deliberately
+record `mode: 0`: checkout permission bits are not identity, while canonical
+paths, sizes, and content hashes are.
+This does not weaken filesystem validation. The packager and runtime still
+reject a linked or reparse artifact root, linked/reparse/special entries,
+shared hardlinks, path escapes, oversize trees, and mutation during hashing.
+
 `maxOutputTokens` applies to each provider call in the bounded multi-step run;
 it is not an aggregate whole-run token budget. `maxSteps`, `maxToolCalls`, and
 `timeoutMs` are whole-run ceilings.
