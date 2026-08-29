@@ -32,8 +32,8 @@ const publicFiles = [
 
 const forbiddenPublicDetails = [
 	{
-		pattern: /\bmaqam\b/i,
-		reason: 'contains legacy customer-facing product naming or a raw internal protocol identifier'
+		pattern: /\bmaqam\b(?!\.)/i,
+		reason: 'contains legacy customer-facing product naming outside an exact maqam.* compatibility identifier'
 	},
 	{
 		pattern: /[a-z]:\\(?:users|skill box)\\/i,

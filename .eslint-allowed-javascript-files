@@ -178,4 +178,5 @@ integrations/tool-presets/validate.mjs
 packages/fikeya-protocol/test/protocol.test.mjs
 site/app.js
 site/build.mjs
+site/product-boundary.test.mjs
 site/validate.mjs
