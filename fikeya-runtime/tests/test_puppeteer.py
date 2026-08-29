@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-import json
 import io
+import json
 import os
 import shutil
 import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -36,7 +37,10 @@ _ORIGINAL_SOCKET_CONNECT = socket.socket.connect
 _FAKE_BRIDGE = r'''import base64
 import hashlib
 import json
+import os
 import sys
+import threading
+import time
 
 url = "about:blank"
 
@@ -83,6 +87,13 @@ for line in sys.stdin:
     elif operation == "screenshot":
         send({"type": "result", "requestId": request_id, "ok": True,
               "value": base64.b64encode(%r).decode("ascii")})
+    elif operation == "click" and arguments.get("selector") == "#fail":
+        def late_side_effect():
+            time.sleep(0.4)
+            with open(os.path.join(sys.argv[1], "late-side-effect"), "w") as marker:
+                marker.write("unsafe")
+        threading.Thread(target=late_side_effect).start()
+        send({"type": "result", "requestId": request_id, "ok": False})
     elif operation == "close":
         send({"type": "result", "requestId": request_id, "ok": True, "value": None})
         break
@@ -168,6 +179,35 @@ def test_puppeteer_subresources_must_pass_the_python_network_guard(
     try:
         with pytest.raises(BrowserError, match="did not complete safely"):
             browser.navigate("https://example.test/blocked-resource")
+    finally:
+        browser.close()
+
+
+def test_failed_puppeteer_operation_invalidates_the_old_session(
+    tmp_path: Path,
+) -> None:
+    driver = _fake_driver(tmp_path)
+    browser = BrowserSession(
+        tmp_path,
+        driver=driver,
+        resolver=_public_resolver,
+    )
+    try:
+        browser.navigate("https://example.test/old-session")
+        old_process = driver._process
+        assert old_process is not None
+
+        with pytest.raises(BrowserError, match="did not complete safely"):
+            browser.click("#fail")
+
+        assert driver._process is None
+        assert driver._process_tree is None
+        assert old_process.poll() is not None
+        with pytest.raises(BrowserUnavailable, match="invalidated"):
+            driver.current_url()
+        assert driver._process is None
+        time.sleep(0.6)
+        assert not (driver._module_root / "late-side-effect").exists()
     finally:
         browser.close()
 

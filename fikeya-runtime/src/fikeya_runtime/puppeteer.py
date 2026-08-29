@@ -132,6 +132,7 @@ class PuppeteerBrowserDriver:
         self._stderr_reader: threading.Thread | None = None
         self._request_number = 0
         self._write_lock = threading.Lock()
+        self._invalidated = False
 
     def set_request_guard(self, guard: Callable[[str], None]) -> None:
         self._guard = guard
@@ -240,9 +241,13 @@ class PuppeteerBrowserDriver:
         )
 
     def _ensure_started(self) -> None:
+        if self._invalidated:
+            raise BrowserUnavailable(
+                "The Puppeteer browser session was invalidated after a failed operation."
+            )
         if self._process is not None:
             if self._process.poll() is not None:
-                self._terminate()
+                self._invalidate()
                 raise BrowserUnavailable("The Puppeteer browser transport stopped.")
             return
         (
@@ -305,10 +310,10 @@ class PuppeteerBrowserDriver:
             ):
                 raise _BridgeFailure("bridge provenance is invalid")
         except BrowserUnavailable:
-            self._terminate()
+            self._invalidate()
             raise
         except (BrowserError, _BridgeFailure) as error:
-            self._terminate()
+            self._invalidate()
             raise BrowserUnavailable(
                 "The Puppeteer browser transport failed its startup handshake."
             ) from error
@@ -459,9 +464,13 @@ class PuppeteerBrowserDriver:
                     raise _BridgeFailure("bridge response has unknown fields")
                 return message.get("value")
         except BrowserError:
+            # A rejected or timed-out Puppeteer promise may still be running in
+            # Node. Destroy the owned Node/Chromium tree before reporting the
+            # failure so no late page side effect can race a later command.
+            self._invalidate()
             raise
         except _BridgeFailure as error:
-            self._terminate()
+            self._invalidate()
             raise BrowserError(
                 f"Puppeteer {operation} did not complete safely."
             ) from error
@@ -561,3 +570,9 @@ class PuppeteerBrowserDriver:
             if stream is not None:
                 with suppress(OSError):
                     stream.close()
+
+    def _invalidate(self) -> None:
+        """Permanently fail this driver and destroy every managed descendant."""
+
+        self._invalidated = True
+        self._terminate()
