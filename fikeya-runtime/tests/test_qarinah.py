@@ -535,11 +535,22 @@ def test_managed_sidecar_combined_output_is_bounded_and_tree_is_reaped(
     sidecar = installation / "large-output-sidecar.mjs"
     sidecar.write_text(
         "import {spawn} from 'node:child_process';\n"
+        "import {writeSync} from 'node:fs';\n"
         "let input = '';\n"
         "for await (const chunk of process.stdin) input += chunk;\n"
         f"spawn(process.execPath, [{json.dumps(str(child.resolve()))}], {{stdio:'inherit'}});\n"
-        "process.stdout.write('x'.repeat(700 * 1024));\n"
-        "process.stderr.write('y'.repeat(700 * 1024));\n"
+        "function fill(fd, value) {\n"
+        "  const chunk = Buffer.alloc(64 * 1024, value);\n"
+        "  let remaining = 700 * 1024;\n"
+        "  while (remaining > 0) {\n"
+        "    const size = Math.min(remaining, chunk.length);\n"
+        "    const written = writeSync(fd, chunk, 0, size);\n"
+        "    if (written <= 0) throw new Error('output stopped');\n"
+        "    remaining -= written;\n"
+        "  }\n"
+        "}\n"
+        "fill(1, 120);\n"
+        "fill(2, 121);\n"
         "process.exit(0);\n",
         encoding="utf-8",
     )

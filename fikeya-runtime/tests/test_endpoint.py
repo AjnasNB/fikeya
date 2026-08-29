@@ -6,12 +6,14 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import shutil
 import socket
 import sqlite3
 import subprocess
 import sys
 import time
+import zipfile
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1255,13 +1257,50 @@ def test_packaged_qarinah_sidecar_runs_required_memory_without_mutation(
     """Prove the shipped package, not a protocol stub, through the endpoint."""
 
     node_value = shutil.which("node")
-    package_root = (
+    source_root = (
         Path(__file__).resolve().parents[2] / "integrations" / "qarinah-sidecar"
     )
+    package_output = tmp_path / "sidecar-package"
+    package_output.mkdir()
+    packager = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "fikeya"
+        / "package_qarinah_sidecar.py"
+    )
+    bundle = package_output / "fikeya-qarinah-sidecar-0.1.0-beta.8.zip"
+    extracted = tmp_path / "sidecar-extracted"
+    extracted.mkdir()
+    if node_value is None or not (source_root / "node_modules" / "qarinah").is_dir():
+        pytest.skip("Run npm ci in integrations/qarinah-sidecar for packaged proof.")
+    subprocess.run(
+        [
+            sys.executable,
+            str(packager),
+            "--source",
+            str(source_root),
+            "--output-directory",
+            str(package_output),
+            "--release-version",
+            "0.1.0-beta.8",
+            "--skip-smoke",
+        ],
+        check=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "TEMP": str(tmp_path),
+            "TMP": str(tmp_path),
+            "TMPDIR": str(tmp_path),
+        },
+        text=True,
+        timeout=120,
+    )
+    with zipfile.ZipFile(bundle) as archive:
+        archive.extractall(extracted)
+    package_root = extracted / "qarinah-sidecar"
     sidecar = package_root / "src" / "sidecar.mjs"
     package_json = package_root / "package.json"
-    if node_value is None or not (package_root / "node_modules" / "qarinah").is_dir():
-        pytest.skip("Run npm ci in integrations/qarinah-sidecar for packaged proof.")
 
     node = Path(node_value).resolve()
     value, providers, root = _fixture(tmp_path, tools=[], max_tool_calls=0)
