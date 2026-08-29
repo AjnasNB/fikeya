@@ -328,8 +328,11 @@ returned to the Python network guard, web content stays untrusted, and private
 or loopback navigation requires the separate `--allow-private-browser` opt-in.
 
 Puppeteer never loads implicitly and never falls back from a failed Playwright
-run. Set `FIKEYA_PUPPETEER_ROOT` to a reviewed directory whose `package.json`
-resolves `puppeteer` or `puppeteer-core`, optionally set
+run. Set `FIKEYA_PUPPETEER_ROOT` to a dedicated, reviewed npm installation that
+declares exactly one of `puppeteer` or `puppeteer-core` and retains its
+`package-lock.json`. The runtime requires an exact package version and npm
+integrity entry, verifies installed package identity against the lock, and
+binds the lock-file SHA-256 into the Node startup handshake. Optionally set
 `FIKEYA_CHROME_EXECUTABLE` for Puppeteer Core, and select it for one CLI path:
 
 ```console
@@ -342,6 +345,15 @@ Fikeya Desktop exposes the same choice through `fikeya.browser.engine`, with
 reviewed local paths. The release test exercises `puppeteer-core@25.9.0` against
 the pinned Chromium Headless Shell; Puppeteer is not bundled into the ordinary
 CLI wheel.
+
+The reviewed Puppeteer installation and its transitive dependencies are trusted
+local executable code, not a sandbox. Page and subresource requests are guarded,
+but package initialization itself runs before page interception and may use the
+machine or network within OS permissions. Provision the dedicated root with a
+reviewed lock and `npm ci --ignore-scripts`, do not point it at an active project,
+and apply OS isolation when stronger containment is required. Fikeya starts the
+bridge with a minimal environment that excludes provider/API credentials, bounds
+its message and request queues, and owns the Node/Chromium process tree.
 
 The beta.8 Windows x64 Desktop and Windows x64 VSIX embed the reviewed Chromium
 Headless Shell payload. The standalone CLI wheel does not contain a browser
