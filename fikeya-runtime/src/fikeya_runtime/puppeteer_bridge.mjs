@@ -9,6 +9,7 @@ const MAX_MESSAGE_BYTES = 12 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 64 * 1024;
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
 const moduleRoot = process.argv[2];
+const chromeExecutable = process.argv[3];
 const pendingGuards = new Map();
 let browser;
 let context;
@@ -49,13 +50,21 @@ const withTimeout = async (promise, timeoutMs) => {
 
 let puppeteer;
 let puppeteerVersion;
+let puppeteerPackage;
 try {
 	if (!moduleRoot) {
 		throw new Error('module root is required');
 	}
 	const reviewedRequire = createRequire(resolve(moduleRoot, 'package.json'));
-	puppeteer = reviewedRequire('puppeteer');
-	puppeteerVersion = reviewedRequire('puppeteer/package.json').version;
+	try {
+		puppeteer = reviewedRequire('puppeteer');
+		puppeteerVersion = reviewedRequire('puppeteer/package.json').version;
+		puppeteerPackage = 'puppeteer';
+	} catch {
+		puppeteer = reviewedRequire('puppeteer-core');
+		puppeteerVersion = reviewedRequire('puppeteer-core/package.json').version;
+		puppeteerPackage = 'puppeteer-core';
+	}
 } catch {
 	send({ type: 'unavailable' });
 	process.exitCode = 2;
@@ -80,6 +89,7 @@ const ensurePage = async () => {
 	}
 	browser = await puppeteer.launch({
 		headless: true,
+		...(chromeExecutable ? { executablePath: chromeExecutable } : {}),
 		args: [
 			'--disable-background-networking',
 			'--disable-component-update',
@@ -259,5 +269,5 @@ input.on('line', line => {
 input.on('close', () => void closeResources());
 
 if (puppeteer) {
-	send({ type: 'ready', version: String(puppeteerVersion) });
+	send({ type: 'ready', package: puppeteerPackage, version: String(puppeteerVersion) });
 }

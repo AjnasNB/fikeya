@@ -32,6 +32,7 @@ from .browser import (
 
 MAX_PUPPETEER_BRIDGE_MESSAGE_BYTES = 12 * 1_024 * 1_024
 PUPPETEER_ROOT_ENVIRONMENT = "FIKEYA_PUPPETEER_ROOT"
+CHROME_EXECUTABLE_ENVIRONMENT = "FIKEYA_CHROME_EXECUTABLE"
 _BRIDGE_SHUTDOWN_SECONDS = 3.0
 _BRIDGE_START_SECONDS = 30.0
 
@@ -52,11 +53,18 @@ class PuppeteerBrowserDriver:
         self,
         *,
         module_root: str | Path | None = None,
+        chrome_executable: str | Path | None = None,
         node_executable: str | Path | None = None,
         bridge_script: str | Path | None = None,
     ) -> None:
         supplied_root = module_root or os.environ.get(PUPPETEER_ROOT_ENVIRONMENT)
+        supplied_chrome = chrome_executable or os.environ.get(
+            CHROME_EXECUTABLE_ENVIRONMENT
+        )
         self._module_root = Path(supplied_root).expanduser() if supplied_root else None
+        self._chrome_executable = (
+            Path(supplied_chrome).expanduser() if supplied_chrome else None
+        )
         self._node_executable = str(node_executable) if node_executable else None
         self._bridge_script = (
             Path(bridge_script)
@@ -74,7 +82,7 @@ class PuppeteerBrowserDriver:
     def set_request_guard(self, guard: Callable[[str], None]) -> None:
         self._guard = guard
 
-    def _resolve_installation(self) -> tuple[str, Path, Path]:
+    def _resolve_installation(self) -> tuple[str, Path, Path, Path | None]:
         executable = self._node_executable or shutil.which("node")
         if executable is None:
             raise BrowserUnavailable(
@@ -98,7 +106,19 @@ class PuppeteerBrowserDriver:
             )
         if not bridge_script.is_file():
             raise BrowserUnavailable("The Fikeya Puppeteer bridge is unavailable.")
-        return executable, module_root, bridge_script
+        chrome_executable: Path | None = None
+        if self._chrome_executable is not None:
+            try:
+                chrome_executable = self._chrome_executable.resolve(strict=True)
+            except OSError as error:
+                raise BrowserUnavailable(
+                    "The configured Chrome executable is unavailable."
+                ) from error
+            if not chrome_executable.is_file():
+                raise BrowserUnavailable(
+                    "The configured Chrome executable is unavailable."
+                )
+        return executable, module_root, bridge_script, chrome_executable
 
     def _ensure_started(self) -> None:
         if self._process is not None:
@@ -106,10 +126,15 @@ class PuppeteerBrowserDriver:
                 self._terminate()
                 raise BrowserUnavailable("The Puppeteer browser transport stopped.")
             return
-        executable, module_root, bridge_script = self._resolve_installation()
+        executable, module_root, bridge_script, chrome_executable = (
+            self._resolve_installation()
+        )
+        command = [executable, str(bridge_script), str(module_root)]
+        if chrome_executable is not None:
+            command.append(str(chrome_executable))
         try:
             process = subprocess.Popen(
-                [executable, str(bridge_script), str(module_root)],
+                command,
                 cwd=module_root,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,

@@ -47,6 +47,7 @@ from .inference import (
     ProviderExecutor,
     provider_request_fingerprint,
 )
+from .mcp_broker import McpBrokerRegistry
 from .modes import AgentMode, ModePolicy, mode_policy
 from .providers import ProviderProfile, ProviderStore
 from .qarinah import select_qarinah_adapter
@@ -93,6 +94,7 @@ _DEFAULT_ALLOWED_EXECUTABLES = frozenset(
         "yarn",
     }
 )
+_MCP_AGENT_MODES = frozenset({AgentMode.BUILD, AgentMode.RESEARCH})
 _IGNORED_DIRECTORIES = frozenset(
     {".fikeya", ".git", ".hg", ".svn", "__pycache__", "node_modules"}
 )
@@ -236,6 +238,7 @@ class WorkspaceExecutionBroker:
         mode: AgentMode | str = AgentMode.BUILD,
         allow_private_browser: bool = False,
         browser_session: BrowserSession | None = None,
+        mcp_registry: McpBrokerRegistry | None = None,
     ) -> None:
         if (
             isinstance(maximum_process_timeout_seconds, bool)
@@ -250,6 +253,7 @@ class WorkspaceExecutionBroker:
         self.allow_private_browser = allow_private_browser
         self._browser = browser_session
         self._browser_executor: ThreadPoolExecutor | None = None
+        self._mcp = mcp_registry or McpBrokerRegistry(workspace)
         self.maximum_process_timeout_seconds = maximum_process_timeout_seconds
         self._process_broker = ToolBroker(
             boundary=workspace.boundary,
@@ -449,7 +453,10 @@ class WorkspaceExecutionBroker:
                 },
             ),
         )
-        return tuple(tool for tool in tools if self.mode_policy.allows(tool.name))
+        available = [tool for tool in tools if self.mode_policy.allows(tool.name)]
+        if self.mode_policy.mode in _MCP_AGENT_MODES:
+            available.extend(await self._mcp.list_tools(cancellation))
+        return tuple(available)
 
     async def execute(
         self,
@@ -462,7 +469,7 @@ class WorkspaceExecutionBroker:
         cached = self.state.results.get(idempotency_key)
         if cached is not None:
             return cached
-        if not self.mode_policy.allows(call.name):
+        if not self._allows_tool(call.name):
             result = ToolResult(
                 call.call_id,
                 "error",
@@ -497,6 +504,8 @@ class WorkspaceExecutionBroker:
                 result = await loop.run_in_executor(
                     self._browser_worker(), self._run_browser, call, cancellation
                 )
+            elif self._mcp.owns(call.name):
+                result = await self._mcp.execute(call, cancellation)
             else:
                 result = ToolResult(call.call_id, "error", "Unknown broker tool.")
         except (ApprovalError, FikeyaError, OSError, UnicodeError, ValueError) as error:
@@ -516,19 +525,27 @@ class WorkspaceExecutionBroker:
         return result
 
     def close(self) -> None:
-        """Release optional browser resources owned by this broker."""
+        """Release optional browser and MCP processes owned by this broker."""
 
-        executor = self._browser_executor
-        if executor is None:
-            if self._browser is not None:
-                self._browser.close()
-                self._browser = None
-            return
         try:
-            executor.submit(self._close_browser).result(timeout=30)
+            executor = self._browser_executor
+            if executor is None:
+                if self._browser is not None:
+                    self._browser.close()
+                    self._browser = None
+            else:
+                try:
+                    executor.submit(self._close_browser).result(timeout=30)
+                finally:
+                    executor.shutdown(wait=True, cancel_futures=True)
+                    self._browser_executor = None
         finally:
-            executor.shutdown(wait=True, cancel_futures=True)
-            self._browser_executor = None
+            self._mcp.close()
+
+    def _allows_tool(self, name: str) -> bool:
+        if name.startswith("mcp."):
+            return self.mode_policy.mode in _MCP_AGENT_MODES
+        return self.mode_policy.allows(name)
 
     def _browser_worker(self) -> ThreadPoolExecutor:
         if self._browser_executor is None:
@@ -1057,6 +1074,7 @@ class CodingAgentRunner:
         executor: ProviderExecutor | None = None,
         credentials: CredentialResolver | None = None,
         allowed_executables: frozenset[str] | None = None,
+        mcp_registry_factory: Callable[[Workspace], McpBrokerRegistry] | None = None,
     ) -> None:
         self.workspace = workspace
         self.providers = providers
@@ -1064,6 +1082,7 @@ class CodingAgentRunner:
         self.credentials = credentials or CredentialResolver(providers)
         self.state = StateStore(workspace.state_path)
         self.allowed_executables = allowed_executables or _DEFAULT_ALLOWED_EXECUTABLES
+        self.mcp_registry_factory = mcp_registry_factory or McpBrokerRegistry
 
     async def run(
         self,
@@ -1140,6 +1159,7 @@ class CodingAgentRunner:
                 maximum_process_timeout_seconds=timeout,
                 mode=policy.mode,
                 allow_private_browser=allow_private_browser,
+                mcp_registry=self.mcp_registry_factory(self.workspace),
             )
             maximum_output_bytes = max(256, min(4_194_304, max_output_tokens * 4))
             orchestrator = AgentOrchestrator(

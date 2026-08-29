@@ -21,6 +21,7 @@ from fikeya_runtime.browser import (
     BrowserUnavailable,
 )
 from fikeya_runtime.puppeteer import (
+    CHROME_EXECUTABLE_ENVIRONMENT,
     PUPPETEER_ROOT_ENVIRONMENT,
     PuppeteerBrowserDriver,
 )
@@ -177,6 +178,7 @@ def test_real_puppeteer_local_fixture_when_reviewed_install_is_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module_root_value = os.environ.get(PUPPETEER_ROOT_ENVIRONMENT)
+    chrome_executable_value = os.environ.get(CHROME_EXECUTABLE_ENVIRONMENT)
     if shutil.which("node") is None or not module_root_value:
         pytest.skip("optional reviewed Puppeteer installation is unavailable")
     module_root = Path(module_root_value)
@@ -187,7 +189,10 @@ def test_real_puppeteer_local_fixture_when_reviewed_install_is_available(
     server = ThreadingHTTPServer(("127.0.0.1", 0), _FixtureHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
-    driver = PuppeteerBrowserDriver(module_root=module_root)
+    driver = PuppeteerBrowserDriver(
+        module_root=module_root,
+        chrome_executable=chrome_executable_value,
+    )
     browser = BrowserSession(
         tmp_path,
         allow_private=True,
