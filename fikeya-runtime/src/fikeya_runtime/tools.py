@@ -8,7 +8,6 @@ from __future__ import annotations
 import os
 import re
 import secrets
-import signal
 import subprocess
 import threading
 import time
@@ -17,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import ApprovalError, ConfigurationError
+from .process_tree import ManagedProcessTree, start_managed_process
 from .state import StateStore
 from .util import sha256_text, stable_json, utc_now
 from .workspace import WorkspaceBoundary
@@ -466,77 +466,23 @@ def _is_within(candidate: Path, root: Path) -> bool:
     return True
 
 
-class _ProcessTree:
-    """Own one process tree and terminate every descendant before releasing it."""
-
-    def __init__(
-        self, process: subprocess.Popen[bytes], windows_job: int | None
-    ) -> None:
-        self.process = process
-        self.windows_job = windows_job
-        self.terminated = False
-        self.closed = False
-
-    def terminate(self) -> None:
-        if self.closed or self.terminated:
-            return
-        if os.name == "nt" and self.windows_job is not None:
-            _terminate_windows_job(self.windows_job)
-            self.terminated = True
-            return
-        if os.name != "nt":
-            try:
-                os.killpg(self.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            self.terminated = True
-            return
-        if self.process.poll() is None:
-            self.process.kill()
-        self.terminated = True
-
-    def close(self) -> None:
-        if self.closed:
-            return
-        self.closed = True
-        if os.name == "nt" and self.windows_job is not None:
-            _close_windows_handle(self.windows_job)
-
-
 def _start_process_tree(
     argv: list[str],
     *,
     cwd: Path,
     environment: dict[str, str],
-) -> tuple[subprocess.Popen[bytes], _ProcessTree]:
-    keyword_arguments: dict[str, object] = {
-        "cwd": cwd,
-        "env": environment,
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.PIPE,
-        "shell": False,
-    }
-    if os.name == "nt":
-        keyword_arguments["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        keyword_arguments["start_new_session"] = True
+) -> tuple[subprocess.Popen[bytes], ManagedProcessTree]:
     try:
-        process = subprocess.Popen(argv, **keyword_arguments)  # type: ignore[arg-type]
+        process, process_tree = start_managed_process(
+            argv,
+            cwd=cwd,
+            environment=environment,
+        )
     except OSError as error:
-        raise ApprovalError("Approved tool could not be started.") from error
-
-    windows_job: int | None = None
-    if os.name == "nt":
-        try:
-            windows_job = _create_windows_kill_on_close_job(process)
-        except OSError as error:
-            process.kill()
-            _wait_after_termination(process)
-            raise ApprovalError(
-                "Approved tool could not enter a managed Windows process tree."
-            ) from error
-    return process, _ProcessTree(process, windows_job)
+        raise ApprovalError(
+            "Approved tool could not start inside a managed process tree."
+        ) from error
+    return process, process_tree
 
 
 def _wait_after_termination(process: subprocess.Popen[bytes]) -> None:
@@ -557,98 +503,3 @@ def _is_cancellation_requested(callback: Callable[[], bool] | None) -> bool:
         return True
 
 
-def _create_windows_kill_on_close_job(process: subprocess.Popen[bytes]) -> int:
-    import ctypes
-    from ctypes import wintypes
-
-    job_object_extended_limit_information = 9
-    job_object_limit_kill_on_job_close = 0x00002000
-
-    class IoCounters(ctypes.Structure):
-        _fields_ = [
-            ("ReadOperationCount", ctypes.c_ulonglong),
-            ("WriteOperationCount", ctypes.c_ulonglong),
-            ("OtherOperationCount", ctypes.c_ulonglong),
-            ("ReadTransferCount", ctypes.c_ulonglong),
-            ("WriteTransferCount", ctypes.c_ulonglong),
-            ("OtherTransferCount", ctypes.c_ulonglong),
-        ]
-
-    class BasicLimitInformation(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", ctypes.c_longlong),
-            ("PerJobUserTimeLimit", ctypes.c_longlong),
-            ("LimitFlags", wintypes.DWORD),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", wintypes.DWORD),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", wintypes.DWORD),
-            ("SchedulingClass", wintypes.DWORD),
-        ]
-
-    class ExtendedLimitInformation(ctypes.Structure):
-        _fields_ = [
-            ("BasicLimitInformation", BasicLimitInformation),
-            ("IoInfo", IoCounters),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
-    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel32.SetInformationJobObject.argtypes = (
-        wintypes.HANDLE,
-        ctypes.c_int,
-        ctypes.c_void_p,
-        wintypes.DWORD,
-    )
-    kernel32.SetInformationJobObject.restype = wintypes.BOOL
-    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
-    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-
-    handle = kernel32.CreateJobObjectW(None, None)
-    if not handle:
-        raise ctypes.WinError(ctypes.get_last_error())
-    information = ExtendedLimitInformation()
-    information.BasicLimitInformation.LimitFlags = job_object_limit_kill_on_job_close
-    if not kernel32.SetInformationJobObject(
-        handle,
-        job_object_extended_limit_information,
-        ctypes.byref(information),
-        ctypes.sizeof(information),
-    ):
-        error = ctypes.get_last_error()
-        _close_windows_handle(int(handle))
-        raise ctypes.WinError(error)
-    process_handle = wintypes.HANDLE(int(process._handle))  # type: ignore[attr-defined]
-    if not kernel32.AssignProcessToJobObject(handle, process_handle):
-        error = ctypes.get_last_error()
-        _close_windows_handle(int(handle))
-        raise ctypes.WinError(error)
-    return int(handle)
-
-
-def _terminate_windows_job(handle: int) -> None:
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
-    kernel32.TerminateJobObject.restype = wintypes.BOOL
-    if not kernel32.TerminateJobObject(wintypes.HANDLE(handle), 1):
-        raise ctypes.WinError(ctypes.get_last_error())
-
-
-def _close_windows_handle(handle: int) -> None:
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    if not kernel32.CloseHandle(wintypes.HANDLE(handle)):
-        raise ctypes.WinError(ctypes.get_last_error())
