@@ -34,7 +34,7 @@ from fikeya_agent_core import (
     ToolResult,
 )
 
-from .agent import AgentRunner, MemoryPreparation
+from .agent import AgentRunner, MemoryPreparation, MemoryProvider
 from .browser import BrowserActionResult, BrowserEngine, BrowserSession
 from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
@@ -142,6 +142,7 @@ class ToolExecutionReceipt:
     call_id: str
     name: str
     status: str
+    arguments_sha256: str
     output_sha256: str
     duration_ms: int | None = None
     exit_code: int | None = None
@@ -149,6 +150,7 @@ class ToolExecutionReceipt:
 
     def as_json(self) -> dict[str, object]:
         return {
+            "argumentsSha256": self.arguments_sha256,
             "callId": self.call_id,
             "durationMs": self.duration_ms,
             "exitCode": self.exit_code,
@@ -495,6 +497,7 @@ class WorkspaceExecutionBroker:
             self.state.results[idempotency_key] = result
             self.state.receipts.append(
                 ToolExecutionReceipt(
+                    arguments_sha256=sha256_text(stable_json(call.arguments)),
                     call_id=call.call_id,
                     name=call.name,
                     status=result.status,
@@ -532,6 +535,7 @@ class WorkspaceExecutionBroker:
         if not any(item.call_id == call.call_id for item in self.state.receipts):
             self.state.receipts.append(
                 ToolExecutionReceipt(
+                    arguments_sha256=sha256_text(stable_json(call.arguments)),
                     call_id=call.call_id,
                     name=call.name,
                     status=result.status,
@@ -676,7 +680,9 @@ class WorkspaceExecutionBroker:
         else:
             raise ValueError("Unknown browser operation.")
         cancellation.raise_if_cancelled()
-        return ToolResult(call.call_id, "ok", stable_json(result.as_json()), "application/json")
+        return ToolResult(
+            call.call_id, "ok", stable_json(result.as_json()), "application/json"
+        )
 
     def _list_files(self, call: ToolCall) -> ToolResult:
         arguments = _exact_arguments(
@@ -891,11 +897,11 @@ class WorkspaceExecutionBroker:
             original_before = (
                 existing.before_sha256
                 if existing is not None
-                else f"sha256:{before_hash}" if before_hash is not None else None
+                else f"sha256:{before_hash}"
+                if before_hash is not None
+                else None
             )
-            final_after = (
-                f"sha256:{after_hash}" if after_hash is not None else None
-            )
+            final_after = f"sha256:{after_hash}" if after_hash is not None else None
             if original_before == final_after:
                 self.state.changed_files.pop(relative_path, None)
                 continue
@@ -922,6 +928,7 @@ class WorkspaceExecutionBroker:
         )
         test = _is_test_command(executable, values)
         receipt = ToolExecutionReceipt(
+            arguments_sha256=sha256_text(stable_json(call.arguments)),
             call_id=call.call_id,
             duration_ms=outcome.duration_ms,
             exit_code=outcome.exit_code,
@@ -1135,6 +1142,8 @@ class CodingAgentRunner:
         mode: AgentMode | str = AgentMode.BUILD,
         allow_private_browser: bool = False,
         browser_engine: BrowserEngine | str = "playwright",
+        memory_provider: MemoryProvider | None = None,
+        allow_discovered_memory: bool = True,
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
@@ -1149,20 +1158,19 @@ class CodingAgentRunner:
                 "model": profile.model,
                 "provider": profile.name,
                 "priorConversationTurns": len(history),
-            }
+            },
         )
+        selected_memory = memory_provider
+        if selected_memory is None and allow_discovered_memory and memory_mode != "off":
+            selected_memory = select_qarinah_adapter(
+                workspace_root=self.workspace.root, state=self.state
+            )
         memory_runner = AgentRunner(
             self.workspace,
             self.providers,
             executor=self.executor,
             credentials=self.credentials,
-            memory=(
-                select_qarinah_adapter(
-                    workspace_root=self.workspace.root, state=self.state
-                )
-                if memory_mode != "off"
-                else None
-            ),
+            memory=selected_memory,
         )
         try:
             system, memory = memory_runner.prepare_memory(
@@ -1181,11 +1189,13 @@ class CodingAgentRunner:
                 lambda: self.credentials.resolve(profile),
                 allow_network=allow_network,
                 timeout_seconds=timeout,
-                request_factory=lambda provider_prompt, provider_system, maximum_tokens: InferenceRequest(
-                    prompt=provider_prompt,
-                    system=provider_system,
-                    max_output_tokens=maximum_tokens,
-                    images=images,
+                request_factory=lambda provider_prompt, provider_system, maximum_tokens: (
+                    InferenceRequest(
+                        prompt=provider_prompt,
+                        system=provider_system,
+                        max_output_tokens=maximum_tokens,
+                        images=images,
+                    )
                 ),
             )
             broker = WorkspaceExecutionBroker(
@@ -1245,7 +1255,7 @@ class CodingAgentRunner:
             try:
                 if self.state.get_session(session.session_id).status == "active":
                     self.state.cancel_session(session.session_id, "coding loop failed")
-            except Exception as cleanup_error:  # noqa: BLE001 - cleanup must not mask the failure.
+            except Exception as cleanup_error:  # noqa: BLE001 - preserve primary error.
                 error.add_note(
                     f"Session cleanup also failed with {type(cleanup_error).__name__}."
                 )

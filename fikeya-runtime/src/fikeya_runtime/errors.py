@@ -71,6 +71,14 @@ class StateError(FikeyaError):
     """Raised when session state violates an invariant."""
 
 
+class EndpointAuthorizationExpiredError(StateError):
+    """Raised when a managed endpoint authorization expires during its run."""
+
+
+class EndpointMemoryArtifactError(StateError):
+    """Raised when a managed Qarinah sidecar changes after execution starts."""
+
+
 class ApprovalError(FikeyaError):
     """Raised when tool execution lacks a matching live approval."""
 
