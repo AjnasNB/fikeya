@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
 
+import fikeya_runtime.cli as cli_module
 from fikeya_runtime.cli import main
 from fikeya_runtime.errors import ToolPresetError
 from fikeya_runtime.tool_presets import (
@@ -38,6 +41,13 @@ def test_cli_lists_disabled_presets_and_requires_workspace_confirmation(
     ]
     assert all(tool["enabled"] is False for tool in listed["tools"])
     assert all("not verified" in tool["provenanceWarning"] for tool in listed["tools"])
+    assert all(tool["transport"] == "stdio" for tool in listed["tools"])
+    assert all(tool["requiresExactApproval"] is True for tool in listed["tools"])
+    assert listed["tools"][0]["brokerNamespace"] == "mcp.cockroach-browser"
+    assert (
+        "mcp.cockroach-browser.browser_capabilities"
+        in listed["tools"][0]["brokerTools"]
+    )
 
     assert (
         main(
@@ -88,6 +98,12 @@ def test_cli_lists_disabled_presets_and_requires_workspace_confirmation(
     )
     status = json.loads(capsys.readouterr().out)
     assert status["tools"][0]["enabled"] is True
+    assert status["tools"][0]["runtimeState"] in {
+        "configuration-missing",
+        "credential-missing",
+        "executable-missing",
+        "preflight-ready",
+    }
 
     assert (
         main(
@@ -105,6 +121,89 @@ def test_cli_lists_disabled_presets_and_requires_workspace_confirmation(
     disabled = json.loads(capsys.readouterr().out)
     assert disabled["previouslyEnabled"] is True
     assert disabled["tool"]["enabled"] is False
+
+
+def test_cli_tool_credentials_use_keyring_adapter_without_echoing_values(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    credentials = _MemoryToolCredentials()
+    monkeypatch.setattr(cli_module, "McpCredentialStore", lambda: credentials)
+    credential = "bounded-test-credential-never-echoed"
+    monkeypatch.setattr(sys, "stdin", io.StringIO(f"{credential}\n"))
+
+    assert (
+        main(
+            [
+                "tool",
+                "credential-set",
+                "cockroach-browser",
+                "COCKROACH_BROWSER_TOKEN",
+                "--workspace",
+                str(workspace.root),
+                "--secret-stdin",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    configured_text = capsys.readouterr().out
+    configured = json.loads(configured_text)
+    assert configured["configured"] is True
+    assert credential not in configured_text
+    assert credentials.values == {
+        (
+            workspace.config.workspace_id,
+            "cockroach-browser",
+            "COCKROACH_BROWSER_TOKEN",
+        ): credential
+    }
+
+    assert (
+        main(
+            [
+                "tool",
+                "status",
+                "cockroach-browser",
+                "--workspace",
+                str(workspace.root),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    status_text = capsys.readouterr().out
+    status = json.loads(status_text)
+    assert status["tools"][0]["credentials"] == [
+        {
+            "configured": True,
+            "name": "COCKROACH_BROWSER_TOKEN",
+            "required": True,
+        }
+    ]
+    assert credential not in status_text
+
+    assert (
+        main(
+            [
+                "tool",
+                "credential-remove",
+                "cockroach-browser",
+                "COCKROACH_BROWSER_TOKEN",
+                "--workspace",
+                str(workspace.root),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    removed = json.loads(capsys.readouterr().out)
+    assert removed["configured"] is False
+    assert credentials.values == {}
 
 
 def test_enablement_database_contains_only_non_secret_metadata(tmp_path: Path) -> None:
@@ -296,6 +395,31 @@ def test_bundled_presets_match_the_reviewed_integration_manifests() -> None:
             (integration / f"{preset_id}.preset.json").read_text(encoding="utf-8")
         )
         assert _bundled_document(preset_id) == expected
+
+
+class _MemoryToolCredentials:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str, str], str] = {}
+
+    @staticmethod
+    def _key(workspace: object, preset_id: str, name: str) -> tuple[str, str, str]:
+        config = getattr(workspace, "config")
+        return (str(config.workspace_id), preset_id, name)
+
+    def set(
+        self,
+        workspace: object,
+        preset_id: str,
+        name: str,
+        credential: str,
+    ) -> None:
+        self.values[self._key(workspace, preset_id, name)] = credential
+
+    def configured(self, workspace: object, preset_id: str, name: str) -> bool:
+        return self._key(workspace, preset_id, name) in self.values
+
+    def remove(self, workspace: object, preset_id: str, name: str) -> None:
+        self.values.pop(self._key(workspace, preset_id, name), None)
 
 
 class _Clock:
