@@ -113,13 +113,39 @@ not truth or prompt-injection immunity. Tools remain brokered and approval-gated
 
 ## LangGraph and Deep Agents
 
-This beta does not bundle LangGraph or Deep Agents. Their official public APIs are the only acceptable basis for a future
-optional adapter; Fikeya will not copy private middleware or checkpoint internals. Keeping them optional preserves offline tests
-and prevents an upstream harness from bypassing Fikeya's broker and approval boundaries.
+`fikeya_agent_core.deep_agents` provides an optional decision-only compatibility adapter for an asynchronously invokable
+Deep Agents/LangGraph graph. The base package does not bundle or import either dependency, so the native engine and offline tests
+remain complete without them. `deep_agents_dependency_status()` and `require_deep_agents_dependencies()` let a host detect the
+optional packages before it constructs a real graph.
 
-The current Fikeya state machine and JSON/SQLite checkpoint contract are complete without those packages. A future adapter must
-demonstrate that official LangGraph interrupts/checkpointers or Deep Agents tools still route every execution through
-`ExecutionBroker` before it is enabled.
+The adapter deliberately does not accept callable tools, a backend, a shell, a filesystem, or an `ExecutionBroker` in graph
+input. It passes only strict JSON messages and broker-owned tool schemas. A graph may propose a structured `tool_call`; the
+native engine then checkpoints the exact call, pauses for one-use approval, claims an execution lease, and dispatches it through
+`ExecutionBroker`. Graph-native tool interrupts are rejected because they would create a second execution boundary outside
+Fikeya.
+
+```python
+from fikeya_agent_core import ApprovalDecision
+from fikeya_agent_core.deep_agents import DeepAgentsCompatibilityAdapter
+
+# `graph` is host-created and exposes async `ainvoke`. Compile it as a
+# decision graph without Deep Agents' default filesystem/shell tools.
+adapter = DeepAgentsCompatibilityAdapter(graph, broker, checkpoint_store)
+session = adapter.start("Inspect the parser and run its focused tests.")
+
+async for event in adapter.stream(session.session_id):
+    publish_to_ui(event)
+
+pending = adapter.interrupt(session.session_id)
+if pending is not None:
+    async for event in adapter.resume(session.session_id, ApprovalDecision.ALLOW_ONCE):
+        publish_to_ui(event)
+```
+
+The graph's LangGraph `thread_id` is a deterministic digest of the native session ID. Stage namespaces and request digests keep
+provider checkpoints stable without disclosing the original session identifier. `cancel()` cooperatively cancels an active
+graph invocation through the same native session token. Full external agents with their own tool execution should connect over
+ACP instead of being embedded through this decision-only adapter.
 
 ## Not implemented yet
 
@@ -128,7 +154,6 @@ demonstrate that official LangGraph interrupts/checkpointers or Deep Agents tool
 - Token-by-token model streaming; this release streams typed orchestration events.
 - Subagents, repository maps, symbol indexes, compaction, skills, or agent marketplaces.
 - Remote or multi-tenant checkpoint storage, event retention, billing, or enterprise administration.
-- A LangGraph or Deep Agents adapter.
 - The package does not bundle Desktop, CLI, interop-gateway, or Qarinah-sidecar code. Fikeya Runtime and the Desktop extension integrate the core through its public provider, broker, checkpoint, approval, cancellation, and event interfaces.
 
 See [SECURITY.md](SECURITY.md) before connecting a real provider or execution broker.
