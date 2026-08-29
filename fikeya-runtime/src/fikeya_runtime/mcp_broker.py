@@ -10,7 +10,7 @@ import json
 import os
 import shutil
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -120,6 +120,7 @@ class McpBrokerRegistry:
         self.process_factory = process_factory
         self.maximum_output_bytes = maximum_output_bytes
         self._hosts: dict[str, McpStdioHost] = {}
+        self._redactions: dict[str, tuple[str, ...]] = {}
         self._definitions: tuple[ToolDefinition, ...] | None = None
         self._tool_map: dict[str, McpBrokerTool] = {}
         self._executor = ThreadPoolExecutor(
@@ -170,9 +171,17 @@ class McpBrokerRegistry:
         except CancellationError:
             raise
         except (FikeyaError, OSError, UnicodeError, ValueError) as error:
-            return ToolResult(call.call_id, "error", _safe_error(error))
+            return ToolResult(
+                call.call_id,
+                "error",
+                _safe_error(error, self._redactions.get(mapping.preset_id, ())),
+            )
         assert isinstance(result, McpToolResult)
-        output = _result_json(mapping, result)
+        output = _result_json(
+            mapping,
+            result,
+            self._redactions.get(mapping.preset_id, ()),
+        )
         encoded = output.encode("utf-8")
         if len(encoded) > self.maximum_output_bytes:
             return ToolResult(
@@ -239,10 +248,17 @@ class McpBrokerRegistry:
                             f"Duplicate namespaced MCP tool: {mapped.broker_name}"
                         )
                     tool_map[mapped.broker_name] = mapped
-                    definitions.append(_tool_definition(preset, mapped, upstream))
-        except Exception:
+                    definitions.append(
+                        _tool_definition(
+                            preset,
+                            mapped,
+                            upstream,
+                            self._redactions.get(preset.preset_id, ()),
+                        )
+                    )
+        except (FikeyaError, OSError, UnicodeError, ValueError) as error:
             self._close_sync()
-            raise
+            raise ToolPresetError(_safe_error(error, self._all_redactions())) from error
         self._tool_map = tool_map
         self._definitions = tuple(definitions)
         return self._definitions
@@ -250,22 +266,36 @@ class McpBrokerRegistry:
     def _connect(self, preset: ToolPreset) -> McpStdioHost:
         configuration = _environment_configuration(preset)
         configuration.update(self.configuration.get(preset.preset_id, {}))
+        resolved_credentials: list[str] = []
 
         def resolve(name: str) -> str | None:
             if self.secret_resolver is not None:
-                return self.secret_resolver(preset.preset_id, name)
-            return self.credential_store.resolve(self.workspace, preset.preset_id, name)
+                value = self.secret_resolver(preset.preset_id, name)
+            else:
+                value = self.credential_store.resolve(
+                    self.workspace, preset.preset_id, name
+                )
+            if value:
+                resolved_credentials.append(value)
+            return value
 
-        return McpStdioHost.connect(
-            self.loader,
-            self.workspace,
-            preset.preset_id,
-            expected_preset_digest=preset.digest,
-            configuration=configuration,
-            secret_resolver=resolve,
-            executable_resolver=self.executable_resolver,
-            process_factory=self.process_factory,
-        )
+        try:
+            host = McpStdioHost.connect(
+                self.loader,
+                self.workspace,
+                preset.preset_id,
+                expected_preset_digest=preset.digest,
+                configuration=configuration,
+                secret_resolver=resolve,
+                executable_resolver=self.executable_resolver,
+                process_factory=self.process_factory,
+            )
+        except (FikeyaError, OSError, UnicodeError, ValueError) as error:
+            redactions = _ordered_redactions(resolved_credentials)
+            self._redactions[preset.preset_id] = redactions
+            raise ToolPresetError(_safe_error(error, redactions)) from error
+        self._redactions[preset.preset_id] = _ordered_redactions(resolved_credentials)
+        return host
 
     def _call_sync(
         self, mapping: McpBrokerTool, arguments: Mapping[str, object]
@@ -290,6 +320,11 @@ class McpBrokerRegistry:
                 pass
         self._hosts.clear()
 
+    def _all_redactions(self) -> tuple[str, ...]:
+        return _ordered_redactions(
+            value for values in self._redactions.values() for value in values
+        )
+
 
 def broker_tool_name(preset_id: str, upstream_name: str) -> str:
     """Return the stable, collision-free Agent Core name for one MCP tool."""
@@ -311,8 +346,9 @@ def _tool_definition(
     preset: ToolPreset,
     mapped: McpBrokerTool,
     upstream: McpToolDefinition,
+    redactions: tuple[str, ...],
 ) -> ToolDefinition:
-    schema = json.loads(
+    raw_schema = json.loads(
         json.dumps(
             upstream.input_schema,
             allow_nan=False,
@@ -320,8 +356,11 @@ def _tool_definition(
             separators=(",", ":"),
         )
     )
+    schema = _redact_json(raw_schema, redactions)
     assert isinstance(schema, dict)
-    description = upstream.description or f"Call {upstream.name}."
+    description = _redact_text(
+        upstream.description or f"Call {upstream.name}.", redactions
+    )
     return ToolDefinition(
         mapped.broker_name,
         f"[{preset.display_name}; {preset.effect}] {description}",
@@ -345,7 +384,11 @@ def _credential_account(workspace: Workspace, preset_id: str, name: str) -> str:
     return account
 
 
-def _result_json(mapping: McpBrokerTool, result: McpToolResult) -> str:
+def _result_json(
+    mapping: McpBrokerTool,
+    result: McpToolResult,
+    redactions: tuple[str, ...],
+) -> str:
     value = {
         "content": [_content_json(item) for item in result.content],
         "effect": mapping.effect,
@@ -359,7 +402,7 @@ def _result_json(mapping: McpBrokerTool, result: McpToolResult) -> str:
         "toolName": mapping.upstream_name,
     }
     return json.dumps(
-        value,
+        _redact_json(value, redactions),
         allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),
@@ -399,8 +442,37 @@ def _content_json(value: object) -> dict[str, object]:
     raise ToolPresetError("Unsupported typed MCP result content.")
 
 
-def _safe_error(error: Exception) -> str:
+def _safe_error(error: Exception, redactions: tuple[str, ...] = ()) -> str:
     message = " ".join(str(error).split())
     if not message:
         return type(error).__name__
-    return message[:2_000]
+    return _redact_text(message, redactions)[:2_000]
+
+
+def _ordered_redactions(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted({value for value in values if value}, key=len, reverse=True))
+
+
+def _redact_text(value: str, redactions: tuple[str, ...]) -> str:
+    result = value
+    for sensitive in redactions:
+        result = result.replace(sensitive, "[redacted]")
+    return result
+
+
+def _redact_json(value: object, redactions: tuple[str, ...]) -> object:
+    if isinstance(value, str):
+        return _redact_text(value, redactions)
+    if isinstance(value, list):
+        return [_redact_json(item, redactions) for item in value]
+    if isinstance(value, dict):
+        result: dict[str, object] = {}
+        for key, item in value.items():
+            redacted_key = _redact_text(str(key), redactions)
+            if redacted_key in result:
+                raise ToolPresetError(
+                    "MCP output contains colliding keys after credential redaction."
+                )
+            result[redacted_key] = _redact_json(item, redactions)
+        return result
+    return value

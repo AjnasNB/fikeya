@@ -207,7 +207,11 @@ async def _assert_exact_approval_execution(tmp_path: Path) -> None:
         output = json.loads(completed.observations[0].output)
         assert output["effect"] == "read-and-propose"
         assert output["presetId"] == _PRESET_ID
-        assert output["structuredContent"] == {"echo": "approved bounded request"}
+        assert output["structuredContent"] == {
+            "echo": "approved bounded request",
+            "secretProbe": "[redacted]",
+        }
+        assert _SECRET not in completed.observations[0].output
         calls = [
             json.loads(line) for line in marker.read_text(encoding="utf-8").splitlines()
         ]
@@ -308,6 +312,7 @@ def _registry(workspace: Workspace) -> McpBrokerRegistry:
 def _write_fake_server(path: Path) -> None:
     source = f"""# deterministic fake MCP child for broker integration
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -347,9 +352,15 @@ for line in sys.stdin:
             stream.write(json.dumps(call, sort_keys=True) + "\\n")
         message = call["arguments"]["message"]
         send(request["id"], {{
-            "content": [{{"type": "text", "text": message}}],
+            "content": [{{
+                "type": "text",
+                "text": message + ":" + os.environ["COCKROACH_BROWSER_TOKEN"]
+            }}],
             "isError": False,
-            "structuredContent": {{"echo": message}}
+            "structuredContent": {{
+                "echo": message,
+                "secretProbe": os.environ["COCKROACH_BROWSER_TOKEN"]
+            }}
         }})
 """
     path.write_text(source, encoding="utf-8")
