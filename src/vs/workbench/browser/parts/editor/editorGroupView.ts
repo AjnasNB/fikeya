@@ -547,11 +547,14 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 		this.updateStyles();
 	}
 
-	private updateTitleContainer(): void {
+	private updateTitleContainer(): boolean {
 		const hideTitle = this.activeEditor?.hasCapability(EditorInputCapabilities.HideEditorTitle) === true;
+		const titleVisibilityChanged = (this.titleContainer.style.display === 'none') !== hideTitle;
 		this.titleContainer.style.display = hideTitle ? 'none' : '';
 		this.titleContainer.classList.toggle('tabs', this.groupsView.partOptions.showTabs === 'multiple');
 		this.titleContainer.classList.toggle('show-file-icons', this.groupsView.partOptions.showIcons);
+
+		return titleVisibilityChanged;
 	}
 
 	private restoreEditors(from: IEditorGroupView | ISerializedEditorGroupModel | null, groupViewOptions?: IEditorGroupViewOptions): Promise<void> | undefined {
@@ -621,8 +624,9 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 
 		// Full-surface editors can own the editor area without a native tab strip.
 		this._register(this.onDidActiveEditorChange(() => {
-			this.updateTitleContainer();
-			this.relayout();
+			if (this.updateTitleContainer()) {
+				this.relayout();
+			}
 		}));
 	}
 
