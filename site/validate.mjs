@@ -1,6 +1,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { extname } from 'node:path';
 
+import { hasExactSecureHref } from './url-validation.ts';
+
 const root = new URL('.', import.meta.url);
 const requiredFiles = [
 	'.assetsignore',
@@ -150,7 +152,7 @@ assert(!html.includes('Keep the work between coding-agent sessions'), 'Stale ses
 assert(!html.includes('Keep the work. Change the session.'), 'Stale session-handoff closing copy found');
 assert(html.includes('published Qarinah six-fixture portable context estimate'), 'Benchmark scope qualifier is missing');
 assert(html.includes('not provider-billed usage, total cost, model quality, or a universal result'), 'Benchmark disclaimer is missing');
-assert(html.includes('https://qarinah.io/docs/benchmarks/'), 'Benchmark methodology link is missing');
+assert(hasExactSecureHref(html, 'https://qarinah.io/docs/benchmarks/'), 'Benchmark methodology link is missing');
 assert(html.includes('Tool executables are installed separately and remain disabled by default.'), 'Connector availability boundary is missing');
 assert(html.includes('OpenAI / Codex models'), 'OpenAI and Codex-capable model path is missing');
 assert(html.includes('Google Gemini'), 'Gemini provider path is missing');
@@ -163,7 +165,7 @@ assert(html.includes('href="/download/">Download the public beta</a>'), 'Primary
 assert(!html.includes('install surfaces'), 'Generic install-surface count is still present');
 assert(!html.includes('provider paths</span>'), 'Generic provider-path count is still present');
 assert(html.includes('The companion editor extension stays intentionally smaller'), 'Extension and Desktop boundary is missing');
-assert(html.includes('https://github.com/sponsors/AjnasNB'), 'GitHub Sponsors link is missing');
+assert(hasExactSecureHref(html, 'https://github.com/sponsors/AjnasNB'), 'GitHub Sponsors link is missing');
 assert(html.includes('id="contributors"'), 'Contributor attribution section is missing');
 assert(html.includes('Fikeya-owned product code is AGPL-3.0-or-later'), 'Mixed-license attribution is missing');
 assert(html.includes('FikeyaSetup-0.1.0-beta.1-win32-x64.exe'), 'Windows beta download is missing');
