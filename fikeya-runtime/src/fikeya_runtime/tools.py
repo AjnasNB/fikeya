@@ -251,10 +251,6 @@ class ToolBroker:
         execution_enabled: bool = False,
         maximum_output_bytes: int = 262_144,
     ) -> None:
-        if not allowed_executables:
-            raise ConfigurationError(
-                "Tool broker requires a non-empty executable allowlist."
-            )
         normalized = {name.lower() for name in allowed_executables}
         if normalized & _COMMAND_INTERPRETERS:
             raise ConfigurationError(

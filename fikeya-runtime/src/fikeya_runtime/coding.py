@@ -234,6 +234,7 @@ class WorkspaceExecutionBroker:
         workspace: Workspace,
         *,
         allowed_executables: frozenset[str] = _DEFAULT_ALLOWED_EXECUTABLES,
+        allowed_tools: frozenset[str] | None = None,
         maximum_process_timeout_seconds: float = 120.0,
         mode: AgentMode | str = AgentMode.BUILD,
         allow_private_browser: bool = False,
@@ -251,6 +252,7 @@ class WorkspaceExecutionBroker:
         self.workspace = workspace
         self.state = _BrokerState()
         self.mode_policy: ModePolicy = mode_policy(mode)
+        self.allowed_tools = allowed_tools
         self.allow_private_browser = allow_private_browser
         self.browser_engine = browser_engine
         self._browser = browser_session
@@ -455,9 +457,22 @@ class WorkspaceExecutionBroker:
                 },
             ),
         )
-        available = [tool for tool in tools if self.mode_policy.allows(tool.name)]
-        if self.mode_policy.mode in _MCP_AGENT_MODES:
-            available.extend(await self._mcp.list_tools(cancellation))
+        available = [
+            tool
+            for tool in tools
+            if self.mode_policy.allows(tool.name)
+            and (self.allowed_tools is None or tool.name in self.allowed_tools)
+        ]
+        mcp_permitted = self.allowed_tools is None or any(
+            name.startswith("mcp.") for name in self.allowed_tools
+        )
+        if self.mode_policy.mode in _MCP_AGENT_MODES and mcp_permitted:
+            mcp_tools = await self._mcp.list_tools(cancellation)
+            available.extend(
+                tool
+                for tool in mcp_tools
+                if self.allowed_tools is None or tool.name in self.allowed_tools
+            )
         return tuple(available)
 
     async def execute(
@@ -545,6 +560,8 @@ class WorkspaceExecutionBroker:
             self._mcp.close()
 
     def _allows_tool(self, name: str) -> bool:
+        if self.allowed_tools is not None and name not in self.allowed_tools:
+            return False
         if name.startswith("mcp."):
             return self.mode_policy.mode in _MCP_AGENT_MODES
         return self.mode_policy.allows(name)
@@ -1084,7 +1101,11 @@ class CodingAgentRunner:
         self.executor = executor or ProviderExecutor()
         self.credentials = credentials or CredentialResolver(providers)
         self.state = StateStore(workspace.state_path)
-        self.allowed_executables = allowed_executables or _DEFAULT_ALLOWED_EXECUTABLES
+        self.allowed_executables = (
+            _DEFAULT_ALLOWED_EXECUTABLES
+            if allowed_executables is None
+            else allowed_executables
+        )
         self.mcp_registry_factory = mcp_registry_factory or McpBrokerRegistry
 
     async def run(
@@ -1095,6 +1116,9 @@ class CodingAgentRunner:
         allow_network: bool,
         timeout: float,
         max_output_tokens: int,
+        max_steps: int = 32,
+        allowed_tools: frozenset[str] | None = None,
+        session_id: str | None = None,
         cancellation: CancellationToken,
         approval_handler: ApprovalHandler,
         progress_handler: ProgressHandler | None = None,
@@ -1112,6 +1136,7 @@ class CodingAgentRunner:
         broker: WorkspaceExecutionBroker | None = None
         profile = self.providers.get(provider_name)
         session = self.state.create_session(
+            session_id=session_id,
             metadata={
                 "mode": "coding-agent",
                 "agentMode": policy.mode.value,
@@ -1160,6 +1185,7 @@ class CodingAgentRunner:
             broker = WorkspaceExecutionBroker(
                 self.workspace,
                 allowed_executables=self.allowed_executables,
+                allowed_tools=allowed_tools,
                 maximum_process_timeout_seconds=timeout,
                 mode=policy.mode,
                 allow_private_browser=allow_private_browser,
@@ -1174,6 +1200,7 @@ class CodingAgentRunner:
                 # enter the workspace database. Runtime SQLite retains content-free receipts.
                 InMemoryCheckpointStore(),
                 AgentLimits(
+                    max_steps=max_steps,
                     max_output_bytes=maximum_output_bytes,
                     provider_timeout_seconds=timeout,
                     # The broker owns process-tree cleanup. Keep the orchestration timeout
