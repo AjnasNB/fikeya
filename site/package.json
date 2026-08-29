@@ -5,7 +5,7 @@
 	"version": "0.0.0",
 	"scripts": {
 		"build": "node build.mjs",
-		"test": "node validate.mjs",
+		"test": "node validate.mjs && node product-boundary.test.mjs",
 		"deploy": "npm run build && wrangler pages deploy dist --project-name fikeya-site",
 		"deploy:worker": "npm run build && wrangler deploy --config wrangler.worker.jsonc"
 	},
