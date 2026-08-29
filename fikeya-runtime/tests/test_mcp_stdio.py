@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -158,6 +159,27 @@ def test_request_timeout_kills_the_real_child(tmp_path: Path) -> None:
     assert host.process.poll() is not None
 
 
+def test_close_kills_every_descendant_of_the_real_mcp_child(tmp_path: Path) -> None:
+    workspace, loader, preset = _workspace_and_loader(tmp_path)
+    _write_fake_server(workspace.root / "mcp", mode="descendant")
+    marker = workspace.root / "descendant-survived.txt"
+    host = McpStdioHost.connect(
+        loader,
+        workspace,
+        preset.preset_id,
+        expected_preset_digest=preset.digest,
+        secret_resolver=lambda _name: _SECRET,
+        executable_resolver=lambda _command: sys.executable,
+    )
+
+    assert host.process_tree.contained is True
+    host.close()
+    time.sleep(1.7)
+
+    assert host.process.poll() is not None
+    assert not marker.exists()
+
+
 def test_tool_arguments_follow_the_discovered_object_schema(tmp_path: Path) -> None:
     workspace, loader, preset = _workspace_and_loader(tmp_path)
     _write_fake_server(workspace.root / "mcp", mode="normal")
@@ -225,6 +247,8 @@ def _write_fake_server(path: Path, *, mode: str, noisy_stderr: bool = False) -> 
     source = f"""# deterministic fake MCP child
 import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -234,6 +258,13 @@ TOOLS = {json.dumps(_TOOLS)}
 if {noisy_stderr!r}:
     sys.stderr.write(os.environ.get("COCKROACH_BROWSER_TOKEN", "") + "x" * 10000)
     sys.stderr.flush()
+
+if MODE == "descendant":
+    child = (
+        "import time; from pathlib import Path; time.sleep(1.5); "
+        "Path('descendant-survived.txt').write_text('unsafe', encoding='utf-8')"
+    )
+    subprocess.Popen([sys.executable, "-c", child])
 
 def send(request_id, result):
     if MODE == "wrong-id":

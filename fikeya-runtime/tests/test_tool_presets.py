@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +43,14 @@ def test_cli_lists_disabled_presets_and_requires_workspace_confirmation(
     ]
     assert all(tool["enabled"] is False for tool in listed["tools"])
     assert all("not verified" in tool["provenanceWarning"] for tool in listed["tools"])
+    assert all(
+        tool["executionTrust"] == "trusted-local-executable" for tool in listed["tools"]
+    )
+    assert all(tool["osSandboxed"] is False for tool in listed["tools"])
+    assert all(
+        "does not restrict" in tool["sandboxWarning"] for tool in listed["tools"]
+    )
+    assert all(tool["processTreeContained"] is True for tool in listed["tools"])
     assert all(tool["transport"] == "stdio" for tool in listed["tools"])
     assert all(tool["requiresExactApproval"] is True for tool in listed["tools"])
     assert listed["tools"][0]["brokerNamespace"] == "mcp.cockroach-browser"
@@ -296,6 +306,7 @@ def test_catalog_rejects_filesystem_root_and_symlink_escape(tmp_path: Path) -> N
 
 def test_prepare_and_spawn_are_shell_free_and_never_invoke_a_real_tool(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "project"
     root.mkdir()
@@ -306,6 +317,9 @@ def test_prepare_and_spawn_are_shell_free_and_never_invoke_a_real_tool(
     executable.write_bytes(b"not executed")
     executable.chmod(0o700)
     loader = ToolPresetLoader()
+    monkeypatch.setenv("HOME", str(tmp_path / "sensitive-home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "sensitive-profile"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "sensitive-appdata"))
     plan = loader.prepare_launch(
         workspace,
         preset.preset_id,
@@ -314,6 +328,9 @@ def test_prepare_and_spawn_are_shell_free_and_never_invoke_a_real_tool(
         executable_resolver=lambda _command: str(executable),
     )
     assert plan.argv == (str(executable.resolve()), "mcp")
+    assert "HOME" not in plan.environment
+    assert "USERPROFILE" not in plan.environment
+    assert "LOCALAPPDATA" not in plan.environment
     assert "ephemeral-test-value" not in repr(plan)
     assert b"ephemeral-test-value" not in workspace.state_path.read_bytes()
 
@@ -324,12 +341,20 @@ def test_prepare_and_spawn_are_shell_free_and_never_invoke_a_real_tool(
         captured.update(kwargs)
         return object()
 
-    process, budget = loader.spawn(plan, process_factory=fake_process_factory)
+    process, budget, process_tree = loader.spawn(
+        plan, process_factory=fake_process_factory
+    )
     assert process is not None
     assert isinstance(budget, ToolBudget)
+    assert process_tree.process is process
+    assert process_tree.contained is False
     assert captured["argv"] == [str(executable.resolve()), "mcp"]
     assert captured["shell"] is False
     assert captured["cwd"] == str(workspace.root)
+    if os.name == "nt":
+        assert captured["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        assert captured["start_new_session"] is True
 
 
 def test_unsafe_budget_is_rejected_before_process_factory(tmp_path: Path) -> None:
