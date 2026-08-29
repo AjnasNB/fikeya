@@ -16,6 +16,7 @@ from fikeya_agent_core import (
     ConfigurationError,
     EventKind,
     InMemoryCheckpointStore,
+    LimitExceededError,
     ProtocolError,
     Stage,
     ToolCall,
@@ -192,6 +193,22 @@ async def test_graph_tool_attempt_can_only_reach_broker_after_exact_fikeya_appro
         config["metadata"]["fikeya_tool_boundary"] == "propose-only"  # type: ignore[index]
         for config in graph.configs
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        "x" * 8_193,
+        {"fikeya_decision": {"kind": "plan", "content": "x" * 8_193}},
+        {"messages": [{"content": "x" * 8_193}]},
+    ],
+)
+async def test_graph_output_is_bounded_before_decoding(result: object) -> None:
+    adapter = DeepAgentsProviderAdapter(FakeGraph(result))
+
+    with pytest.raises(LimitExceededError, match="configured byte limit"):
+        await adapter.complete(provider_request(), CancellationToken())
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import importlib.util
+import json
 import sys
 from contextlib import suppress
 from dataclasses import dataclass
@@ -27,7 +28,7 @@ from typing import Protocol
 from .cancellation import CancellationToken
 from .checkpoints import CheckpointStore
 from .engine import AgentOrchestrator
-from .errors import CancellationError, ConfigurationError, ProtocolError
+from .errors import CancellationError, ConfigurationError, LimitExceededError, ProtocolError
 from .models import (
     AgentEvent,
     AgentLimits,
@@ -40,7 +41,6 @@ from .models import (
     ProviderUsage,
     SessionState,
     Stage,
-    canonical_json,
     sha256_value,
 )
 from .protocols import ExecutionBroker
@@ -239,7 +239,7 @@ class DeepAgentsProviderAdapter:
                 "Deep Agents graph-native interrupts are not an execution boundary; "
                 "return a Fikeya tool_call decision so the native approval and broker can handle it"
             )
-        decision_payload = _extract_decision_payload(result)
+        decision_payload = _extract_decision_payload(result, request.max_output_bytes)
         decision = decode_provider_decision(decision_payload, request.stage)
         return ProviderResult(
             decision=decision,
@@ -432,28 +432,57 @@ def _request_identity(request: ProviderRequest) -> dict[str, JsonValue]:
     }
 
 
-def _extract_decision_payload(result: object) -> str:
+def _extract_decision_payload(result: object, maximum_bytes: int) -> str:
     if isinstance(result, str):
-        return result
+        return _bounded_text(result, maximum_bytes)
     if not isinstance(result, dict):
         raise ProtocolError("Deep Agents graph must return a string or object")
 
     for key in ("fikeya_decision", "structured_response", "output"):
         value = result.get(key)
         if isinstance(value, str):
-            return value
+            return _bounded_text(value, maximum_bytes)
         if isinstance(value, dict):
-            try:
-                return canonical_json(value).decode("utf-8")
-            except (TypeError, ValueError) as error:
-                raise ProtocolError("Deep Agents decision must be JSON serializable") from error
+            return _bounded_json_text(value, maximum_bytes)
 
     messages = result.get("messages")
     if isinstance(messages, list) and messages:
         content = _message_content(messages[-1])
         if content is not None:
-            return content
+            return _bounded_text(content, maximum_bytes)
     raise ProtocolError("Deep Agents graph result did not contain a Fikeya decision")
+
+
+def _bounded_text(value: str, maximum_bytes: int) -> str:
+    if len(value.encode("utf-8")) > maximum_bytes:
+        raise LimitExceededError("Deep Agents output exceeds the configured byte limit")
+    return value
+
+
+def _bounded_json_text(value: dict[object, object], maximum_bytes: int) -> str:
+    """Serialize one graph decision without first materializing an unbounded payload."""
+
+    encoder = json.JSONEncoder(
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    chunks: list[str] = []
+    encoded_bytes = 0
+    try:
+        for chunk in encoder.iterencode(value):
+            encoded_bytes += len(chunk.encode("utf-8"))
+            if encoded_bytes > maximum_bytes:
+                raise LimitExceededError(
+                    "Deep Agents output exceeds the configured byte limit"
+                )
+            chunks.append(chunk)
+    except LimitExceededError:
+        raise
+    except (TypeError, ValueError) as error:
+        raise ProtocolError("Deep Agents decision must be JSON serializable") from error
+    return "".join(chunks)
 
 
 def _message_content(message: object) -> str | None:
