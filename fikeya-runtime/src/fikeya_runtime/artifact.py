@@ -121,14 +121,15 @@ def _canonical_supplied_path(value: str | Path, *, label: str) -> Path:
     if not supplied.is_absolute():
         raise ConfigurationError(f"The {label} must be an absolute path.")
     requested = Path(os.path.abspath(os.path.normpath(str(supplied))))
+    requested_info = _safe_lstat(requested, label=label)
+    if _is_reparse(requested_info):
+        raise ConfigurationError(
+            f"The {label} must not itself be a link or reparse point."
+        )
     try:
         canonical = requested.resolve(strict=True)
     except OSError as error:
         raise ConfigurationError(f"The {label} does not exist.") from error
-    if not _same_path(requested, canonical):
-        raise ConfigurationError(
-            f"The {label} must not traverse a link or reparse point."
-        )
     return canonical
 
 
@@ -179,10 +180,6 @@ def _is_reparse(value: os.stat_result) -> bool:
     return stat.S_ISLNK(value.st_mode) or bool(
         flag and getattr(value, "st_file_attributes", 0) & flag
     )
-
-
-def _same_path(left: Path, right: Path) -> bool:
-    return os.path.normcase(str(left)) == os.path.normcase(str(right))
 
 
 def _within(root: Path, candidate: Path) -> bool:

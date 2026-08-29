@@ -10,15 +10,16 @@ import math
 import os
 import re
 import shutil
-import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from .errors import ConfigurationError, FikeyaError
+from .process_tree import start_managed_process
 from .state import StateStore
 from .util import sha256_bytes, sha256_text, stable_json
 from .workspace import WorkspaceBoundary
@@ -501,7 +502,7 @@ def _run_sidecar_process(
     input: str,
     timeout: float,
 ) -> subprocess.CompletedProcess[str]:
-    """Run one sidecar request and synchronously reap its process tree."""
+    """Run one sidecar request with bounded capture and reap its process tree."""
 
     if runner is not subprocess.run:
         return runner(
@@ -516,64 +517,132 @@ def _run_sidecar_process(
             shell=False,
         )
 
-    creation_flags = (
-        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
-    )
-    process = subprocess.Popen(
+    input_bytes = input.encode("utf-8")
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    capture_lock = threading.Lock()
+    captured_bytes = 0
+    output_limit_reached = threading.Event()
+
+    def capture(stream: BinaryIO, chunks: list[bytes]) -> None:
+        nonlocal captured_bytes
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                with capture_lock:
+                    remaining = MAXIMUM_SIDECAR_RESPONSE_BYTES - captured_bytes
+                    if len(chunk) > remaining:
+                        if remaining > 0:
+                            chunks.append(chunk[:remaining])
+                            captured_bytes += remaining
+                        output_limit_reached.set()
+                        return
+                    chunks.append(chunk)
+                    captured_bytes += len(chunk)
+        except OSError:
+            return
+
+    def write_request(stream: BinaryIO) -> None:
+        try:
+            stream.write(input_bytes)
+            stream.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    process, process_tree = start_managed_process(
         argv,
         cwd=cwd,
-        env=env,
+        environment=env,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
-        shell=False,
-        start_new_session=os.name != "nt",
-        creationflags=creation_flags,
+        text=False,
     )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    assert process.stderr is not None
+    readers = [
+        threading.Thread(
+            target=capture,
+            args=(process.stdout, stdout_chunks),
+            name="fikeya-sidecar-stdout",
+            daemon=True,
+        ),
+        threading.Thread(
+            target=capture,
+            args=(process.stderr, stderr_chunks),
+            name="fikeya-sidecar-stderr",
+            daemon=True,
+        ),
+    ]
+    writer = threading.Thread(
+        target=write_request,
+        args=(process.stdin,),
+        name="fikeya-sidecar-input",
+        daemon=True,
+    )
+    workers = [writer, *readers]
+    for worker in workers:
+        worker.start()
+
+    timed_out = False
     try:
-        stdout, stderr = process.communicate(input=input, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_sidecar_process_tree(process)
-        raise
+        while process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            if output_limit_reached.wait(timeout=min(0.01, remaining)):
+                break
+
+        # A sidecar request is one owned process tree. Terminating after the
+        # leader exits is intentional: it closes inherited stdio handles and
+        # prevents an otherwise successful probe from orphaning descendants.
+        process_tree.terminate()
+        process.wait()
+        for worker in workers:
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        if any(worker.is_alive() for worker in workers):
+            timed_out = True
+            process_tree.terminate()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            for worker in workers:
+                worker.join()
+    finally:
+        process_tree.close()
+
+    process.stdout.close()
+    process.stderr.close()
+
+    if output_limit_reached.is_set():
+        raise FikeyaError(
+            "Qarinah sidecar combined output exceeds the one-megabyte limit."
+        )
+    if timed_out:
+        raise subprocess.TimeoutExpired(argv, timeout)
+    try:
+        stdout = b"".join(stdout_chunks).decode("utf-8")
+        stderr = b"".join(stderr_chunks).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise FikeyaError("Qarinah sidecar output is not valid UTF-8.") from error
     return subprocess.CompletedProcess(
         argv,
         process.returncode,
         stdout=stdout,
         stderr=stderr,
     )
-
-
-def _kill_sidecar_process_tree(process: subprocess.Popen[str]) -> None:
-    """Force-stop and reap a timed-out managed sidecar and its descendants."""
-
-    if process.poll() is not None:
-        process.wait()
-        return
-    if os.name == "nt":
-        system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR")
-        taskkill = (
-            Path(system_root) / "System32" / "taskkill.exe" if system_root else None
-        )
-        if taskkill is not None and taskkill.is_file():
-            with suppress(OSError, subprocess.SubprocessError):
-                subprocess.run(
-                    [str(taskkill), "/PID", str(process.pid), "/T", "/F"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                    check=False,
-                    shell=False,
-                )
-    else:
-        with suppress(ProcessLookupError, PermissionError):
-            os.killpg(process.pid, signal.SIGKILL)
-    if process.poll() is None:
-        with suppress(OSError):
-            process.kill()
-    with suppress(OSError, subprocess.TimeoutExpired):
-        process.wait(timeout=5)
 
 
 def select_qarinah_adapter(
