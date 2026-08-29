@@ -285,7 +285,7 @@ def test_provider_call_receipt_is_content_free_and_migrates_schema(
     )
 
     with store._connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'tool_enablements'"

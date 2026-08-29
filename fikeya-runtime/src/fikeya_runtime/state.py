@@ -99,6 +99,19 @@ CREATE TABLE IF NOT EXISTS approvals (
     decision TEXT NOT NULL CHECK (decision IN ('approved', 'consumed'))
 );
 
+CREATE TABLE IF NOT EXISTS endpoint_authorizations (
+    approval_id TEXT PRIMARY KEY,
+    request_sha256 TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    endpoint_id TEXT NOT NULL,
+    command_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT NOT NULL,
+    UNIQUE (tenant_id, endpoint_id, command_id)
+);
+
 CREATE TABLE IF NOT EXISTS tool_enablements (
     preset_id TEXT PRIMARY KEY,
     preset_sha256 TEXT NOT NULL,
@@ -125,7 +138,7 @@ CREATE INDEX IF NOT EXISTS provider_calls_by_session
     ON provider_call_receipts(session_id, created_at);
 CREATE INDEX IF NOT EXISTS execution_plans_by_updated_at
     ON execution_plans(updated_at);
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 """
 
 _PROVIDER_RECEIPT_V4 = """
@@ -177,7 +190,7 @@ class StateStore:
 
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6):
                 raise StateError(f"Unsupported state schema version: {version}")
             # Schema v2 introduced provider_call_receipts with the original two-mode
             # CHECK constraint. Schema v3 added tool enablements but retained that table.
@@ -589,6 +602,68 @@ class StateStore:
                 ),
             )
         return call_id
+
+    def consume_endpoint_authorization(
+        self,
+        *,
+        approval_id: str,
+        request_sha256: str,
+        tenant_id: str,
+        endpoint_id: str,
+        command_id: str,
+        run_id: str,
+        tool_call_id: str,
+        expires_at: str,
+    ) -> None:
+        """Atomically consume one exact managed-endpoint authorization."""
+
+        self.initialize()
+        bounded = {
+            "approval_id": approval_id,
+            "request_sha256": request_sha256,
+            "tenant_id": tenant_id,
+            "endpoint_id": endpoint_id,
+            "command_id": command_id,
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "expires_at": expires_at,
+        }
+        try:
+            invalid_identity = any(
+                not isinstance(value, str)
+                or not value
+                or len(value.encode("utf-8")) > 512
+                or "\0" in value
+                for value in bounded.values()
+            )
+        except UnicodeEncodeError:
+            invalid_identity = True
+        if invalid_identity:
+            raise StateError("Endpoint authorization identity is invalid.")
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO endpoint_authorizations (
+                        approval_id, request_sha256, tenant_id, endpoint_id,
+                        command_id, run_id, tool_call_id, expires_at, consumed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        approval_id,
+                        request_sha256,
+                        tenant_id,
+                        endpoint_id,
+                        command_id,
+                        run_id,
+                        tool_call_id,
+                        expires_at,
+                        utc_now(),
+                    ),
+                )
+        except sqlite3.IntegrityError as error:
+            raise StateError("Endpoint authorization has already been consumed.") from error
 
     def provider_call_receipts(self, session_id: str) -> tuple[dict[str, object], ...]:
         """Return content-free receipts in deterministic creation order."""
