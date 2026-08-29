@@ -319,16 +319,35 @@ Build and Project runs can use typed `browser.navigate`, `browser.snapshot`,
 `browser.click`, `browser.type`, `browser.scroll`, `browser.wait`,
 `browser.assert_text`, `browser.screenshot`, and `browser.close` calls. Each
 side-effecting or workspace-writing action remains bound to the reviewed plan and
-its exact approval. The browser runs in a dedicated Playwright session with
-bounded navigation, selectors, typed input, page text, screenshots, time, and
-action count. URL credentials and unsafe schemes are rejected, web content stays
-untrusted, and private or loopback navigation requires the explicit
-`--allow-private-browser` opt-in.
+its exact approval. Playwright is the default transport. An explicitly selected
+Puppeteer or Puppeteer Core installation implements the same typed operations
+behind the same broker and receipt contract. Both transports bound navigation,
+selectors, typed input, page text, screenshots, time, and action count. URL
+credentials and unsafe schemes are rejected, every Puppeteer page request is
+returned to the Python network guard, web content stays untrusted, and private
+or loopback navigation requires the separate `--allow-private-browser` opt-in.
+
+Puppeteer never loads implicitly and never falls back from a failed Playwright
+run. Set `FIKEYA_PUPPETEER_ROOT` to a reviewed directory whose `package.json`
+resolves `puppeteer` or `puppeteer-core`, optionally set
+`FIKEYA_CHROME_EXECUTABLE` for Puppeteer Core, and select it for one CLI path:
+
+```console
+fikeya agent execute . --provider work --protocol-stdin --allow-network \
+  --browser-engine puppeteer --json-lines
+```
+
+Fikeya Desktop exposes the same choice through `fikeya.browser.engine`, with
+`fikeya.browser.puppeteerRoot` and `fikeya.browser.chromeExecutable` for the two
+reviewed local paths. The release test exercises `puppeteer-core@25.9.0` against
+the pinned Chromium Headless Shell; Puppeteer is not bundled into the ordinary
+CLI wheel.
 
 The beta.8 Windows x64 Desktop and Windows x64 VSIX embed the reviewed Chromium
 Headless Shell payload. The standalone CLI wheel does not contain a browser
 binary. Source and CLI users install the `browser` extra and provision the pinned
-Playwright browser as shown in the development setup. Fikeya does not currently
+Playwright browser as shown in the development setup. The optional Puppeteer
+path uses an operator-provisioned package and browser executable. Fikeya does not currently
 ship macOS, Linux, Windows ARM64, or macOS ARM64 installers.
 
 ### Reviewed external tool presets
