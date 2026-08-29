@@ -429,6 +429,36 @@ def test_endpoint_executes_exact_scoped_tools_and_rejects_replay(
         )
 
 
+def test_endpoint_accepts_aggregate_usage_above_the_per_call_output_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value, providers, root = _fixture(tmp_path, tools=[], max_tool_calls=0)
+    request = validate_endpoint_request(value, cwd=root)
+    runner = _FakeRunner(
+        steps=3,
+        usage={
+            "cachedInputTokens": 120,
+            "inputTokens": 1_200,
+            "measurement": "provider-reported",
+            "outputTokens": 900,
+        },
+    )
+    result = _run(
+        execute_endpoint_request(
+            request,
+            providers,
+            runner_factory=lambda _workspace, _providers: runner,
+        ),
+        monkeypatch,
+    )
+    payload = result.as_json()
+
+    assert runner.kwargs["max_output_tokens"] == 512
+    assert payload["status"] == "succeeded"
+    assert cast(dict[str, object], payload["usage"])["outputTokens"] == 900
+
+
 @pytest.mark.parametrize(
     ("runner", "status", "error_code", "measurement"),
     [

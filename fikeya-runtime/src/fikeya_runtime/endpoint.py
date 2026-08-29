@@ -431,7 +431,7 @@ async def execute_endpoint_request(
     except Exception:  # noqa: BLE001 - post-start errors settle without leaking details.
         return _failed_result(request, profile, endpoint_session_id, "failed", "FIKEYA_RUNTIME_FAILED")
 
-    usage = _safe_usage(result, request.limits)
+    usage = _safe_usage(result)
     if denied_call:
         return _failed_result(
             request,
@@ -519,7 +519,7 @@ def _failed_result(
 
 
 def _safe_usage(
-    result: CodingRunResult, limits: EndpointLimits
+    result: CodingRunResult,
 ) -> tuple[str, bool, int | None, int | None, int | None] | None:
     measurement = result.usage.get("measurement")
     if measurement == "unavailable":
@@ -538,7 +538,6 @@ def _safe_usage(
         values[name] = item
     if (
         values["cachedInputTokens"] > values["inputTokens"]
-        or values["outputTokens"] > limits.max_output_tokens
         or not any(values.values())
     ):
         return None
