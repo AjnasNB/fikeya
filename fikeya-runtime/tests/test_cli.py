@@ -51,13 +51,17 @@ def test_agent_execute_mode_defaults_to_build_and_private_browser_is_opt_in() ->
             "--mode",
             "review",
             "--allow-private-browser",
+            "--browser-engine",
+            "puppeteer",
             "--json-lines",
         ]
     )
     assert default.mode == "build"
     assert default.allow_private_browser is False
+    assert default.browser_engine == "playwright"
     assert review.mode == "review"
     assert review.allow_private_browser is True
+    assert review.browser_engine == "puppeteer"
 
 
 class _ProtocolInput:

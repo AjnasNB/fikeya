@@ -29,6 +29,7 @@ from typing import Protocol, cast
 from fikeya_agent_core import ApprovalDecision
 from fikeya_agent_core.errors import CancellationError as CoreCancellationError
 
+from .browser import BrowserEngine, SUPPORTED_BROWSER_ENGINES
 from .coding import ApprovalHandler, CodingRunResult
 from .errors import CancellationError, ConfigurationError, FikeyaError, StateError
 from .inference import CancellationToken
@@ -197,6 +198,7 @@ class ProviderOptions:
     provider_name: str
     allow_network: bool
     allow_private_browser: bool = False
+    browser_engine: BrowserEngine | str = "playwright"
     timeout: float = 120.0
     max_output_tokens: int = 4_096
     memory_mode: str = "auto"
@@ -209,6 +211,10 @@ class ProviderOptions:
             raise ConfigurationError("allow_network must be boolean.")
         if not isinstance(self.allow_private_browser, bool):
             raise ConfigurationError("allow_private_browser must be boolean.")
+        if self.browser_engine not in SUPPORTED_BROWSER_ENGINES:
+            raise ConfigurationError(
+                "browser_engine must be playwright or puppeteer."
+            )
         if isinstance(self.timeout, bool) or not 1 <= self.timeout <= 600:
             raise ConfigurationError("timeout must be between 1 and 600 seconds.")
         if (
@@ -1479,6 +1485,7 @@ class AutonomousProjectLoop:
                         record,
                         cancellation,
                         allow_private_browser=provider.allow_private_browser,
+                        browser_engine=provider.browser_engine,
                     )
                 elif record.stage is AutonomyStage.AUDIT_CODE:
                     record = await self._audit(
@@ -1762,6 +1769,7 @@ class AutonomousProjectLoop:
         cancellation: CancellationToken,
         *,
         allow_private_browser: bool = False,
+        browser_engine: BrowserEngine | str = "playwright",
     ) -> AutonomyRecord:
         plan = self._current_plan(record)
         if plan.status is PlanStatus.DRAFT:
@@ -1786,6 +1794,7 @@ class AutonomousProjectLoop:
                 resume=True,
                 cancellation=cancellation,
                 allow_private_browser=allow_private_browser,
+                browser_engine=browser_engine,
             )
         except (CancellationError, CoreCancellationError):
             return self._cancelled(record, "person cancelled")

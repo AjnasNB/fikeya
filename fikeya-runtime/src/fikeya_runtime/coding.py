@@ -35,7 +35,7 @@ from fikeya_agent_core import (
 )
 
 from .agent import AgentRunner, MemoryPreparation
-from .browser import BrowserActionResult, BrowserSession
+from .browser import BrowserActionResult, BrowserEngine, BrowserSession
 from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
 from .errors import ApprovalError, FikeyaError
@@ -237,6 +237,7 @@ class WorkspaceExecutionBroker:
         maximum_process_timeout_seconds: float = 120.0,
         mode: AgentMode | str = AgentMode.BUILD,
         allow_private_browser: bool = False,
+        browser_engine: BrowserEngine | str = "playwright",
         browser_session: BrowserSession | None = None,
         mcp_registry: McpBrokerRegistry | None = None,
     ) -> None:
@@ -251,6 +252,7 @@ class WorkspaceExecutionBroker:
         self.state = _BrokerState()
         self.mode_policy: ModePolicy = mode_policy(mode)
         self.allow_private_browser = allow_private_browser
+        self.browser_engine = browser_engine
         self._browser = browser_session
         self._browser_executor: ThreadPoolExecutor | None = None
         self._mcp = mcp_registry or McpBrokerRegistry(workspace)
@@ -565,6 +567,7 @@ class WorkspaceExecutionBroker:
             self._browser = BrowserSession(
                 self.workspace.root,
                 allow_private=self.allow_private_browser,
+                engine=self.browser_engine,
             )
         return self._browser
 
@@ -1101,6 +1104,7 @@ class CodingAgentRunner:
         images: tuple[InferenceImage, ...] = (),
         mode: AgentMode | str = AgentMode.BUILD,
         allow_private_browser: bool = False,
+        browser_engine: BrowserEngine | str = "playwright",
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
@@ -1159,6 +1163,7 @@ class CodingAgentRunner:
                 maximum_process_timeout_seconds=timeout,
                 mode=policy.mode,
                 allow_private_browser=allow_private_browser,
+                browser_engine=browser_engine,
                 mcp_registry=self.mcp_registry_factory(self.workspace),
             )
             maximum_output_bytes = max(256, min(4_194_304, max_output_tokens * 4))

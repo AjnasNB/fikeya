@@ -24,6 +24,7 @@ from fikeya_agent_core import ApprovalDecision
 from . import __version__
 from .agent import AgentRunner
 from .autonomy import AutonomousProjectLoop, AutonomyRecord, ProviderOptions
+from .browser import SUPPORTED_BROWSER_ENGINES
 from .coding import CodingAgentRunner
 from .conversation import parse_conversation_history
 from .credentials import CredentialResolver
@@ -198,6 +199,15 @@ def _parser() -> argparse.ArgumentParser:
             "Off by default."
         ),
     )
+    agent_execute.add_argument(
+        "--browser-engine",
+        choices=SUPPORTED_BROWSER_ENGINES,
+        default="playwright",
+        help=(
+            "Use Playwright by default or explicitly select the optional "
+            "Puppeteer transport."
+        ),
+    )
     agent_execute.add_argument("--timeout", type=float, default=60.0)
     agent_execute.add_argument("--max-output-tokens", type=int, default=1_024)
     agent_execute.add_argument(
@@ -251,6 +261,9 @@ def _parser() -> argparse.ArgumentParser:
     project_start.add_argument("--json-lines", action="store_true")
     project_start.add_argument("--allow-network", action="store_true")
     project_start.add_argument("--allow-private-browser", action="store_true")
+    project_start.add_argument(
+        "--browser-engine", choices=SUPPORTED_BROWSER_ENGINES, default="playwright"
+    )
     project_start.add_argument("--timeout", type=float, default=120.0)
     project_start.add_argument("--max-output-tokens", type=int, default=4_096)
     project_start.add_argument(
@@ -269,6 +282,9 @@ def _parser() -> argparse.ArgumentParser:
     project_resume.add_argument("--json-lines", action="store_true")
     project_resume.add_argument("--allow-network", action="store_true")
     project_resume.add_argument("--allow-private-browser", action="store_true")
+    project_resume.add_argument(
+        "--browser-engine", choices=SUPPORTED_BROWSER_ENGINES, default="playwright"
+    )
     project_resume.add_argument("--timeout", type=float, default=120.0)
     project_resume.add_argument("--max-output-tokens", type=int, default=4_096)
     project_resume.add_argument(
@@ -365,6 +381,11 @@ def _parser() -> argparse.ArgumentParser:
             "--allow-private-browser",
             action="store_true",
             help="Permit approved browser steps to access private or loopback hosts.",
+        )
+        plan_run.add_argument(
+            "--browser-engine",
+            choices=SUPPORTED_BROWSER_ENGINES,
+            default="playwright",
         )
         plan_run.add_argument("--json", action="store_true")
 
@@ -949,6 +970,7 @@ def _run_project(args: argparse.Namespace) -> int:
         provider_name=args.provider,
         allow_network=args.allow_network,
         allow_private_browser=args.allow_private_browser,
+        browser_engine=args.browser_engine,
         timeout=args.timeout,
         max_output_tokens=args.max_output_tokens,
         memory_mode=args.memory,
@@ -1156,6 +1178,7 @@ def _run_coding_agent(
                     images=images,
                     mode=args.mode,
                     allow_private_browser=args.allow_private_browser,
+                    browser_engine=args.browser_engine,
                 )
             )
     except ProviderConnectivityError as error:
@@ -1376,6 +1399,7 @@ def _run_plan(args: argparse.Namespace) -> int:
                     args.plan_id,
                     allowed_executables=allowed,
                     allow_private_browser=args.allow_private_browser,
+                    browser_engine=args.browser_engine,
                     resume=args.plan_command == "resume",
                     cancellation=cancellation,
                 )
