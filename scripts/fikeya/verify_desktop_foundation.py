@@ -166,6 +166,16 @@ expect("'LICENSE.txt'" in packaging_source, "Desktop packaging must preserve the
 expect("'LICENSES/**'" in packaging_source, "Desktop packaging must include the Fikeya distribution license bundle.")
 expect("'fikeya-distribution.json'" in packaging_source, "Desktop packaging must include the Fikeya distribution manifest.")
 
+editor_group_source = read_text("src/vs/workbench/browser/parts/editor/editorGroupView.ts")
+expect(
+    "private updateTitleContainer(): boolean" in editor_group_source,
+    "Full-surface editor title updates must report whether visibility actually changed.",
+)
+expect(
+    "if (this.updateTitleContainer())" in editor_group_source,
+    "Ordinary editor activation must not force an unnecessary workbench relayout.",
+)
+
 for relative_path, label in (
     ("resources/win32/code.ico", "Windows application icon source"),
     ("resources/darwin/code.icns", "macOS application icon source"),

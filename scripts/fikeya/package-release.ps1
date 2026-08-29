@@ -183,6 +183,19 @@ Compress-Archive -LiteralPath $cliFiles.FullName -DestinationPath $cliBundle -Co
 if (-not $SkipDesktop) {
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "compile-build-without-mangling")
 	Invoke-Checked $repositoryRoot "npm" @("run", "gulp", "--", "vscode-win32-x64")
+	$packagedExtensionRoot = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\resources\app\extensions\fikeya-desktop"
+	$packagedSidecarRoot = Join-Path $packagedExtensionRoot "sidecar"
+	$stagedSidecarRoot = Join-Path $extensionRoot ".package\extension\sidecar"
+	$stagedSidecar = Join-Path $stagedSidecarRoot "qarinah-memory-view.mjs"
+	$stagedSidecarReceipt = Join-Path $stagedSidecarRoot "qarinah-runtime.json"
+	foreach ($requiredSidecarPath in @($stagedSidecar, $stagedSidecarReceipt)) {
+		if (-not (Test-Path -LiteralPath $requiredSidecarPath -PathType Leaf)) {
+			throw "Bundled Qarinah Desktop sidecar is missing: $requiredSidecarPath"
+		}
+	}
+	New-Item -ItemType Directory -Path $packagedSidecarRoot -Force | Out-Null
+	Copy-Item -LiteralPath $stagedSidecar -Destination (Join-Path $packagedSidecarRoot "qarinah-memory-view.mjs") -Force
+	Copy-Item -LiteralPath $stagedSidecarReceipt -Destination (Join-Path $packagedSidecarRoot "qarinah-runtime.json") -Force
 	$packagedProduct = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\resources\app\product.json"
 	$packagedPackage = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\resources\app\package.json"
 	$packagedExecutable = Join-Path (Split-Path -Parent $repositoryRoot) "VSCode-win32-x64\Fikeya.exe"

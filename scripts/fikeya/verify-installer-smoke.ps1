@@ -61,6 +61,62 @@ try {
 			throw "Installed Fikeya file is missing: $requiredPath"
 		}
 	}
+	$installedExtensionRoot = Join-Path $installRoot "resources\app\extensions\fikeya-desktop"
+	$qarinahSidecar = Join-Path $installedExtensionRoot "sidecar\qarinah-memory-view.mjs"
+	$qarinahSidecarReceipt = Join-Path $installedExtensionRoot "sidecar\qarinah-runtime.json"
+	foreach ($requiredPath in @($qarinahSidecar, $qarinahSidecarReceipt)) {
+		if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+			throw "Installed Fikeya Qarinah sidecar file is missing: $requiredPath"
+		}
+	}
+	$qarinahReceipt = Get-Content -LiteralPath $qarinahSidecarReceipt -Raw | ConvertFrom-Json
+	$qarinahBundleHash = "sha256:$((Get-FileHash -LiteralPath $qarinahSidecar -Algorithm SHA256).Hash.ToLowerInvariant())"
+	if ($qarinahReceipt.schemaVersion -cne "fikeya.desktop-bundled-runtime.v1" `
+		-or $qarinahReceipt.entrypoint -cne "sidecar/qarinah-memory-view.mjs" `
+		-or $qarinahReceipt.bundleSha256 -cne $qarinahBundleHash) {
+		throw "Installed Fikeya Qarinah sidecar receipt does not match its bundle."
+	}
+	$qarinahSmokeRoot = Join-Path $installRoot "qarinah-smoke"
+	New-Item -ItemType Directory -Path $qarinahSmokeRoot | Out-Null
+	$qarinahProcessInfo = [System.Diagnostics.ProcessStartInfo]::new()
+	$qarinahProcessInfo.FileName = $executable
+	$qarinahProcessInfo.ArgumentList.Add($qarinahSidecar)
+	$qarinahProcessInfo.ArgumentList.Add("--root")
+	$qarinahProcessInfo.ArgumentList.Add($qarinahSmokeRoot)
+	$qarinahProcessInfo.WorkingDirectory = $qarinahSmokeRoot
+	$qarinahProcessInfo.UseShellExecute = $false
+	$qarinahProcessInfo.CreateNoWindow = $true
+	$qarinahProcessInfo.RedirectStandardInput = $true
+	$qarinahProcessInfo.RedirectStandardOutput = $true
+	$qarinahProcessInfo.RedirectStandardError = $true
+	$qarinahProcessInfo.Environment["ELECTRON_RUN_AS_NODE"] = "1"
+	$qarinahProcess = [System.Diagnostics.Process]::Start($qarinahProcessInfo)
+	$qarinahRequest = @{
+		jsonrpc = "2.0"
+		id = "fikeya-memory-init"
+		method = "memory.initialize"
+		params = @{}
+	} | ConvertTo-Json -Compress
+	$qarinahProcess.StandardInput.WriteLine($qarinahRequest)
+	$qarinahProcess.StandardInput.Close()
+	$qarinahOutput = $qarinahProcess.StandardOutput.ReadToEnd()
+	$qarinahError = $qarinahProcess.StandardError.ReadToEnd()
+	if (-not $qarinahProcess.WaitForExit(30000)) {
+		$qarinahProcess.Kill($true)
+		throw "Installed Fikeya Qarinah sidecar timed out."
+	}
+	if ($qarinahProcess.ExitCode -ne 0) {
+		throw "Installed Fikeya Qarinah sidecar exited with code $($qarinahProcess.ExitCode): $($qarinahError.Substring(0, [Math]::Min(1000, $qarinahError.Length)))"
+	}
+	$qarinahResponseLine = @($qarinahOutput -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -First 1
+	$qarinahResponse = $qarinahResponseLine | ConvertFrom-Json
+	if ($qarinahResponse.jsonrpc -cne "2.0" `
+		-or $qarinahResponse.id -cne "fikeya-memory-init" `
+		-or $qarinahResponse.result.schemaVersion -cne "qarinah.workspace-initialization.v1" `
+		-or $qarinahResponse.result.workspaceId -notmatch '^ws_[0-9a-f]{32}$' `
+		-or -not (Test-Path -LiteralPath (Join-Path $qarinahSmokeRoot ".qarinah") -PathType Container)) {
+		throw "Installed Fikeya Qarinah sidecar did not initialize a verified workspace."
+	}
 	$bundledRuntimeRoot = Join-Path $installRoot "resources\app\extensions\fikeya-desktop\runtime"
 	$bundledRuntime = Join-Path $bundledRuntimeRoot "fikeya-runtime.exe"
 	$bundledRuntimeReceipt = Join-Path $bundledRuntimeRoot "fikeya-runtime.json"

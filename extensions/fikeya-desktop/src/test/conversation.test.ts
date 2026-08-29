@@ -236,10 +236,31 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(source, /data-agent-surface/u);
 		assert.match(source, /attachDroppedResources/u);
 		assert.match(source, /ResourceURLs/u);
+		assert.match(source, /CodeFiles/u);
 		assert.match(source, /application\/vnd\.code\.uri-list/u);
 		assert.match(source, /this\.projectPanelRequired = true/u);
 		assert.match(source, /if \(this\.projectPanelRequired && !this\.disposed && !this\.panel\)/u);
 		assert.doesNotMatch(source, /data-layout-switch/u);
+	});
+
+	test('initializes Fikeya and retries Qarinah before accepting any coding request', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /private workspaceInitialization: Thenable<boolean> \| undefined/u);
+		assert.match(source, /private qarinahWorkspaceInitialized = false/u);
+		assert.match(source, /this\.state\.workspaceInitialized && this\.qarinahWorkspaceInitialized/u);
+		assert.match(source, /this\.qarinahWorkspaceInitialized = memoryInitialization\.ok/u);
+		assert.match(source, /Run Fikeya: Initialize Workspace to retry/u);
+		assert.match(source, /if \(this\.workspaceInitialization\) \{\s*return this\.workspaceInitialization;/u);
+		for (const method of ['runAgent', 'runMultiAgent', 'proposePlan', 'startProject']) {
+			const methodStart = source.indexOf(`private async ${method}`);
+			assert.notStrictEqual(methodStart, -1, `${method} must exist`);
+			const nextMethod = source.indexOf('\n\tprivate ', methodStart + 1);
+			const methodSource = source.slice(methodStart, nextMethod === -1 ? source.length : nextMethod);
+			const initializationIndex = methodSource.indexOf('ensureWorkspaceInitialized');
+			const acceptanceIndex = methodSource.indexOf('onAccepted?.()');
+			assert.ok(initializationIndex >= 0, `${method} must initialize the workspace`);
+			assert.ok(acceptanceIndex > initializationIndex, `${method} must initialize before accepting the composer request`);
+		}
 	});
 
 	test('uses one accessible animated copy action instead of a floating button cluster', async () => {

@@ -26,6 +26,21 @@ class InstallerSmokeContractTests(unittest.TestCase):
         self.assertIn("Get-Content -LiteralPath $installLog -Tail 24", script)
         self.assertIn("Remove-Item -LiteralPath $installLog -Force", script)
 
+    def test_installed_qarinah_bundle_is_verified_and_executed(self) -> None:
+        smoke = (
+            REPOSITORY_ROOT / "scripts/fikeya/verify-installer-smoke.ps1"
+        ).read_text(encoding="utf-8")
+        release = (
+            REPOSITORY_ROOT / "scripts/fikeya/package-release.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"sidecar\\qarinah-memory-view.mjs"', smoke)
+        self.assertIn('"sidecar\\qarinah-runtime.json"', smoke)
+        self.assertIn('$qarinahProcessInfo.Environment["ELECTRON_RUN_AS_NODE"] = "1"', smoke)
+        self.assertIn('"qarinah.workspace-initialization.v1"', smoke)
+        self.assertIn('Copy-Item -LiteralPath $stagedSidecar', release)
+        self.assertIn('Copy-Item -LiteralPath $stagedSidecarReceipt', release)
+
 
 if __name__ == "__main__":
     unittest.main()
