@@ -2,19 +2,26 @@
 // Copyright (C) 2026 Fikeya contributors
 
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const MAX_MESSAGE_BYTES = 12 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 64 * 1024;
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
+const MAX_PENDING_GUARDS = 128;
 const moduleRoot = process.argv[2];
-const chromeExecutable = process.argv[3];
+const chromeExecutable = process.argv[3] || undefined;
+const expectedPackage = process.argv[4];
+const expectedVersion = process.argv[5];
+const expectedLockSha256 = process.argv[6];
 const pendingGuards = new Map();
 let browser;
 let context;
 let page;
 let cdp;
+let guardSequence = 0;
 
 const send = value => {
 	const payload = `${JSON.stringify(value)}\n`;
@@ -55,15 +62,20 @@ try {
 	if (!moduleRoot) {
 		throw new Error('module root is required');
 	}
+	if (!['puppeteer', 'puppeteer-core'].includes(expectedPackage) || !expectedVersion
+		|| !/^[a-f0-9]{64}$/.test(expectedLockSha256)) {
+		throw new Error('reviewed package provenance is required');
+	}
+	const lockBytes = readFileSync(resolve(moduleRoot, 'package-lock.json'));
+	if (createHash('sha256').update(lockBytes).digest('hex') !== expectedLockSha256) {
+		throw new Error('package lock changed');
+	}
 	const reviewedRequire = createRequire(resolve(moduleRoot, 'package.json'));
-	try {
-		puppeteer = reviewedRequire('puppeteer');
-		puppeteerVersion = reviewedRequire('puppeteer/package.json').version;
-		puppeteerPackage = 'puppeteer';
-	} catch {
-		puppeteer = reviewedRequire('puppeteer-core');
-		puppeteerVersion = reviewedRequire('puppeteer-core/package.json').version;
-		puppeteerPackage = 'puppeteer-core';
+	puppeteer = reviewedRequire(expectedPackage);
+	puppeteerVersion = reviewedRequire(`${expectedPackage}/package.json`).version;
+	puppeteerPackage = expectedPackage;
+	if (puppeteerVersion !== expectedVersion) {
+		throw new Error('package version changed');
 	}
 } catch {
 	send({ type: 'unavailable' });
@@ -71,7 +83,12 @@ try {
 }
 
 const requestPermission = url => new Promise(resolveGuard => {
-	const requestId = `guard-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	if (pendingGuards.size >= MAX_PENDING_GUARDS) {
+		resolveGuard(false);
+		return;
+	}
+	guardSequence += 1;
+	const requestId = `guard-${guardSequence}`;
 	const timer = setTimeout(() => {
 		pendingGuards.delete(requestId);
 		resolveGuard(false);
@@ -269,5 +286,10 @@ input.on('line', line => {
 input.on('close', () => void closeResources());
 
 if (puppeteer) {
-	send({ type: 'ready', package: puppeteerPackage, version: String(puppeteerVersion) });
+	send({
+		type: 'ready',
+		package: puppeteerPackage,
+		version: String(puppeteerVersion),
+		lockSha256: expectedLockSha256,
+	});
 }
