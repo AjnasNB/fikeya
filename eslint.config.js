@@ -144,6 +144,24 @@ export default defineConfig(
 			]
 		},
 	},
+	// Fikeya-owned runtime modules use the component's AGPL license rather than Code OSS's MIT header.
+	{
+		files: [
+			'fikeya-runtime/src/**/*.mjs',
+		],
+		rules: {
+			'header/header': [
+				2,
+				'block',
+				[
+					'---------------------------------------------------------------------------------------------',
+					' *  SPDX-License-Identifier: AGPL-3.0-or-later',
+					' *  Copyright (C) 2026 Fikeya contributors',
+					' *--------------------------------------------------------------------------------------------'
+				]
+			]
+		},
+	},
 	// TS
 	{
 		files: [

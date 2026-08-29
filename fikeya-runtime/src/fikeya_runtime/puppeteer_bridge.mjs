@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Fikeya contributors
+/*---------------------------------------------------------------------------------------------
+ *  SPDX-License-Identifier: AGPL-3.0-or-later
+ *  Copyright (C) 2026 Fikeya contributors
+ *--------------------------------------------------------------------------------------------*/
 
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
