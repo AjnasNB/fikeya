@@ -243,6 +243,13 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.doesNotMatch(source, /data-layout-switch/u);
 	});
 
+	test('keeps temporary full access explicit and immediately revocable', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /class="full-access-indicator" data-command="fikeya\.dangerousLocalMode\.disable"/u);
+		assert.match(source, /Full Access · \{0\} min/u);
+		assert.match(source, /process-local and is never restored after restart/u);
+	});
+
 	test('initializes Fikeya and retries Qarinah before accepting any coding request', async () => {
 		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
 		assert.match(source, /private workspaceInitialization: Thenable<boolean> \| undefined/u);
