@@ -5,9 +5,12 @@
 
 import process from 'node:process';
 import readline from 'node:readline';
+import { readFileSync } from 'node:fs';
 import { MemoryPort, MethodNotFoundError, safeError } from './memory-port.mjs';
 
 const maxLineBytes = 1024 * 1024;
+const protocol = 'fikeya.qarinah-sidecar.v1';
+const packageMetadata = readPackageMetadata();
 const root = readRoot(process.argv.slice(2));
 const port = new MemoryPort(root);
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
@@ -51,12 +54,48 @@ async function handleLine(line) {
 	}
 
 	try {
-		const result = await port.dispatch(message.method, message.params ?? {}, message.id);
+		const result = message.method === 'runtime.version'
+			? runtimeVersion(message.params ?? {})
+			: await port.dispatch(message.method, message.params ?? {}, message.id);
 		write({ jsonrpc: '2.0', id: message.id, result });
 	} catch (error) {
 		const code = error instanceof MethodNotFoundError ? -32601 : error instanceof TypeError ? -32602 : -32000;
 		writeError(message.id, code, safeError(error).message);
 	}
+}
+
+function runtimeVersion(params) {
+	if (!isRecord(params) || Object.keys(params).length !== 0) {
+		throw new TypeError('runtime.version parameters must be an empty object.');
+	}
+	return {
+		name: packageMetadata.name,
+		protocol,
+		qarinahVersion: packageMetadata.qarinahVersion,
+		version: packageMetadata.version
+	};
+}
+
+function readPackageMetadata() {
+	const value = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+	if (!isRecord(value)
+		|| value.name !== '@fikeya/qarinah-sidecar'
+		|| !isExactVersion(value.version)
+		|| !isRecord(value.dependencies)
+		|| !isExactVersion(value.dependencies.qarinah)) {
+		throw new TypeError('Fikeya Qarinah sidecar package metadata is invalid.');
+	}
+	return {
+		name: value.name,
+		qarinahVersion: value.dependencies.qarinah,
+		version: value.version
+	};
+}
+
+function isExactVersion(value) {
+	return typeof value === 'string'
+		&& Buffer.byteLength(value, 'utf8') <= 128
+		&& /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(value);
 }
 
 function writeError(id, code, message) {

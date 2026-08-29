@@ -188,6 +188,10 @@ export class MemoryPort {
 		const maxTokens = optionalPositiveInteger(params.maxTokens, 8_000);
 		const maxChars = boundedRequestInteger(params.maxChars, 12_000, 512, 1_000_000, 'maxChars');
 		const limit = optionalPositiveInteger(params.limit, 24);
+		const rebuild = params.rebuild !== false;
+		if (!rebuild && params.updateCheckpoint !== false) {
+			throw new TypeError('Read-only memory.prepare requires updateCheckpoint:false.');
+		}
 		const context = await compileContext(query, {
 			cwd: this.#root,
 			maxChars,
@@ -196,8 +200,10 @@ export class MemoryPort {
 			minimumCoverage: optionalEnum(params.minimumCoverage, ['any', 'partial', 'direct'], 'any'),
 			minimumEvidence: optionalEnum(params.minimumEvidence, ['any', 'partial', 'direct'], 'any'),
 			includeEvidenceSufficiency: true,
-			rebuild: params.rebuild !== false,
-			updateCheckpoint: true,
+			rebuild,
+			// A managed endpoint sends rebuild:false. Keep that path strictly
+			// read-only: Qarinah must not reconcile checkpoints or projections.
+			updateCheckpoint: rebuild,
 			signal
 		});
 		return validateContextBudget(context, maxChars);

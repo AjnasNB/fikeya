@@ -173,6 +173,7 @@ extensions/fikeya-desktop/sidecar/qarinah-memory-view.mjs
 integrations/qarinah-sidecar/src/memory-port.mjs
 integrations/qarinah-sidecar/src/sidecar.mjs
 integrations/qarinah-sidecar/test/memory-port.test.mjs
+integrations/qarinah-sidecar/test/sidecar-process.test.mjs
 integrations/tool-presets/test/validate.test.mjs
 integrations/tool-presets/validate.mjs
 packages/fikeya-protocol/test/protocol.test.mjs
