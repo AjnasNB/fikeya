@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import os
 import shutil
 import socket
 import sqlite3
@@ -1287,12 +1286,6 @@ def test_packaged_qarinah_sidecar_runs_required_memory_without_mutation(
         ],
         check=True,
         capture_output=True,
-        env={
-            **os.environ,
-            "TEMP": str(tmp_path),
-            "TMP": str(tmp_path),
-            "TMPDIR": str(tmp_path),
-        },
         text=True,
         timeout=120,
     )
