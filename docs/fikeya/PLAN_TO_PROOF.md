@@ -163,7 +163,7 @@ The provider proposal receipt separately records the provider call identity, pro
 
 ## Enterprise control boundary
 
-Fikeya Enterprise is the optional private model gateway and agent safety/policy layer. Its internal service and package names remain implementation details behind a versioned Fikeya endpoint contract. It may add:
+Fikeya is one customer-facing product with two deployment parts: Fikeya Endpoint runs and enforces agent work close to the repository, while Fikeya Enterprise supplies the optional private model gateway and central safety/policy layer. Internal service and package names remain implementation details behind a versioned Fikeya endpoint contract. Fikeya Enterprise may add:
 
 - SSO and directory-provisioned identity;
 - tenant and project policy;
