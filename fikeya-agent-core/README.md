@@ -122,6 +122,10 @@ The upstream Deep Agents package requires Python 3.11 or newer. On a compatible 
 `pip install "fikeya-agent-core[deep-agents]"`. Python 3.10 remains supported by the dependency-free native engine and the
 deterministic adapter diagnostic, but not by the upstream Deep Agents runtime.
 
+A host-supplied graph is trusted in-process Python code, not a sandbox. It can use any authority the host process already has
+even though Fikeya does not pass shell, filesystem, network, or callable tools into graph input. Only load graph code and
+dependencies you have reviewed; isolate untrusted graphs in a separate OS sandbox before adapting their decisions.
+
 The adapter deliberately does not accept callable tools, a backend, a shell, a filesystem, or an `ExecutionBroker` in graph
 input. It passes only strict JSON messages and broker-owned tool schemas. A graph may propose a structured `tool_call`; the
 native engine then checkpoints the exact call, pauses for one-use approval, claims an execution lease, and dispatches it through
