@@ -80,6 +80,23 @@ foreach ($component in @("fikeya-agent-core", "fikeya-runtime", "integrations\fi
 	Invoke-Checked (Join-Path $repositoryRoot $component) "python" @("-m", "build", "--outdir", $outputPath)
 }
 
+$managedSidecarRoot = Join-Path $repositoryRoot "integrations\qarinah-sidecar"
+Invoke-Checked $managedSidecarRoot "npm" @("ci", "--ignore-scripts", "--omit=dev")
+Invoke-Checked $repositoryRoot "python" @(
+	"scripts\fikeya\package_qarinah_sidecar.py",
+	"--source",
+	$managedSidecarRoot,
+	"--output-directory",
+	$outputPath,
+	"--release-version",
+	$releaseVersion
+)
+$managedSidecarBundleName = "fikeya-qarinah-sidecar-$releaseVersion.zip"
+$managedSidecarBundlePath = Join-Path $outputPath $managedSidecarBundleName
+if (-not (Test-Path -LiteralPath $managedSidecarBundlePath -PathType Leaf)) {
+	throw "Managed Qarinah sidecar bundle was not produced."
+}
+
 $extensionRoot = Join-Path $repositoryRoot "extensions\fikeya-desktop"
 Invoke-Checked $extensionRoot "npm" @("ci")
 Invoke-Checked $extensionRoot "npm" @("run", "package:vsix")
@@ -137,7 +154,10 @@ Fikeya CLI $releaseVersion
 The installer resolves the local wheels to absolute file URIs, installs the
 Runtime with Azure identity and Playwright support, and provisions the exact
 Chromium Headless Shell selected by pinned Playwright 1.62.0. Internet access is
-required for Python dependencies and the browser payload.
+required for Python dependencies and the browser payload. The included
+$managedSidecarBundleName contains the locked managed-memory sidecar; extract it
+and register its binding receipt with the endpoint operator together with an
+exact Node 22, 24, or 26 executable.
 "@
 $cliInstallPath = Join-Path $outputPath "FIKEYA-CLI-INSTALL.txt"
 $cliInstall | Set-Content -LiteralPath $cliInstallPath -Encoding utf8
@@ -172,7 +192,7 @@ if ($LASTEXITCODE -ne 0) { throw "Fikeya CLI Azure and browser support verificat
 '@ | Set-Content -LiteralPath $cliInstallerPath -Encoding utf8
 $cliBundle = Join-Path $outputPath "fikeya-cli-$releaseVersion.zip"
 $cliFiles = Get-ChildItem -LiteralPath $outputPath -File | Where-Object {
-	$_.Extension -eq ".whl" -or $_.Name -in @("FIKEYA-CLI-INSTALL.txt", "install-fikeya-cli.ps1")
+	$_.Extension -eq ".whl" -or $_.Name -in @("FIKEYA-CLI-INSTALL.txt", "install-fikeya-cli.ps1", $managedSidecarBundleName)
 }
 Compress-Archive -LiteralPath $cliFiles.FullName -DestinationPath $cliBundle -CompressionLevel Optimal
 & (Join-Path $PSScriptRoot "verify-cli-bundle.ps1") `
