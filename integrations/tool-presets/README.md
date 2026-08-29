@@ -46,9 +46,11 @@ The preset schema records process and response limits, but a JSON document canno
 6. Stop the process on cancellation, timeout, protocol violation, limit exhaustion, or workspace revocation.
 7. Preserve the external package name, version, source, and license in execution receipts.
 
-The Fikeya Runtime CLI now provides workspace-scoped `tool list`, `tool enable`, `tool disable`, and `tool status` commands. Enablement stores only the exact manifest digest and timestamp, and a digest change requires confirmation again. The runtime loader validates finite limits, resolves an executable without a shell, builds a minimal environment, and exposes request/response budget guards. Enabling a preset never launches it.
+The Fikeya Runtime CLI provides workspace-scoped `tool list`, `tool enable`, `tool disable`, and `tool status` commands. Enablement stores only the exact manifest digest and timestamp, and a digest change requires confirmation again. Enabling a preset never launches it.
 
-This remains an alpha integration. It does not prove executable provenance or installed-version compatibility, provide sandbox isolation, implement a complete MCP JSON-RPC session manager, or add the enable/disable flow to Fikeya Desktop. The runtime reports the provenance/version gap as a diagnostic warning instead of claiming enforcement. Windows shell shims such as `.cmd`, `.bat`, and `.ps1` are rejected; a native executable entry point is required for shell-free launch.
+`fikeya_runtime.mcp_stdio.McpStdioHost` is the process-owning host for an enabled preset. It rechecks the exact preset digest, delegates launch preparation and spawning to `ToolPresetLoader`, negotiates MCP initialization, checks the server package name and compatible stable version, validates the complete declared tool set, and exposes typed `tools/list` and `tools/call` results. JSON-RPC identifiers and schemas, request/response sizes, request counts, timeouts, session duration, stderr retention, and process shutdown are bounded. A timeout, oversized line, protocol violation, or failed initialization terminates the child process.
+
+This remains an optional local integration. It does not cryptographically prove the installed executable's artifact provenance, provide operating-system sandbox isolation, or add the enable/disable flow to Fikeya Desktop. Windows shell shims such as `.cmd`, `.bat`, and `.ps1` are rejected; a native executable entry point is required for shell-free launch. The server-reported package version is checked against the reviewed preset range, but signed-package verification remains a separate distribution control.
 
 ## Validation
 
