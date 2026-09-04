@@ -1129,26 +1129,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			}
 		}
 
-		const profileLabel = await vscode.window.showInputBox({
-			title: vscode.l10n.t('Configure {0}', provider.definition.label),
-			prompt: vscode.l10n.t('Profile Name'),
-			value: discoveredLabel ?? provider.definition.label,
-			ignoreFocusOut: true,
-			validateInput: value => value.trim().length > 0 && value.trim().length <= 80 ? undefined : vscode.l10n.t('Enter a name with 1 to 80 characters.')
-		});
-		if (!profileLabel) {
-			return;
-		}
-
-		const baseUrl = await vscode.window.showInputBox({
-			title: vscode.l10n.t('Configure {0}', provider.definition.label),
-			prompt: vscode.l10n.t('Endpoint URL'),
-			value: discoveredBaseUrl ?? provider.definition.defaultBaseUrl,
-			ignoreFocusOut: true,
-			validateInput: value => validateProviderUrl(value, true)
-		});
-		if (baseUrl === undefined) {
-			return;
+		const profileLabel = discoveredLabel ?? provider.definition.label;
+		let baseUrl = discoveredBaseUrl ?? provider.definition.defaultBaseUrl;
+		if (!baseUrl) {
+			const enteredBaseUrl = await vscode.window.showInputBox({
+				title: vscode.l10n.t('Configure {0}', provider.definition.label),
+				prompt: vscode.l10n.t('Endpoint URL'),
+				ignoreFocusOut: true,
+				validateInput: value => validateProviderUrl(value, true)
+			});
+			if (enteredBaseUrl === undefined) {
+				return;
+			}
+			baseUrl = enteredBaseUrl;
 		}
 
 		const model = await vscode.window.showInputBox({
@@ -1196,6 +1189,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		await this.refreshProviders(false);
 		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
 		void vscode.window.showInformationMessage(vscode.l10n.t('{0} was configured in Fikeya Runtime.', profileLabel.trim()));
+		const testConnection = vscode.l10n.t('Test connection');
+		if (await vscode.window.showInformationMessage(vscode.l10n.t('Model saved. You can run a content-free connection test now.'), testConnection) === testConnection) {
+			await this.testProvider(runtimeName);
+		}
 	}
 
 	private async configureProviderProfile(providerId: string, profileLabel: string, baseUrl: string, model: string, suppliedSecret?: string): Promise<void> {
@@ -1217,8 +1214,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 
+		const runtimeName = createProviderName(definition.id, profileLabel);
 		const configuration: FikeyaProviderConfiguration = {
-			name: createProviderName(definition.id, profileLabel),
+			name: runtimeName,
 			kind: definition.runtimeKind,
 			model,
 			baseUrl,
@@ -1237,6 +1235,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
 		await this.refreshProviders(false);
 		void vscode.window.showInformationMessage(vscode.l10n.t('{0} is ready.', profileLabel));
+		const testConnection = vscode.l10n.t('Test connection');
+		if (await vscode.window.showInformationMessage(vscode.l10n.t('Model saved. You can run a content-free connection test now.'), testConnection) === testConnection) {
+			await this.testProvider(runtimeName);
+		}
 	}
 
 	public async runRuntimeCommand(command: 'doctor' | 'init'): Promise<void> {
@@ -2561,21 +2563,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			: 0;
 		const setupCards = `<section class="grid two compact-grid">
 			<article class="card">
-				<div class="card-heading"><h2>${escapeHtml(strings.getStarted)}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
-				<p>${escapeHtml(strings.getStartedDescription)}</p>
+				<div class="card-heading"><h2>${escapeHtml(vscode.l10n.t('1. Open and prepare your project'))}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
+				<p>${escapeHtml(vscode.l10n.t('Open a trusted local folder, then initialize its project context before asking Fikeya to work.'))}</p>
 				<div class="actions"><button data-command="fikeya.initializeWorkspace" type="button">${escapeHtml(strings.initializeWorkspace)}</button><button data-command="fikeya.runDoctor" class="secondary" type="button">${escapeHtml(strings.runDoctor)}</button></div>
 			</article>
 			<article class="card">
-				<div class="card-heading"><h2>${escapeHtml(strings.providers)}</h2><span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span></div>
+				<div class="card-heading"><h2>${escapeHtml(vscode.l10n.t('2. Connect one coding model'))}</h2><span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span></div>
+				<p>${escapeHtml(vscode.l10n.t('Choose a provider, enter its model ID and credential, then run one optional content-free connection test. Advanced endpoints stay out of the first-run path.'))}</p>
 				<div class="providers">${providerCards}</div>
-				<div class="actions"><button data-provider-modal-open type="button">${escapeHtml(strings.configureProvider)}</button><button data-command="fikeya.configureProvider" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Azure CLI discovery'))}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
-			</article>
-			<article class="card full-access-card" data-active="${fullAccessActive}">
-				<div class="card-heading"><h2>${escapeHtml(vscode.l10n.t('Temporary Full Access'))}</h2><span class="badge">${escapeHtml(fullAccessActive ? vscode.l10n.t('{0} min left', fullAccessRemainingMinutes) : vscode.l10n.t('Off'))}</span></div>
-				<p>${escapeHtml(vscode.l10n.t('For a trusted local folder only. Fikeya skips repeated tool approval dialogs for 15 minutes while keeping containment, limits, redaction, cancellation, and receipts. It is never enabled remotely or restored after restart.'))}</p>
-				<div class="actions">${fullAccessActive
-					? `<button data-command="fikeya.dangerousLocalMode.disable" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Disable now'))}</button>`
-					: `<button data-command="fikeya.dangerousLocalMode.enable" type="button">${escapeHtml(vscode.l10n.t('Enable for 15 minutes'))}</button>`}</div>
+				<div class="actions"><button data-provider-modal-open type="button">${escapeHtml(vscode.l10n.t('Connect a model'))}</button><button data-command="fikeya.configureProvider" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Azure CLI discovery'))}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
 			</article>
 		</section>`;
 		const usageSurface = `${statisticsSurface}${this.state.agent.outcome ? `<section class="card">${renderCodingOutcome(this.state.agent.outcome, strings)}</section>` : ''}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
@@ -2589,18 +2585,18 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			<dialog class="workspace-overlay" data-workspace-modal="context" aria-label="${escapeHtml(vscode.l10n.t('Context graph'))}"><header><strong>${escapeHtml(vscode.l10n.t('Qarinah context graph'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${memoryGraph}</div></dialog>
 			<dialog class="workspace-overlay" data-workspace-modal="usage" aria-label="${escapeHtml(vscode.l10n.t('Usage and receipts'))}"><header><strong>${escapeHtml(vscode.l10n.t('Usage and receipts'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${usageSurface}</div></dialog>
 			<dialog class="workspace-overlay" data-workspace-modal="setup" aria-label="${escapeHtml(vscode.l10n.t('Models and setup'))}"><header><strong>${escapeHtml(vscode.l10n.t('Models and setup'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${setupCards}</div></dialog>
-			<dialog class="provider-modal" data-provider-modal aria-label="${escapeHtml(vscode.l10n.t('Add a model'))}">
+			<dialog class="provider-modal" data-provider-modal aria-label="${escapeHtml(vscode.l10n.t('Connect a model'))}">
 				<form data-provider-form autocomplete="off">
-					<header><div><strong>${escapeHtml(vscode.l10n.t('Add a model'))}</strong><span>${escapeHtml(vscode.l10n.t('Your credential is sent once to the local runtime and stored in the operating system credential store.'))}</span></div><button class="quiet" data-provider-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">×</button></header>
+					<header><div><strong>${escapeHtml(vscode.l10n.t('Connect a model'))}</strong><span>${escapeHtml(vscode.l10n.t('Choose a provider, then enter its exact model ID and credential. Your credential is sent once to the local runtime and stored in the operating system credential store.'))}</span></div><button class="quiet" data-provider-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">×</button></header>
 					<div class="provider-modal-body">
 						<label class="field"><span>${escapeHtml(vscode.l10n.t('Provider'))}</span><select name="providerId">${providerDefinitionOptions}</select></label>
 						<p class="provider-definition-detail" data-provider-detail></p>
-						<div class="provider-fields"><label class="field"><span>${escapeHtml(vscode.l10n.t('Profile name'))}</span><input name="profileLabel" maxlength="80" required></label><label class="field"><span>${escapeHtml(vscode.l10n.t('Model or deployment'))}</span><input name="model" maxlength="160" placeholder="${escapeHtml(vscode.l10n.t('Enter the exact model ID'))}" required></label></div>
-						<label class="field"><span>${escapeHtml(vscode.l10n.t('Endpoint'))}</span><input name="baseUrl" type="url" maxlength="4096" required></label>
+						<label class="field"><span>${escapeHtml(vscode.l10n.t('Model or deployment'))}</span><input name="model" maxlength="160" autocomplete="off" placeholder="${escapeHtml(vscode.l10n.t('Enter the exact model ID'))}" required></label>
 						<label class="field" data-provider-secret-field><span>${escapeHtml(vscode.l10n.t('API key or token'))}</span><input name="secret" type="password" maxlength="16384" autocomplete="new-password"></label>
+						<details class="provider-advanced" data-provider-advanced><summary>${escapeHtml(vscode.l10n.t('Advanced connection options'))}</summary><p>${escapeHtml(vscode.l10n.t('Use these only for a custom connection or Azure endpoint.'))}</p><div class="provider-fields"><label class="field"><span>${escapeHtml(vscode.l10n.t('Internal label (optional)'))}</span><input name="profileLabel" maxlength="80"></label><label class="field"><span>${escapeHtml(vscode.l10n.t('Endpoint'))}</span><input name="baseUrl" type="url" maxlength="4096" required></label></div></details>
 						<p class="provider-form-error" data-provider-error role="alert" hidden></p>
 					</div>
-					<footer><button class="secondary" data-provider-modal-close type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button><button type="submit">${escapeHtml(vscode.l10n.t('Add model'))}</button></footer>
+					<footer><button class="secondary" data-provider-modal-close type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button><button type="submit">${escapeHtml(vscode.l10n.t('Save model'))}</button></footer>
 				</form>
 			</dialog>
 		</div>`;
@@ -2689,6 +2685,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.provider-modal footer { justify-content: flex-end; border-top: 1px solid var(--vscode-widget-border); }
 		.provider-modal-body { display: grid; gap: 10px; padding: 14px; overflow: auto; }
 		.provider-fields { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 10px; }
+		.provider-advanced { display: grid; gap: 10px; padding: 10px; border: 1px solid var(--vscode-widget-border); border-radius: 8px; }
+		.provider-advanced summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 11px; }
+		.provider-advanced > p { margin: 0; color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.4; }
+		.provider-advanced[open] { background: var(--vscode-textBlockQuote-background); }
 		.provider-definition-detail, .provider-form-error { padding: 8px 9px; border-left: 2px solid var(--vscode-focusBorder); background: var(--vscode-textBlockQuote-background); font-size: 11px; }
 		.provider-form-error { border-left-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
 		.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -3073,6 +3073,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const providerModal = document.querySelector('[data-provider-modal]');
 		const providerForm = providerModal?.querySelector('[data-provider-form]');
 		const providerIdField = providerForm?.querySelector('[name="providerId"]');
+		const providerAdvanced = providerForm?.querySelector('[data-provider-advanced]');
 		const providerLabelField = providerForm?.querySelector('[name="profileLabel"]');
 		const providerModelField = providerForm?.querySelector('[name="model"]');
 		const providerBaseUrlField = providerForm?.querySelector('[name="baseUrl"]');
@@ -3085,6 +3086,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			if (!selected) return;
 			if (providerLabelField) providerLabelField.value = selected.dataset.label || '';
 			if (providerBaseUrlField) providerBaseUrlField.value = selected.dataset.baseUrl || '';
+			if (providerAdvanced) providerAdvanced.open = !selected.dataset.baseUrl;
 			if (providerSecretField) {
 				providerSecretField.value = '';
 				providerSecretField.required = selected.dataset.requiresSecret === 'true';
@@ -3108,15 +3110,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		providerForm?.addEventListener('submit', event => {
 			event.preventDefault();
 			const providerId = providerIdField?.value || '';
-			const profileLabel = providerLabelField?.value?.trim() || '';
+			const selected = providerIdField?.selectedOptions?.[0];
+			const profileLabel = providerLabelField?.value?.trim() || selected?.dataset.label || '';
 			const model = providerModelField?.value?.trim() || '';
 			const baseUrl = providerBaseUrlField?.value?.trim() || '';
 			const secret = providerSecretField?.value || undefined;
-			const selected = providerIdField?.selectedOptions?.[0];
 			const requiresSecret = selected?.dataset.requiresSecret === 'true';
 			if (!providerId || !profileLabel || !model || !baseUrl || (requiresSecret && !secret)) {
 				if (providerError) {
-					providerError.textContent = 'Complete the required model fields.';
+					providerError.textContent = 'Add a model ID and endpoint. Open Advanced connection options for a custom or Azure endpoint.';
 					providerError.hidden = false;
 				}
 				return;
