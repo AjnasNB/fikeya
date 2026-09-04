@@ -34,11 +34,11 @@ from fikeya_agent_core import (
     ToolResult,
 )
 
-from .agent import AgentRunner, MemoryPreparation
+from .agent import AgentRunner, MemoryPreparation, MemoryProvider
 from .browser import BrowserActionResult, BrowserEngine, BrowserSession
 from .conversation import ConversationTurn, build_conversation_prompt
 from .credentials import CredentialResolver
-from .errors import ApprovalError, FikeyaError
+from .errors import ApprovalError, FikeyaError, ProviderOutputLimitError
 from .events import EventType
 from .inference import (
     InferenceImage,
@@ -142,6 +142,7 @@ class ToolExecutionReceipt:
     call_id: str
     name: str
     status: str
+    arguments_sha256: str
     output_sha256: str
     duration_ms: int | None = None
     exit_code: int | None = None
@@ -149,6 +150,7 @@ class ToolExecutionReceipt:
 
     def as_json(self) -> dict[str, object]:
         return {
+            "argumentsSha256": self.arguments_sha256,
             "callId": self.call_id,
             "durationMs": self.duration_ms,
             "exitCode": self.exit_code,
@@ -234,6 +236,7 @@ class WorkspaceExecutionBroker:
         workspace: Workspace,
         *,
         allowed_executables: frozenset[str] = _DEFAULT_ALLOWED_EXECUTABLES,
+        allowed_tools: frozenset[str] | None = None,
         maximum_process_timeout_seconds: float = 120.0,
         mode: AgentMode | str = AgentMode.BUILD,
         allow_private_browser: bool = False,
@@ -251,6 +254,7 @@ class WorkspaceExecutionBroker:
         self.workspace = workspace
         self.state = _BrokerState()
         self.mode_policy: ModePolicy = mode_policy(mode)
+        self.allowed_tools = allowed_tools
         self.allow_private_browser = allow_private_browser
         self.browser_engine = browser_engine
         self._browser = browser_session
@@ -455,9 +459,22 @@ class WorkspaceExecutionBroker:
                 },
             ),
         )
-        available = [tool for tool in tools if self.mode_policy.allows(tool.name)]
-        if self.mode_policy.mode in _MCP_AGENT_MODES:
-            available.extend(await self._mcp.list_tools(cancellation))
+        available = [
+            tool
+            for tool in tools
+            if self.mode_policy.allows(tool.name)
+            and (self.allowed_tools is None or tool.name in self.allowed_tools)
+        ]
+        mcp_permitted = self.allowed_tools is None or any(
+            name.startswith("mcp.") for name in self.allowed_tools
+        )
+        if self.mode_policy.mode in _MCP_AGENT_MODES and mcp_permitted:
+            mcp_tools = await self._mcp.list_tools(cancellation)
+            available.extend(
+                tool
+                for tool in mcp_tools
+                if self.allowed_tools is None or tool.name in self.allowed_tools
+            )
         return tuple(available)
 
     async def execute(
@@ -480,6 +497,7 @@ class WorkspaceExecutionBroker:
             self.state.results[idempotency_key] = result
             self.state.receipts.append(
                 ToolExecutionReceipt(
+                    arguments_sha256=sha256_text(stable_json(call.arguments)),
                     call_id=call.call_id,
                     name=call.name,
                     status=result.status,
@@ -517,6 +535,7 @@ class WorkspaceExecutionBroker:
         if not any(item.call_id == call.call_id for item in self.state.receipts):
             self.state.receipts.append(
                 ToolExecutionReceipt(
+                    arguments_sha256=sha256_text(stable_json(call.arguments)),
                     call_id=call.call_id,
                     name=call.name,
                     status=result.status,
@@ -545,6 +564,8 @@ class WorkspaceExecutionBroker:
             self._mcp.close()
 
     def _allows_tool(self, name: str) -> bool:
+        if self.allowed_tools is not None and name not in self.allowed_tools:
+            return False
         if name.startswith("mcp."):
             return self.mode_policy.mode in _MCP_AGENT_MODES
         return self.mode_policy.allows(name)
@@ -659,7 +680,9 @@ class WorkspaceExecutionBroker:
         else:
             raise ValueError("Unknown browser operation.")
         cancellation.raise_if_cancelled()
-        return ToolResult(call.call_id, "ok", stable_json(result.as_json()), "application/json")
+        return ToolResult(
+            call.call_id, "ok", stable_json(result.as_json()), "application/json"
+        )
 
     def _list_files(self, call: ToolCall) -> ToolResult:
         arguments = _exact_arguments(
@@ -874,11 +897,11 @@ class WorkspaceExecutionBroker:
             original_before = (
                 existing.before_sha256
                 if existing is not None
-                else f"sha256:{before_hash}" if before_hash is not None else None
+                else f"sha256:{before_hash}"
+                if before_hash is not None
+                else None
             )
-            final_after = (
-                f"sha256:{after_hash}" if after_hash is not None else None
-            )
+            final_after = f"sha256:{after_hash}" if after_hash is not None else None
             if original_before == final_after:
                 self.state.changed_files.pop(relative_path, None)
                 continue
@@ -905,6 +928,7 @@ class WorkspaceExecutionBroker:
         )
         test = _is_test_command(executable, values)
         receipt = ToolExecutionReceipt(
+            arguments_sha256=sha256_text(stable_json(call.arguments)),
             call_id=call.call_id,
             duration_ms=outcome.duration_ms,
             exit_code=outcome.exit_code,
@@ -1063,6 +1087,12 @@ class _RecordingExecutor:
             payload,
             causation_id=requested.event_id,
         )
+        if (
+            usage.measurement == "provider-reported"
+            and usage.output_tokens is not None
+            and usage.output_tokens > request.max_output_tokens
+        ):
+            raise ProviderOutputLimitError()
         return result
 
 
@@ -1084,7 +1114,11 @@ class CodingAgentRunner:
         self.executor = executor or ProviderExecutor()
         self.credentials = credentials or CredentialResolver(providers)
         self.state = StateStore(workspace.state_path)
-        self.allowed_executables = allowed_executables or _DEFAULT_ALLOWED_EXECUTABLES
+        self.allowed_executables = (
+            _DEFAULT_ALLOWED_EXECUTABLES
+            if allowed_executables is None
+            else allowed_executables
+        )
         self.mcp_registry_factory = mcp_registry_factory or McpBrokerRegistry
 
     async def run(
@@ -1095,6 +1129,9 @@ class CodingAgentRunner:
         allow_network: bool,
         timeout: float,
         max_output_tokens: int,
+        max_steps: int = 32,
+        allowed_tools: frozenset[str] | None = None,
+        session_id: str | None = None,
         cancellation: CancellationToken,
         approval_handler: ApprovalHandler,
         progress_handler: ProgressHandler | None = None,
@@ -1105,6 +1142,8 @@ class CodingAgentRunner:
         mode: AgentMode | str = AgentMode.BUILD,
         allow_private_browser: bool = False,
         browser_engine: BrowserEngine | str = "playwright",
+        memory_provider: MemoryProvider | None = None,
+        allow_discovered_memory: bool = True,
     ) -> CodingRunResult:
         """Run a complete reviewed loop, pausing for each exact approval."""
 
@@ -1112,26 +1151,26 @@ class CodingAgentRunner:
         broker: WorkspaceExecutionBroker | None = None
         profile = self.providers.get(provider_name)
         session = self.state.create_session(
+            session_id=session_id,
             metadata={
                 "mode": "coding-agent",
                 "agentMode": policy.mode.value,
                 "model": profile.model,
                 "provider": profile.name,
                 "priorConversationTurns": len(history),
-            }
+            },
         )
+        selected_memory = memory_provider
+        if selected_memory is None and allow_discovered_memory and memory_mode != "off":
+            selected_memory = select_qarinah_adapter(
+                workspace_root=self.workspace.root, state=self.state
+            )
         memory_runner = AgentRunner(
             self.workspace,
             self.providers,
             executor=self.executor,
             credentials=self.credentials,
-            memory=(
-                select_qarinah_adapter(
-                    workspace_root=self.workspace.root, state=self.state
-                )
-                if memory_mode != "off"
-                else None
-            ),
+            memory=selected_memory,
         )
         try:
             system, memory = memory_runner.prepare_memory(
@@ -1150,16 +1189,19 @@ class CodingAgentRunner:
                 lambda: self.credentials.resolve(profile),
                 allow_network=allow_network,
                 timeout_seconds=timeout,
-                request_factory=lambda provider_prompt, provider_system, maximum_tokens: InferenceRequest(
-                    prompt=provider_prompt,
-                    system=provider_system,
-                    max_output_tokens=maximum_tokens,
-                    images=images,
+                request_factory=lambda provider_prompt, provider_system, maximum_tokens: (
+                    InferenceRequest(
+                        prompt=provider_prompt,
+                        system=provider_system,
+                        max_output_tokens=maximum_tokens,
+                        images=images,
+                    )
                 ),
             )
             broker = WorkspaceExecutionBroker(
                 self.workspace,
                 allowed_executables=self.allowed_executables,
+                allowed_tools=allowed_tools,
                 maximum_process_timeout_seconds=timeout,
                 mode=policy.mode,
                 allow_private_browser=allow_private_browser,
@@ -1174,6 +1216,7 @@ class CodingAgentRunner:
                 # enter the workspace database. Runtime SQLite retains content-free receipts.
                 InMemoryCheckpointStore(),
                 AgentLimits(
+                    max_steps=max_steps,
                     max_output_bytes=maximum_output_bytes,
                     provider_timeout_seconds=timeout,
                     # The broker owns process-tree cleanup. Keep the orchestration timeout
@@ -1212,7 +1255,7 @@ class CodingAgentRunner:
             try:
                 if self.state.get_session(session.session_id).status == "active":
                     self.state.cancel_session(session.session_id, "coding loop failed")
-            except Exception as cleanup_error:  # noqa: BLE001 - cleanup must not mask the failure.
+            except Exception as cleanup_error:  # noqa: BLE001 - preserve primary error.
                 error.add_note(
                     f"Session cleanup also failed with {type(cleanup_error).__name__}."
                 )

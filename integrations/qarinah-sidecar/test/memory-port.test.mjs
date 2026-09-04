@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -96,6 +96,56 @@ test('records and retrieves cited project memory through Qarinah', async () => {
 		assert.equal(context.items.length, 1);
 		assert.match(context.manifestHash, /^sha256:[0-9a-f]{64}$/);
 		assert.equal(context.items[0].title, 'Use root-bound stdio');
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('managed memory preparation is snapshot-only when rebuild is disabled', async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), 'fikeya-qarinah-readonly-'));
+	try {
+		await writeFile(path.join(root, 'README.md'), 'project source remains unchanged\n', 'utf8');
+		const port = new MemoryPort(root);
+		const initialized = await port.dispatch('memory.initialize', { capture: 'content' }, 'initialize-readonly');
+		await port.dispatch('memory.approve', {
+			capture: 'content',
+			policyHash: initialized.policy.policyHash
+		}, 'approve-readonly');
+		await port.dispatch('memory.record', {
+			event: {
+				id: 'decision-managed-readonly',
+				type: 'decision.recorded',
+				occurredAt: '2026-08-29T00:00:00.000Z',
+				sessionId: 'session-readonly',
+				payload: {
+					title: 'Managed reads never rebuild',
+					body: 'A centrally authorized memory query must not mutate project or Qarinah state.'
+				}
+			}
+		}, 'record-readonly');
+
+		// Build once through the interactive path, then prove the managed path is
+		// byte-for-byte snapshot-only across source and hidden Qarinah state.
+		await port.dispatch('memory.prepare', {
+			query: 'managed reads',
+			maxChars: 4_096,
+			rebuild: true
+		}, 'prepare-fresh');
+		const trustedProjection = path.join(root, '.qarinah', 'index', 'event-ids', 'manifest.json');
+		await readFile(trustedProjection);
+		await rm(trustedProjection);
+		const before = await snapshotFiles(root);
+		const context = await port.dispatch('memory.prepare', {
+			query: 'managed reads',
+			maxChars: 4_096,
+			rebuild: false,
+			updateCheckpoint: false
+		}, 'prepare-readonly');
+		const after = await snapshotFiles(root);
+
+		assert.ok(context.items.length >= 1);
+		assert.deepEqual(after, before);
+		await assert.rejects(() => readFile(trustedProjection), error => error?.code === 'ENOENT');
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -195,3 +245,24 @@ test('rejects symbol and scan requests above hard resource limits', async () => 
 	await assert.rejects(() => port.dispatch('memory.symbols', { query: 'x'.repeat(4_097) }, 'oversized-query'), /4096-character limit/);
 	await assert.rejects(() => port.dispatch('memory.symbols', { kinds: ['executable'] }, 'invalid-kind'), /unsupported symbol kind/);
 });
+
+async function snapshotFiles(root) {
+	const snapshot = {};
+	async function walk(directory) {
+		const entries = await readdir(directory, { withFileTypes: true });
+		entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
+		for (const entry of entries) {
+			const absolute = path.join(directory, entry.name);
+			const relative = path.relative(root, absolute).split(path.sep).join('/');
+			if (entry.isDirectory()) {
+				await walk(absolute);
+			} else if (entry.isFile()) {
+				snapshot[relative] = (await readFile(absolute)).toString('base64');
+			} else {
+				throw new Error(`Unexpected linked fixture path: ${relative}`);
+			}
+		}
+	}
+	await walk(root);
+	return snapshot;
+}

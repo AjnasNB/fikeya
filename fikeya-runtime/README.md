@@ -169,6 +169,14 @@ same goal identity, and execution cannot reach `completed` until the plan audit,
 code audit, and final verification agree with the same plan and workspace
 evidence.
 
+## Managed endpoint protocol
+
+The strict, content-free `maqam.endpoint-harness.v2` CLI boundary is documented
+in [Managed endpoint protocol](../docs/fikeya/ENDPOINT-PROTOCOL.md). It binds one
+expiring authorization to the exact workspace, provider profile, model, limits,
+memory policy, network setting, prompt, and sorted workspace-tool allowlist.
+Process, browser, and MCP tools are not available through this boundary.
+
 ## Propose, review, and run a durable plan
 
 `fikeya plan propose` is a planning-only provider call. It sends a versioned

@@ -1,0 +1,110 @@
+{
+  "invalidCases": [
+    {
+      "name": "expiry-space-separator",
+      "path": "authorization.expiresAt",
+      "value": "2999-01-01 00:00:00Z"
+    },
+    {
+      "name": "expiry-offset",
+      "path": "authorization.expiresAt",
+      "value": "2999-01-01T00:00:00+00:00"
+    },
+    {
+      "name": "expiry-overprecision",
+      "path": "authorization.expiresAt",
+      "value": "2999-01-01T00:00:00.1234567Z"
+    },
+    {
+      "name": "working-directory-dot-segment",
+      "path": "workingDirectory",
+      "value": "C:\\fikeya\\workspace\\..\\workspace"
+    },
+    {
+      "name": "provider-leading-whitespace",
+      "path": "provider.profileName",
+      "value": " fixture-profile"
+    },
+    {
+      "name": "tool-call-trailing-whitespace",
+      "path": "toolCallId",
+      "value": "fixture-tool-call "
+    }
+  ],
+  "protocol": "maqam.endpoint-harness.v2",
+  "request": {
+    "access": "read",
+    "allowNetwork": false,
+    "authorization": {
+      "approvalId": "fixture-approval",
+      "decision": "allow",
+      "expiresAt": "2999-01-01T00:00:00.123456Z",
+      "scopeSha256": "sha256:4b9594e416bb40279dfefb2f9a22f6f18b266f75b0edce4662d386a59694cd2c"
+    },
+    "capabilities": {
+      "allowedTools": []
+    },
+    "commandId": "33333333-3333-4333-8333-333333333333",
+    "endpointId": "22222222-2222-4222-8222-222222222222",
+    "limits": {
+      "maxOutputTokens": 512,
+      "maxSteps": 8,
+      "maxToolCalls": 0,
+      "timeoutMs": 30000
+    },
+    "memory": {
+      "adapter": null,
+      "contextMaxCharacters": 4096,
+      "mode": "off",
+      "rebuild": false
+    },
+    "prompt": "Return one bounded, content-free conformance result.",
+    "provider": {
+      "model": "fixture-model",
+      "profileName": "fixture-profile",
+      "profileSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "runId": "44444444-4444-4444-8444-444444444444",
+    "schema": "maqam.endpoint-harness-request.v2",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "toolCallId": "fixture-tool-call",
+    "workingDirectory": "C:\\fikeya\\workspace"
+  },
+  "requestSha256": "sha256:8cffa04113e19ee68f506a4d59020b205d0ef169eb565f41b4d940e2346ac561",
+  "result": {
+    "effects": {
+      "complete": true,
+      "measurement": "local-receipt-chain",
+      "receiptSha256": "sha256:29ca707cbd81c124eaa849d792efe7aa8c2e1c1a875b689c87d100c42fbc43dd",
+      "toolCallCount": 0,
+      "writeCount": 0
+    },
+    "errorCode": null,
+    "memory": {
+      "complete": true,
+      "evidenceCount": 0,
+      "mode": "off",
+      "receiptId": null,
+      "responseSha256": null,
+      "status": "off"
+    },
+    "model": "fixture-model",
+    "outcomeSha256": "sha256:a42a2dd57cf75609428123a9e270aa3e2a48898610c3e42ebd240cae35b8d82d",
+    "provider": "fixture-profile",
+    "requestSha256": "sha256:8cffa04113e19ee68f506a4d59020b205d0ef169eb565f41b4d940e2346ac561",
+    "schema": "maqam.endpoint-harness-result.v2",
+    "sessionId": "ses_endpoint_fixture",
+    "status": "succeeded",
+    "usage": {
+      "cachedInputTokens": 0,
+      "complete": true,
+      "costMicros": null,
+      "currency": null,
+      "inputTokens": 1,
+      "measurement": "provider-reported",
+      "outputTokens": 1,
+      "reasoningTokens": null
+    }
+  },
+  "schema": "fikeya.endpoint-conformance-fixture.v1"
+}

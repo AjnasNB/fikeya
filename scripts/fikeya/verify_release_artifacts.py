@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import zipfile
 from collections.abc import Callable, Mapping
@@ -19,6 +20,14 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from xml.etree import ElementTree
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from scripts.fikeya.package_qarinah_sidecar import (
+    SidecarPackageError,
+    verify_sidecar_bundle,
+)
 
 PUBLIC_VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$")
 HEX_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -104,6 +113,7 @@ def verify_release_artifacts(
     }
     vsix_name = f"fikeya-desktop-{identity.extension_version}-{identity.platform}.vsix"
     cli_name = f"fikeya-cli-{identity.public_version}.zip"
+    sidecar_name = f"fikeya-qarinah-sidecar-{identity.public_version}.zip"
     installer_name = f"FikeyaSetup-{identity.public_version}-{identity.platform}.exe"
 
     expected_names = {
@@ -111,6 +121,7 @@ def verify_release_artifacts(
         *sdist_names.values(),
         vsix_name,
         cli_name,
+        sidecar_name,
         CLI_INSTALL_NAME,
         CLI_INSTALL_SCRIPT_NAME,
         MANIFEST_NAME,
@@ -156,7 +167,18 @@ def verify_release_artifacts(
         artifact_directory,
         set(wheel_names.values()),
         identity.public_version,
+        sidecar_name,
     )
+    try:
+        verify_sidecar_bundle(
+            artifact_directory / sidecar_name,
+            expected_release_version=identity.public_version,
+            run_smoke=False,
+        )
+    except SidecarPackageError as error:
+        raise ReleaseVerificationError(
+            f"{sidecar_name} failed its binding verification."
+        ) from error
     _verify_manifest(artifact_directory, identity, expected_names, expected_commit)
     _verify_checksums(artifact_directory, expected_names)
 
@@ -305,8 +327,14 @@ def _verify_cli_bundle(
     artifact_directory: Path,
     wheel_names: set[str],
     public_version: str,
+    sidecar_name: str,
 ) -> None:
-    expected_entries = {*wheel_names, CLI_INSTALL_NAME, CLI_INSTALL_SCRIPT_NAME}
+    expected_entries = {
+        *wheel_names,
+        CLI_INSTALL_NAME,
+        CLI_INSTALL_SCRIPT_NAME,
+        sidecar_name,
+    }
     with zipfile.ZipFile(cli_path) as archive:
         _validate_zip_members(archive, cli_path.name)
         entries = set(archive.namelist())
@@ -328,6 +356,10 @@ def _verify_cli_bundle(
     if CLI_INSTALL_SCRIPT_NAME not in install_text:
         raise ReleaseVerificationError(
             f"{cli_path.name} install guide does not reference its installer script."
+        )
+    if sidecar_name not in install_text:
+        raise ReleaseVerificationError(
+            f"{cli_path.name} install guide does not reference its managed-memory sidecar."
         )
     for distribution in PYTHON_DISTRIBUTIONS:
         if f'Get-OneWheel "{distribution}-"' not in installer_text:

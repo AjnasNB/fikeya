@@ -162,8 +162,10 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/fikeya/verify_release_artifacts.py
+            scripts/fikeya/package_qarinah_sidecar.py
             scripts/fikeya/verify-installer-smoke.ps1
             scripts/fikeya/test_installed_browser.py
+            fikeya-runtime/src/fikeya_runtime/**
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:

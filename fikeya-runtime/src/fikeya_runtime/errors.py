@@ -54,12 +54,29 @@ class ProviderHttpError(ProviderError):
         )
 
 
+class ProviderOutputLimitError(ProviderError):
+    """Raised when reported output usage exceeds one provider call's signed cap."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Provider-reported output usage exceeded the configured per-call limit."
+        )
+
+
 class CancellationError(FikeyaError):
     """Raised when a person cancels a bounded runtime operation."""
 
 
 class StateError(FikeyaError):
     """Raised when session state violates an invariant."""
+
+
+class EndpointAuthorizationExpiredError(StateError):
+    """Raised when a managed endpoint authorization expires during its run."""
+
+
+class EndpointMemoryArtifactError(StateError):
+    """Raised when a managed Qarinah sidecar changes after execution starts."""
 
 
 class ApprovalError(FikeyaError):

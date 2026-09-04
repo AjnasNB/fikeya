@@ -11,12 +11,15 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from .errors import ConfigurationError, FikeyaError
+from .process_tree import start_managed_process
 from .state import StateStore
 from .util import sha256_bytes, sha256_text, stable_json
 from .workspace import WorkspaceBoundary
@@ -44,12 +47,26 @@ class QarinahQueryResult:
     receipt: QarinahReceipt
 
 
+@dataclass(frozen=True, slots=True)
+class QarinahSidecarVersion:
+    """Exact package identity reported by the pinned sidecar process."""
+
+    name: str
+    protocol: str
+    version: str
+    qarinah_version: str
+
+
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 FIKEYA_NODE_EXECUTABLE = "FIKEYA_NODE_EXECUTABLE"
 FIKEYA_QARINAH_SIDECAR = "FIKEYA_QARINAH_SIDECAR"
 MAXIMUM_SIDECAR_RESPONSE_BYTES = 1024 * 1024
 _SIDECAR_REQUEST_ID = "fikeya-memory-prepare"
+_SIDECAR_VERSION_REQUEST_ID = "fikeya-memory-version"
+_SIDECAR_PROTOCOL = "fikeya.qarinah-sidecar.v1"
+_SIDECAR_PACKAGE_NAME = "@fikeya/qarinah-sidecar"
+_SIDECAR_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 _SHELL_WRAPPER_SUFFIXES = frozenset({".bat", ".cmd", ".ps1"})
 _HASH_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _WORKSPACE_ID_PATTERN = re.compile(r"^ws_[0-9a-f]{32}$")
@@ -284,6 +301,7 @@ class QarinahSidecarAdapter:
         sidecar_path: str | Path,
         runner: Runner = subprocess.run,
         environment: Mapping[str, str] | None = None,
+        rebuild: bool = True,
     ) -> None:
         self.boundary = WorkspaceBoundary(workspace_root)
         self.state = state
@@ -299,6 +317,7 @@ class QarinahSidecarAdapter:
         )
         self._runner = runner
         self._environment = _sidecar_environment(environment, self.boundary.root)
+        self._rebuild = rebuild
         if self.node_executable.name.lower() not in {"node", "node.exe"}:
             self._environment["ELECTRON_RUN_AS_NODE"] = "1"
 
@@ -322,7 +341,8 @@ class QarinahSidecarAdapter:
             "minimumCoverage": minimum_coverage,
             "minimumEvidence": minimum_coverage,
             "query": query,
-            "rebuild": True,
+            "rebuild": self._rebuild,
+            "updateCheckpoint": self._rebuild,
         }
         request = stable_json(
             {
@@ -334,7 +354,8 @@ class QarinahSidecarAdapter:
         )
         start = time.monotonic()
         try:
-            completed = self._runner(
+            completed = _run_sidecar_process(
+                self._runner,
                 [
                     str(self.node_executable),
                     str(self.sidecar_path),
@@ -344,11 +365,7 @@ class QarinahSidecarAdapter:
                 cwd=self.boundary.root,
                 env=self._environment,
                 input=f"{request}\n",
-                text=True,
-                capture_output=True,
                 timeout=timeout_seconds,
-                check=False,
-                shell=False,
             )
         except (OSError, subprocess.SubprocessError) as error:
             raise FikeyaError(
@@ -408,6 +425,39 @@ class QarinahSidecarAdapter:
         )
         return QarinahQueryResult(content=content, receipt=receipt)
 
+    def version(self, *, timeout_seconds: float = 15.0) -> QarinahSidecarVersion:
+        """Probe the exact sidecar process for its signed runtime version."""
+
+        request = stable_json(
+            {
+                "id": _SIDECAR_VERSION_REQUEST_ID,
+                "jsonrpc": "2.0",
+                "method": "runtime.version",
+                "params": {},
+            }
+        )
+        try:
+            completed = _run_sidecar_process(
+                self._runner,
+                [
+                    str(self.node_executable),
+                    str(self.sidecar_path),
+                    "--root",
+                    str(self.boundary.root),
+                ],
+                cwd=self.boundary.root,
+                env=self._environment,
+                input=f"{request}\n",
+                timeout=timeout_seconds,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise FikeyaError(
+                "The configured Qarinah sidecar version probe failed."
+            ) from error
+        if completed.returncode != 0:
+            raise FikeyaError("The configured Qarinah sidecar version probe failed.")
+        return _parse_sidecar_version(completed.stdout)
+
     def _record_receipt(
         self,
         session_id: str,
@@ -441,6 +491,158 @@ class QarinahSidecarAdapter:
             coverage=coverage,
             evidence_count=evidence_count,
         )
+
+
+def _run_sidecar_process(
+    runner: Runner,
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    input: str,
+    timeout: float,
+) -> subprocess.CompletedProcess[str]:
+    """Run one sidecar request with bounded capture and reap its process tree."""
+
+    if runner is not subprocess.run:
+        return runner(
+            argv,
+            cwd=cwd,
+            env=env,
+            input=input,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            shell=False,
+        )
+
+    input_bytes = input.encode("utf-8")
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    capture_lock = threading.Lock()
+    captured_bytes = 0
+    output_limit_reached = threading.Event()
+
+    def capture(stream: BinaryIO, chunks: list[bytes]) -> None:
+        nonlocal captured_bytes
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                with capture_lock:
+                    remaining = MAXIMUM_SIDECAR_RESPONSE_BYTES - captured_bytes
+                    if len(chunk) > remaining:
+                        if remaining > 0:
+                            chunks.append(chunk[:remaining])
+                            captured_bytes += remaining
+                        output_limit_reached.set()
+                        return
+                    chunks.append(chunk)
+                    captured_bytes += len(chunk)
+        except OSError:
+            return
+
+    def write_request(stream: BinaryIO) -> None:
+        try:
+            stream.write(input_bytes)
+            stream.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    process, process_tree = start_managed_process(
+        argv,
+        cwd=cwd,
+        environment=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=False,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    assert process.stderr is not None
+    readers = [
+        threading.Thread(
+            target=capture,
+            args=(process.stdout, stdout_chunks),
+            name="fikeya-sidecar-stdout",
+            daemon=True,
+        ),
+        threading.Thread(
+            target=capture,
+            args=(process.stderr, stderr_chunks),
+            name="fikeya-sidecar-stderr",
+            daemon=True,
+        ),
+    ]
+    writer = threading.Thread(
+        target=write_request,
+        args=(process.stdin,),
+        name="fikeya-sidecar-input",
+        daemon=True,
+    )
+    workers = [writer, *readers]
+    for worker in workers:
+        worker.start()
+
+    timed_out = False
+    try:
+        while process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            if output_limit_reached.wait(timeout=min(0.01, remaining)):
+                break
+
+        # A sidecar request is one owned process tree. Terminating after the
+        # leader exits is intentional: it closes inherited stdio handles and
+        # prevents an otherwise successful probe from orphaning descendants.
+        process_tree.terminate()
+        process.wait()
+        for worker in workers:
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        if any(worker.is_alive() for worker in workers):
+            timed_out = True
+            process_tree.terminate()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            for worker in workers:
+                worker.join()
+    finally:
+        process_tree.close()
+
+    process.stdout.close()
+    process.stderr.close()
+
+    if output_limit_reached.is_set():
+        raise FikeyaError(
+            "Qarinah sidecar combined output exceeds the one-megabyte limit."
+        )
+    if timed_out:
+        raise subprocess.TimeoutExpired(argv, timeout)
+    try:
+        stdout = b"".join(stdout_chunks).decode("utf-8")
+        stderr = b"".join(stderr_chunks).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise FikeyaError("Qarinah sidecar output is not valid UTF-8.") from error
+    return subprocess.CompletedProcess(
+        argv,
+        process.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
 
 
 def select_qarinah_adapter(
@@ -602,6 +804,68 @@ def _parse_sidecar_result(content: str) -> dict[str, object]:
     if not isinstance(result, dict):
         raise FikeyaError("Qarinah sidecar returned no context result.")
     return result
+
+
+def _parse_sidecar_version(content: str) -> QarinahSidecarVersion:
+    if len(content.encode("utf-8")) > 16_384:
+        raise FikeyaError("Qarinah sidecar version response exceeds its limit.")
+    lines = content.splitlines()
+    if len(lines) != 1 or not lines[0]:
+        raise FikeyaError("Qarinah sidecar returned an invalid version response.")
+    try:
+        message = json.loads(
+            lines[0],
+            object_pairs_hook=_unique_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"invalid JSON constant: {value}")
+            ),
+        )
+    except (json.JSONDecodeError, ValueError) as error:
+        raise FikeyaError(
+            "Qarinah sidecar returned an invalid version response."
+        ) from error
+    if not isinstance(message, dict) or set(message) != {"id", "jsonrpc", "result"}:
+        raise FikeyaError("Qarinah sidecar returned an invalid version response.")
+    if (
+        message["jsonrpc"] != "2.0"
+        or message["id"] != _SIDECAR_VERSION_REQUEST_ID
+        or not isinstance(message["result"], dict)
+    ):
+        raise FikeyaError("Qarinah sidecar returned an unmatched version response.")
+    result = message["result"]
+    if set(result) != {"name", "protocol", "qarinahVersion", "version"}:
+        raise FikeyaError("Qarinah sidecar returned an invalid version result.")
+    if (
+        result["name"] != _SIDECAR_PACKAGE_NAME
+        or result["protocol"] != _SIDECAR_PROTOCOL
+    ):
+        raise FikeyaError("Qarinah sidecar returned an unsupported runtime identity.")
+    version = result["version"]
+    qarinah_version = result["qarinahVersion"]
+    if (
+        not isinstance(version, str)
+        or len(version.encode("utf-8")) > 128
+        or _SIDECAR_VERSION_PATTERN.fullmatch(version) is None
+        or not isinstance(qarinah_version, str)
+        or len(qarinah_version.encode("utf-8")) > 128
+        or _SIDECAR_VERSION_PATTERN.fullmatch(qarinah_version) is None
+    ):
+        raise FikeyaError("Qarinah sidecar returned an invalid runtime version.")
+    return QarinahSidecarVersion(
+        name=_SIDECAR_PACKAGE_NAME,
+        protocol=_SIDECAR_PROTOCOL,
+        version=version,
+        qarinah_version=qarinah_version,
+    )
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
 
 
 def _parse_context_pack(content: str) -> dict[str, object]:

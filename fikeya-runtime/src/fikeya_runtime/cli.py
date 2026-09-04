@@ -28,6 +28,12 @@ from .browser import SUPPORTED_BROWSER_ENGINES
 from .coding import CodingAgentRunner
 from .conversation import parse_conversation_history
 from .credentials import CredentialResolver
+from .endpoint import (
+    ENDPOINT_PROTOCOL,
+    ENDPOINT_VERSION_SCHEMA,
+    execute_endpoint_request,
+    read_endpoint_request,
+)
 from .errors import (
     CancellationError,
     FikeyaError,
@@ -64,7 +70,7 @@ from .tool_presets import (
     ToolPresetLoader,
     ToolStatus,
 )
-from .util import sha256_text, utc_now
+from .util import sha256_text, stable_json, utc_now
 from .workspace import Workspace, initialize_workspace, runtime_home
 
 
@@ -98,6 +104,23 @@ def _parser() -> argparse.ArgumentParser:
     )
     statistics.add_argument("--workspace", default=".")
     statistics.add_argument("--json", action="store_true")
+
+    endpoint = subcommands.add_parser(
+        "endpoint", help="Serve the strict managed-endpoint execution protocol."
+    )
+    endpoint_commands = endpoint.add_subparsers(
+        dest="endpoint_command", required=True
+    )
+    endpoint_version = endpoint_commands.add_parser(
+        "version", help="Return the content-free runtime identity envelope."
+    )
+    endpoint_version.add_argument("--protocol", required=True)
+    endpoint_version.add_argument("--json", action="store_true", required=True)
+    endpoint_execute = endpoint_commands.add_parser(
+        "execute", help="Consume one scoped v2 request from stdin."
+    )
+    endpoint_execute.add_argument("--protocol", required=True)
+    endpoint_execute.add_argument("--json", action="store_true", required=True)
 
     provider = subcommands.add_parser("provider", help="Manage model providers.")
     provider_commands = provider.add_subparsers(dest="provider_command", required=True)
@@ -462,6 +485,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_doctor(args)
         if args.command == "stats":
             return _run_stats(args)
+        if args.command == "endpoint":
+            return _run_endpoint(args)
         if args.command == "provider":
             return _run_provider(args)
         if args.command == "agent":
@@ -613,6 +638,29 @@ def _run_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_endpoint(args: argparse.Namespace) -> int:
+    if args.protocol != ENDPOINT_PROTOCOL:
+        raise ProviderError("The requested Fikeya endpoint protocol is unsupported.")
+    if args.endpoint_command == "version":
+        _emit(
+            {
+                "name": "fikeya",
+                "schema": ENDPOINT_VERSION_SCHEMA,
+                "version": __version__,
+            },
+            as_json=True,
+        )
+        return 0
+    if args.endpoint_command == "execute":
+        request = read_endpoint_request(sys.stdin.buffer)
+        result = asyncio.run(
+            execute_endpoint_request(request, ProviderStore(runtime_home(args.home)))
+        )
+        _emit(result.as_json(), as_json=True)
+        return 0
+    raise AssertionError("argparse accepted an unknown endpoint command")
+
+
 def _load_matched_comparison(workspace: Workspace) -> dict[str, object] | None:
     """Load a bounded, fail-closed aggregate emitted by the offline comparator."""
 
@@ -713,6 +761,7 @@ def _run_provider(args: argparse.Namespace) -> int:
                     "kind": profile.kind.value,
                     "model": profile.model,
                     "name": profile.name,
+                    "profileSha256": sha256_text(stable_json(profile.as_json())),
                     "secretConfigured": profile.secret_ref is not None,
                 }
                 for profile in store.list()

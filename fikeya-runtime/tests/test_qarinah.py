@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
-
 from fikeya_runtime.errors import ConfigurationError, FikeyaError
 from fikeya_runtime.qarinah import (
     FIKEYA_NODE_EXECUTABLE,
@@ -509,6 +510,74 @@ def test_sidecar_rejects_nonzero_exit_and_oversized_output(tmp_path: Path) -> No
         assert connection.execute(
             "SELECT COUNT(*) FROM context_receipts"
         ).fetchone() == (2,)
+
+
+@pytest.mark.parametrize("operation", ["query", "version"])
+def test_managed_sidecar_combined_output_is_bounded_and_tree_is_reaped(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    node_value = shutil.which("node")
+    if node_value is None:
+        pytest.skip("Node is required for the managed-sidecar output-bound test.")
+    workspace = tmp_path / "workspace"
+    installation = tmp_path / "installation"
+    workspace.mkdir()
+    installation.mkdir()
+    sentinel = tmp_path / f"{operation}-child-survived.txt"
+    child = installation / "large-output-child.mjs"
+    child.write_text(
+        "import {writeFileSync} from 'node:fs';\n"
+        f"setTimeout(() => writeFileSync({json.dumps(str(sentinel))}, 'survived'), 900);\n"
+        "setTimeout(() => {}, 5000);\n",
+        encoding="utf-8",
+    )
+    sidecar = installation / "large-output-sidecar.mjs"
+    sidecar.write_text(
+        "import {spawn} from 'node:child_process';\n"
+        "import {writeSync} from 'node:fs';\n"
+        "let input = '';\n"
+        "for await (const chunk of process.stdin) input += chunk;\n"
+        f"spawn(process.execPath, [{json.dumps(str(child.resolve()))}], {{stdio:'inherit'}});\n"
+        "function fill(fd, value) {\n"
+        "  const chunk = Buffer.alloc(64 * 1024, value);\n"
+        "  let remaining = 700 * 1024;\n"
+        "  while (remaining > 0) {\n"
+        "    const size = Math.min(remaining, chunk.length);\n"
+        "    const written = writeSync(fd, chunk, 0, size);\n"
+        "    if (written <= 0) throw new Error('output stopped');\n"
+        "    remaining -= written;\n"
+        "  }\n"
+        "}\n"
+        "fill(1, 120);\n"
+        "fill(2, 121);\n"
+        "process.exit(0);\n",
+        encoding="utf-8",
+    )
+    state = StateStore(workspace / "state.sqlite3")
+    session = state.create_session(session_id=f"ses_large_output_{operation}")
+    adapter = QarinahSidecarAdapter(
+        workspace_root=workspace,
+        state=state,
+        node_executable=Path(node_value).resolve(strict=True),
+        sidecar_path=sidecar,
+    )
+
+    started = time.monotonic()
+    with pytest.raises(FikeyaError, match="combined output exceeds"):
+        if operation == "query":
+            adapter.query(
+                session.session_id,
+                "bounded output query",
+                timeout_seconds=10,
+            )
+        else:
+            adapter.version(timeout_seconds=10)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 3
+    time.sleep(1.1)
+    assert not sentinel.exists(), "the oversized sidecar child was not terminated"
 
 
 @pytest.mark.parametrize(
