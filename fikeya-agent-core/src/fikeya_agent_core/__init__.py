@@ -57,7 +57,9 @@ from .models import (
 from .protocols import ExecutionBroker, Provider
 from .provider import (
     RuntimeProviderAdapter,
+    compact_provider_request,
     decode_provider_decision,
+    provider_context_bytes,
     render_provider_prompt,
     render_system_instructions,
 )
@@ -110,10 +112,12 @@ __all__ = [
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
+    "compact_provider_request",
     "decode_provider_decision",
     "deep_agents_dependency_status",
     "deep_agents_diagnostic",
     "deterministic_read_sample_graph",
+    "provider_context_bytes",
     "render_provider_prompt",
     "render_system_instructions",
     "require_deep_agents_dependencies",

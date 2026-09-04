@@ -26,6 +26,7 @@ class EventType(str, enum.Enum):
     SESSION_STARTED = "session.started"
     SESSION_CANCELLED = "session.cancelled"
     SESSION_COMPLETED = "session.completed"
+    SESSION_FAILED = "session.failed"
     SESSION_FORKED = "session.forked"
     MESSAGE = "message"
     TOOL_REQUESTED = "tool.requested"

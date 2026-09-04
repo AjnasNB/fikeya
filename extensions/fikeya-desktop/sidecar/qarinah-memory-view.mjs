@@ -16,6 +16,7 @@ import { appendEvent } from '../node_modules/qarinah/src/store.js';
 import { initializeWorkspace, loadWorkspace } from '../node_modules/qarinah/src/workspace.js';
 
 const maximumInputBytes = 1024 * 1024;
+const maximumBatchInputBytes = 16 * maximumInputBytes;
 const root = readRoot(process.argv.slice(2));
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
 let handled = false;
@@ -30,8 +31,9 @@ lines.on('line', line => {
 
 async function handleLine(line) {
 	let request;
-	if (Buffer.byteLength(line, 'utf8') > maximumInputBytes) {
-		writeError(null, -32600, 'Protocol message exceeds the one-megabyte limit.');
+	const inputBytes = Buffer.byteLength(line, 'utf8');
+	if (inputBytes > maximumBatchInputBytes) {
+		writeError(null, -32600, 'Protocol message exceeds the bounded batch limit.');
 		return;
 	}
 	try {
@@ -41,8 +43,12 @@ async function handleLine(line) {
 		return;
 	}
 	if (!isRecord(request) || request.jsonrpc !== '2.0' || typeof request.id !== 'string'
-		|| !['memory.initialize', 'memory.inspect', 'memory.prepare', 'memory.record', 'memory.captureRun'].includes(request.method) || !isRecord(request.params)) {
+		|| !['memory.initialize', 'memory.inspect', 'memory.prepare', 'memory.record', 'memory.captureRun', 'memory.captureRuns'].includes(request.method) || !isRecord(request.params)) {
 		writeError(isRecord(request) && typeof request.id === 'string' ? request.id : null, -32600, 'Invalid request.');
+		return;
+	}
+	if (request.method !== 'memory.captureRuns' && inputBytes > maximumInputBytes) {
+		writeError(request.id, -32600, 'Protocol message exceeds the one-megabyte limit.');
 		return;
 	}
 
@@ -110,6 +116,11 @@ async function handleLine(line) {
 			write({ jsonrpc: '2.0', id: request.id, result });
 			return;
 		}
+		if (request.method === 'memory.captureRuns') {
+			const result = await captureRuns(request.params);
+			write({ jsonrpc: '2.0', id: request.id, result });
+			return;
+		}
 		const dashboard = await buildMemoryDashboard({ cwd: root });
 		const compactView = {
 			schemaVersion: 'qarinah.developer-memory-view.v1',
@@ -150,13 +161,64 @@ function isRecord(value) {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function captureRun(params) {
+async function captureRuns(params) {
+	if (Object.keys(params).length !== 1 || !Array.isArray(params.runs)
+		|| params.runs.length < 1 || params.runs.length > 16
+		|| params.runs.some(candidate => !isRecord(candidate))) {
+		throw new TypeError('runs must contain between one and sixteen capture requests.');
+	}
+	const workspace = await loadWorkspace(root);
+	const results = [];
+	for (const run of params.runs) {
+		try {
+			const singleRequestBytes = Buffer.byteLength(JSON.stringify({
+				jsonrpc: '2.0', id: 'fikeya-memory-capture-run', method: 'memory.captureRun', params: run
+			}), 'utf8');
+			if (singleRequestBytes > maximumInputBytes) {
+				throw new TypeError('A capture request exceeds the one-megabyte per-run limit.');
+			}
+			results.push({ ok: true, receipt: await captureRun(run, { workspace, deferDashboard: true }) });
+		} catch {
+			// Keep item failures content-free. Any deterministic events appended before an I/O error
+			// remain safe to retry and are honestly reported by the desktop as potentially partial.
+			results.push({ ok: false });
+		}
+	}
+	const dashboard = results.some(result => result.ok)
+		? await buildMemoryDashboard({ cwd: root })
+		: null;
+	return {
+		schemaVersion: 'qarinah.fikeya-run-capture-batch.v1',
+		results: results.map(result => result.ok
+			? { ok: true, receipt: finalizeCaptureReceipt(result.receipt, dashboard) }
+			: result)
+	};
+}
+
+async function captureRun(params, options = {}) {
 	// loadWorkspace enforces an existing enabled workspace and its machine-local consent. Automatic
 	// desktop capture never initializes, approves, or widens a Qarinah policy.
-	const workspace = await loadWorkspace(root);
+	const workspace = options.workspace ?? await loadWorkspace(root);
 	const sessionId = boundedString(params.sessionId, 'sessionId', 256);
-	const callId = boundedString(params.callId, 'callId', 256);
-	const prompt = boundedUtf8String(params.prompt, 'prompt', 262_144);
+	const providerAttemptId = params.providerAttemptId === null
+		? null
+		: boundedString(params.providerAttemptId, 'providerAttemptId', 128);
+	const providerAttemptMeasurement = boundedEnum(
+		params.providerAttemptMeasurement,
+		'providerAttemptMeasurement',
+		['exact', 'legacy-minimum', 'unavailable']
+	);
+	const callId = params.callId === null ? null : boundedString(params.callId, 'callId', 256);
+	const prompt = boundedUtf8String(params.prompt, 'prompt', 16_000);
+	const promptSha256 = requiredHash(params.promptSha256, 'promptSha256');
+	const promptBytes = boundedInteger(params.promptBytes, 'promptBytes', 1, 262_144);
+	const promptTruncated = requiredBoolean(params.promptTruncated, 'promptTruncated');
+	const capturedPromptBytes = Buffer.byteLength(prompt, 'utf8');
+	const capturedPromptSha256 = `sha256:${createHash('sha256').update(prompt, 'utf8').digest('hex')}`;
+	if ((!promptTruncated && (promptBytes !== capturedPromptBytes || promptSha256 !== capturedPromptSha256))
+		|| (promptTruncated && promptBytes <= capturedPromptBytes)) {
+		throw new TypeError('prompt provenance is inconsistent.');
+	}
 	const provider = requiredRecord(params.provider, 'provider');
 	const providerName = boundedString(provider.name, 'provider.name', 128);
 	const providerKind = boundedString(provider.kind, 'provider.kind', 80);
@@ -164,19 +226,50 @@ async function captureRun(params) {
 	const usage = normalizeUsage(params.usage);
 	const memory = normalizeMemory(params.memory);
 	const providerReceipts = normalizeProviderReceipts(params.providerReceipts);
+	const providerCallCount = boundedInteger(params.providerCallCount, 'providerCallCount', 0, 128);
+	const providerReceiptCount = boundedInteger(params.providerReceiptCount, 'providerReceiptCount', 0, 128);
+	const providerReceiptsTruncated = requiredBoolean(params.providerReceiptsTruncated, 'providerReceiptsTruncated');
+	if ((providerAttemptId === null) !== (providerCallCount === 0)) {
+		throw new TypeError('providerAttemptId must be null exactly when no provider call was attempted.');
+	}
+	if ((providerAttemptMeasurement === 'unavailable' && providerAttemptId !== null)
+		|| (providerAttemptMeasurement === 'legacy-minimum'
+			&& (providerAttemptId === null || providerCallCount !== providerReceiptCount))) {
+		throw new TypeError('provider attempt measurement is inconsistent with its bounded counts.');
+	}
+	if ((callId === null) !== (providerReceiptCount === 0)) {
+		throw new TypeError('callId must be null exactly when no provider receipt completed.');
+	}
+	if (providerReceiptCount > providerCallCount || providerReceipts.length > providerReceiptCount
+		|| providerReceiptsTruncated !== (providerReceipts.length !== providerReceiptCount)) {
+		throw new TypeError('provider receipt counts are inconsistent.');
+	}
 	const outcome = normalizeOutcome(params.outcome);
+	if (outcome.status === 'failed' && providerAttemptMeasurement === 'exact' && outcome.terminalFailure === null) {
+		throw new TypeError('An exact failed run requires its terminal failure classification.');
+	}
+	if (outcome.status === 'completed' && providerReceiptCount === 0) {
+		throw new TypeError('A completed run requires a completed provider receipt.');
+	}
+	if (providerAttemptMeasurement === 'exact' && providerCallCount === 0
+		&& (outcome.status !== 'cancelled' || outcome.steps !== 0 || outcome.toolOutcomeCount !== 0
+			|| outcome.changedFileCount !== 0 || usage.measurement !== 'unavailable')) {
+		throw new TypeError('An exact zero-attempt run must be a pre-provider cancellation without execution evidence.');
+	}
 	const capture = workspace.config.capture;
 	const retention = { class: workspace.config.retentionClass, expiresAt: null };
-	const promptBytes = Buffer.byteLength(prompt, 'utf8');
 	const redactedPrompt = redactText(prompt);
 	const retainedPrompt = boundedExcerpt(redactedPrompt, 16_000);
-	const promptSha256 = `sha256:${createHash('sha256').update(prompt, 'utf8').digest('hex')}`;
 	const records = [];
+	const eventCorrelationKey = providerAttemptId === null
+		? `${sessionId}:no-provider-call`
+		: `${sessionId}:${providerAttemptId}`;
+	const providerSourceId = providerAttemptId ?? eventCorrelationKey;
 
 	const append = async (eventKey, eventInput) => {
 		const event = await appendEvent({
 			...eventInput,
-			eventId: deterministicEventId(`${sessionId}:${callId}:${eventKey}`),
+			eventId: deterministicEventId(`${eventCorrelationKey}:${eventKey}`),
 			retention
 		}, { cwd: root, capture, idempotent: true });
 		const record = { eventId: event.eventId, eventHash: event.hash, kind: event.kind };
@@ -194,8 +287,10 @@ async function captureRun(params) {
 			source: 'fikeya.desktop',
 			promptSha256,
 			promptBytes,
+			capturedPromptSha256,
+			capturedPromptBytes,
 			retainedCharacters: retainedPrompt.text.length,
-			truncated: retainedPrompt.truncated
+			truncated: promptTruncated || retainedPrompt.truncated
 		},
 		confidence: 'extracted',
 		relations: [],
@@ -210,13 +305,24 @@ async function captureRun(params) {
 		body: '',
 		data: {
 			source: 'fikeya.desktop',
+			providerAttemptId,
+			providerAttemptMeasurement,
 			callId,
+			providerCallOccurred: providerAttemptMeasurement === 'unavailable' ? null : providerAttemptId !== null,
+			providerReceiptCompleted: callId !== null,
 			provider: { name: providerName, kind: providerKind, model },
-			providerCallCount: providerReceipts.length
+			providerCallCount,
+			providerReceiptCount,
+			providerReceiptsCaptured: providerReceipts.length,
+			providerReceiptsTruncated,
+			providerAttemptsWithoutReceipt: providerAttemptMeasurement === 'exact'
+				? providerCallCount - providerReceiptCount
+				: null,
+			providerReceiptDetailsMissing: providerReceipts.length < providerReceiptCount
 		},
 		confidence: 'extracted',
 		relations: [{ type: 'references', target: promptEvent.eventId }],
-		provenance: { adapter: 'fikeya.desktop', sourceId: callId }
+		provenance: { adapter: 'fikeya.desktop', sourceId: providerSourceId }
 	});
 
 	let contextEvent;
@@ -248,7 +354,7 @@ async function captureRun(params) {
 			kind: 'tool.completed',
 			actor: { type: 'tool', id: `fikeya.runtime.${tool.name}` },
 			sessionId,
-			title: tool.test ? 'Fikeya test completed' : 'Fikeya tool completed',
+			title: tool.test ? 'Fikeya test command completed' : 'Fikeya tool completed',
 			body: '',
 			data: {
 				source: 'fikeya.desktop',
@@ -267,39 +373,70 @@ async function captureRun(params) {
 		...(contextEvent ? [{ type: 'derived_from', target: contextEvent.eventId }] : []),
 		...toolEvents.map(event => ({ type: 'derived_from', target: event.eventId }))
 	];
+	const turnCompleted = outcome.status === 'completed';
 	const turnEvent = await append('turn', {
-		kind: 'turn.completed',
+		kind: turnCompleted ? 'turn.completed' : 'summary',
 		actor: { type: 'agent', id: 'fikeya.runtime' },
 		sessionId,
-		title: 'Fikeya agent turn completed',
+		title: turnCompleted
+			? 'Fikeya agent turn completed'
+			: outcome.status === 'cancelled'
+				? 'Fikeya agent turn cancelled with partial evidence'
+				: 'Fikeya agent turn failed with partial evidence',
 		body: '',
 		data: {
 			source: 'fikeya.desktop',
+			providerAttemptId,
+			providerAttemptMeasurement,
 			callId,
+			providerCallOccurred: providerAttemptMeasurement === 'unavailable' ? null : providerAttemptId !== null,
+			providerReceiptCompleted: callId !== null,
 			status: outcome.status,
 			provider: { name: providerName, kind: providerKind, model },
 			promptSha256,
 			usage,
 			memory,
+			providerCallCount,
+			providerReceiptCount,
+			providerReceiptsCaptured: providerReceipts.length,
+			providerReceiptsTruncated,
 			providerReceipts,
 			outcome
 		},
 		confidence: 'verified',
 		relations: turnRelations,
-		provenance: { adapter: 'fikeya.desktop', sourceId: callId }
+		provenance: { adapter: 'fikeya.desktop', sourceId: providerSourceId }
 	});
 
-	// The dashboard graph is calculated from the newly verified ledger, so this receipt identifies
-	// the capture-time projection. The desktop then rebuilds a fresh projection for display.
-	const dashboard = await buildMemoryDashboard({ cwd: root });
-	return {
+	const captureReceipt = {
 		schemaVersion: 'qarinah.fikeya-run-capture.v1',
 		capture,
-		eventCount: dashboard.workspace.eventCount,
+		sessionId,
+		outcomeStatus: outcome.status,
+		providerAttemptId,
+		providerAttemptMeasurement,
+		providerCallCount,
+		providerReceiptCount,
+		providerReceiptsCaptured: providerReceipts.length,
+		providerReceiptsTruncated,
 		capturedTurnHash: turnEvent.hash,
-		ledgerHeadHash: dashboard.workspace.ledgerHeadHash,
-		graphManifestHash: dashboard.linkedGraph.manifestHash,
 		events: records
+	};
+	if (options.deferDashboard) {
+		return captureReceipt;
+	}
+	// The graph is derived from the verified ledger. A batch shares the one projection produced
+	// after its final append; capturedTurnHash still identifies each turn independently.
+	const dashboard = await buildMemoryDashboard({ cwd: root });
+	return finalizeCaptureReceipt(captureReceipt, dashboard);
+}
+
+function finalizeCaptureReceipt(capture, dashboard) {
+	return {
+		...capture,
+		eventCount: dashboard.workspace.eventCount,
+		ledgerHeadHash: dashboard.workspace.ledgerHeadHash,
+		graphManifestHash: dashboard.linkedGraph.manifestHash
 	};
 }
 
@@ -311,7 +448,7 @@ function boundedString(value, name, maximumLength) {
 }
 
 function boundedUtf8String(value, name, maximumBytes) {
-	if (typeof value !== 'string' || value.trim().length === 0 || value.includes('\0') || Buffer.byteLength(value, 'utf8') > maximumBytes) {
+	if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value, 'utf8') > maximumBytes) {
 		throw new TypeError(`${name} must be a non-empty UTF-8 string of at most ${maximumBytes} bytes.`);
 	}
 	return value;
@@ -377,7 +514,7 @@ function normalizeProviderReceipts(value) {
 	if (!Array.isArray(value) || value.length > 16) {
 		throw new TypeError('providerReceipts must contain at most 16 receipts.');
 	}
-	return value.map((candidate, index) => {
+	const receipts = value.map((candidate, index) => {
 		const name = `providerReceipts[${index}]`;
 		const receipt = requiredRecord(candidate, name);
 		return {
@@ -392,12 +529,18 @@ function normalizeProviderReceipts(value) {
 			statusCode: boundedInteger(receipt.statusCode, `${name}.statusCode`, 100, 599)
 		};
 	});
+	if (new Set(receipts.map(receipt => receipt.callId)).size !== receipts.length) {
+		throw new TypeError('providerReceipts must have unique callId values.');
+	}
+	return receipts;
 }
 
 function normalizeOutcome(value) {
 	const outcome = requiredRecord(value, 'outcome');
-	if (outcome.status !== 'completed') {
-		throw new TypeError('Only completed Fikeya outcomes may be captured automatically.');
+	const status = boundedEnum(outcome.status, 'outcome.status', ['completed', 'cancelled', 'failed']);
+	const terminalFailure = normalizeTerminalFailure(outcome.terminalFailure);
+	if (status !== 'failed' && terminalFailure !== null) {
+		throw new TypeError('Only a failed outcome may include a terminal failure classification.');
 	}
 	const toolOutcomeCount = boundedInteger(outcome.toolOutcomeCount, 'outcome.toolOutcomeCount', 0, 1_000);
 	const changedFileCount = boundedInteger(outcome.changedFileCount, 'outcome.changedFileCount', 0, 1_000);
@@ -406,13 +549,19 @@ function normalizeOutcome(value) {
 		|| typeof outcome.toolOutcomesTruncated !== 'boolean' || typeof outcome.changedFilesTruncated !== 'boolean'
 		|| outcome.toolOutcomes.length > toolOutcomeCount || outcome.changedFiles.length > changedFileCount
 		|| outcome.toolOutcomesTruncated !== (outcome.toolOutcomes.length !== toolOutcomeCount)
-		|| outcome.changedFilesTruncated !== (outcome.changedFiles.length !== changedFileCount)) {
+		|| (!outcome.changedFilesTruncated && outcome.changedFiles.length !== changedFileCount)) {
 		throw new TypeError('outcome has inconsistent bounded collections.');
 	}
 	const toolOutcomes = outcome.toolOutcomes.map((candidate, index) => normalizeToolOutcome(candidate, index));
 	const changedFiles = outcome.changedFiles.map((candidate, index) => normalizeChangedFile(candidate, index));
+	if (new Set(toolOutcomes.map(tool => tool.callId)).size !== toolOutcomes.length
+		|| new Set(changedFiles.map(file => file.path)).size !== changedFiles.length) {
+		throw new TypeError('outcome bounded collections require unique tool call ids and changed-file paths.');
+	}
 	return {
-		status: 'completed',
+		status,
+		terminalFailure,
+		changedFilesScope: boundedEnum(outcome.changedFilesScope, 'outcome.changedFilesScope', ['regular-project-files-v1', 'legacy-unspecified']),
 		steps: boundedInteger(outcome.steps, 'outcome.steps', 0, 1_000),
 		planSha256: requiredHash(outcome.planSha256, 'outcome.planSha256'),
 		summarySha256: requiredHash(outcome.summarySha256, 'outcome.summarySha256'),
@@ -448,14 +597,86 @@ function normalizeChangedFile(value, index) {
 	}
 	const beforeSha256 = nullableHash(file.beforeSha256, `${name}.beforeSha256`);
 	const afterSha256 = nullableHash(file.afterSha256, `${name}.afterSha256`);
-	if (beforeSha256 === null && afterSha256 === null) {
+	const beforeBytes = optionalNullableInteger(file, 'beforeBytes', name, 0, Number.MAX_SAFE_INTEGER);
+	const afterBytes = optionalNullableInteger(file, 'afterBytes', name, 0, Number.MAX_SAFE_INTEGER);
+	const linesAdded = optionalNullableInteger(file, 'linesAdded', name, 0, 1_000_000_000);
+	const linesDeleted = optionalNullableInteger(file, 'linesDeleted', name, 0, 1_000_000_000);
+	const beforeIdentityPresent = beforeSha256 !== null || beforeBytes !== null;
+	const afterIdentityPresent = afterSha256 !== null || afterBytes !== null;
+	const beforeExists = file.beforeExists === undefined
+		? beforeIdentityPresent
+		: requiredBoolean(file.beforeExists, `${name}.beforeExists`);
+	const afterExists = file.afterExists === undefined
+		? afterIdentityPresent
+		: requiredBoolean(file.afterExists, `${name}.afterExists`);
+	if ((!beforeExists && beforeIdentityPresent) || (!afterExists && afterIdentityPresent)
+		|| (!beforeExists && !afterExists)) {
 		throw new TypeError(`${name} must describe a created, updated, or deleted file.`);
+	}
+	const inferredOperation = !beforeExists ? 'add' : !afterExists ? 'delete' : 'edit';
+	const operation = file.operation === undefined
+		? inferredOperation
+		: boundedEnum(file.operation, `${name}.operation`, ['add', 'edit', 'delete']);
+	if (operation !== inferredOperation) {
+		throw new TypeError(`${name}.operation does not match its before and after identities.`);
+	}
+	const lineDeltaStatus = file.lineDeltaStatus === undefined
+		? 'unavailable'
+		: boundedEnum(file.lineDeltaStatus, `${name}.lineDeltaStatus`, ['exact', 'binary', 'too-large', 'unavailable']);
+	if ((lineDeltaStatus === 'exact' && (linesAdded === null || linesDeleted === null))
+		|| (lineDeltaStatus !== 'exact' && (linesAdded !== null || linesDeleted !== null))
+		|| (operation === 'add' && linesDeleted !== null && linesDeleted !== 0)
+		|| (operation === 'delete' && linesAdded !== null && linesAdded !== 0)
+		|| (operation === 'edit' && !beforeIdentityPresent && !afterIdentityPresent)
+		|| (operation === 'edit' && beforeSha256 !== null && beforeSha256 === afterSha256)) {
+		throw new TypeError(`${name} has inconsistent line-delta metadata.`);
 	}
 	return {
 		path: filePath,
+		operation,
+		beforeExists,
+		afterExists,
 		beforeSha256,
-		afterSha256
+		afterSha256,
+		beforeBytes,
+		afterBytes,
+		linesAdded,
+		linesDeleted,
+		lineDeltaStatus
 	};
+}
+
+function normalizeTerminalFailure(value) {
+	if (value === null) {
+		return null;
+	}
+	const failure = requiredRecord(value, 'outcome.terminalFailure');
+	if (Object.keys(failure).sort().join(',') !== 'kind,retryable,statusCode') {
+		throw new TypeError('outcome.terminalFailure has unsupported fields.');
+	}
+	const retryable = requiredBoolean(failure.retryable, 'outcome.terminalFailure.retryable');
+	const statusCode = failure.statusCode === null
+		? null
+		: boundedInteger(failure.statusCode, 'outcome.terminalFailure.statusCode', 100, 599);
+	const kind = boundedEnum(failure.kind, 'outcome.terminalFailure.kind', [
+		'connectivity', 'quota', 'authentication', 'provider', 'agent_no_progress', 'runtime'
+	]);
+	const valid = kind === 'connectivity'
+		? statusCode === null && retryable
+		: kind === 'quota'
+			? statusCode === 429 && retryable
+			: kind === 'authentication'
+				? (statusCode === 401 || statusCode === 403) && !retryable
+				: kind === 'provider'
+					? statusCode !== 401 && statusCode !== 403 && statusCode !== 429
+						&& retryable === (statusCode === null
+							? false
+							: statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode >= 500)
+					: statusCode === null && !retryable;
+	if (!valid) {
+		throw new TypeError('outcome.terminalFailure has contradictory semantics.');
+	}
+	return { kind, retryable, statusCode };
 }
 
 function requiredBoolean(value, name) {
@@ -471,6 +692,12 @@ function nullableString(value, name, maximumLength) {
 
 function nullableInteger(value, name, minimum, maximum) {
 	return value === null ? null : boundedInteger(value, name, minimum, maximum);
+}
+
+function optionalNullableInteger(record, key, parentName, minimum, maximum) {
+	return record[key] === undefined
+		? null
+		: nullableInteger(record[key], `${parentName}.${key}`, minimum, maximum);
 }
 
 function requiredHash(value, name) {

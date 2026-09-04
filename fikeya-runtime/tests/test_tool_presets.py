@@ -24,13 +24,12 @@ from fikeya_runtime.tool_presets import (
     ToolLimits,
     ToolPresetLoader,
 )
-from fikeya_runtime.workspace import initialize_workspace
-
+from fikeya_runtime.workspace import Workspace, initialize_workspace
 
 _NPM_PRESET_FIXTURES = {
     "cockroach-browser": {
         "package": "cockroach-browser",
-        "version": "0.4.1",
+        "version": "0.5.0-rc.1",
         "entrypoint": "dist/cli.js",
     },
     "cockroach-crawler": {
@@ -484,6 +483,56 @@ def test_prepare_launch_unwraps_reviewed_npm_cmd_shims_without_a_shell(
     assert captured["shell"] is False
 
 
+@pytest.mark.parametrize(
+    ("version", "accepted"),
+    [
+        ("0.5.0-rc.1", True),
+        ("0.5.0-rc.2", True),
+        ("0.5.0-rc.1+fikeya.1", True),
+        ("0.5.0", True),
+        ("0.5.7", True),
+        ("0.4.1", False),
+        ("0.5.0-beta.99", False),
+        ("0.5.0-rc.0", False),
+        ("0.5.0-rc.01", False),
+        ("0.5.1-alpha.1", False),
+        ("0.6.0-rc.1", False),
+        ("0.6.0", False),
+        (f"0.5.0-{'x' * 33}", False),
+        ("0.5.0-" + ".".join(["x"] * 17), False),
+        ("1000000000.5.0", False),
+        (f"0.5.0-rc.1+{'x' * 129}", False),
+    ],
+)
+def test_browser_npm_package_enforces_reviewed_prerelease_range(
+    tmp_path: Path, version: str, accepted: bool
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace, _ = initialize_workspace(root)
+    preset = PresetCatalog().get("cockroach-browser")
+    ToolEnablementStore(workspace).enable(preset, confirmed=True)
+    shim, entrypoint = _npm_cmd_install(
+        tmp_path, preset.preset_id, version=version
+    )
+    loader = ToolPresetLoader()
+
+    def prepare() -> ToolLaunchPlan:
+        return loader.prepare_launch(
+            workspace,
+            preset.preset_id,
+            configuration={"COCKROACH_BROWSER_URL": "http://127.0.0.1:43110"},
+            secret_resolver=lambda _name: "ephemeral-test-token",
+            executable_resolver=lambda _command: str(shim),
+        )
+
+    if accepted:
+        assert prepare().argv[1] == str(entrypoint)
+    else:
+        with pytest.raises(ToolPresetError, match="outside the reviewed range"):
+            prepare()
+
+
 def test_npm_cmd_unwrap_rejects_arbitrary_batch_content(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
@@ -646,23 +695,23 @@ class _MemoryToolCredentials:
         self.values: dict[tuple[str, str, str], str] = {}
 
     @staticmethod
-    def _key(workspace: object, preset_id: str, name: str) -> tuple[str, str, str]:
-        config = getattr(workspace, "config")
+    def _key(workspace: Workspace, preset_id: str, name: str) -> tuple[str, str, str]:
+        config = workspace.config
         return (str(config.workspace_id), preset_id, name)
 
     def set(
         self,
-        workspace: object,
+        workspace: Workspace,
         preset_id: str,
         name: str,
         credential: str,
     ) -> None:
         self.values[self._key(workspace, preset_id, name)] = credential
 
-    def configured(self, workspace: object, preset_id: str, name: str) -> bool:
+    def configured(self, workspace: Workspace, preset_id: str, name: str) -> bool:
         return self._key(workspace, preset_id, name) in self.values
 
-    def remove(self, workspace: object, preset_id: str, name: str) -> None:
+    def remove(self, workspace: Workspace, preset_id: str, name: str) -> None:
         self.values.pop(self._key(workspace, preset_id, name), None)
 
 

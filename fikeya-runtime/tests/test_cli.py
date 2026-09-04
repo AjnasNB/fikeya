@@ -697,6 +697,7 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
             return {
                 "callId": "call_final",
                 "changedFiles": [],
+                "failure": None,
                 "memory": {
                     "coverage": None,
                     "evidenceCount": None,
@@ -714,6 +715,8 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
                     "toolCalls": [],
                 },
                 "output": "The reviewed result.",
+                "providerAttemptId": "evt_attempt_final",
+                "providerAttemptIds": ["evt_attempt_final"],
                 "providerCallIds": ["call_final"],
                 "sessionId": "ses_protocol",
                 "status": "completed",
@@ -912,7 +915,9 @@ def test_cli_coding_protocol_emits_typed_pre_provider_failure(
         )
         == 2
     )
-    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [expected]
+    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [
+        expected
+    ]
 
 
 def test_cli_doctor_reports_headless_keyring_without_blocking_runtime(

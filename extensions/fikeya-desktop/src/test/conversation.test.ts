@@ -7,7 +7,7 @@ import * as assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { describe, test } from 'node:test';
-import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from '../conversation';
+import { appendConversationMessage, clearPersistedConversationSnapshotIfDisabled, FikeyaConversationChangedFileEvidence, FikeyaConversationMessage, parseConversationState, projectConversationRunEvidence, projectProviderHistory, serializeConversationState } from '../conversation';
 import { buildChatPlanSummary, buildPlanTimeline, buildRecordedPlanTimeline, extractPlanSteps, fikeyaNarrowPanelMaximumWidth, isChatInteractionBlocked, selectInitialPlanStepId } from '../surface';
 
 function message(index: number, content = `message ${index}`): FikeyaConversationMessage {
@@ -16,6 +16,22 @@ function message(index: number, content = `message ${index}`): FikeyaConversatio
 		role: index % 2 === 0 ? 'assistant' : 'user',
 		content,
 		createdAt: '2026-08-25T00:00:00.000Z'
+	};
+}
+
+function changedFile(index = 0): FikeyaConversationChangedFileEvidence {
+	return {
+		path: `src/change-${index}.ts`,
+		operation: 'edit',
+		beforeExists: true,
+		afterExists: true,
+		beforeSha256: `sha256:${'a'.repeat(63)}${index % 10}`,
+		afterSha256: `sha256:${'b'.repeat(63)}${index % 10}`,
+		beforeBytes: 120 + index,
+		afterBytes: 144 + index,
+		linesAdded: 4,
+		linesDeleted: 2,
+		lineDeltaStatus: 'exact'
 	};
 }
 
@@ -64,16 +80,188 @@ describe('Fikeya live conversation state', () => {
 		assert.strictEqual(messages.at(-1)?.providerName, 'lead');
 	});
 
-	test('round-trips a redacted bounded workspace snapshot after restart', () => {
+	test('does not collapse distinct run evidence when answer text is identical', () => {
+		const evidence = (index: number) => projectConversationRunEvidence({
+			status: 'completed',
+			outcome: {
+				changedFilesScope: 'regular-project-files-v1',
+				changedFilesTruncated: false,
+				changedFiles: [changedFile(index)]
+			}
+		});
+		let messages: readonly FikeyaConversationMessage[] = [{ ...message(1, 'Run twice.'), role: 'user' }];
+		messages = appendConversationMessage(messages, { ...message(2, 'Done.'), runEvidence: evidence(1) });
+		messages = appendConversationMessage(messages, { ...message(4, 'Done.'), runEvidence: evidence(2) });
+		assert.strictEqual(messages.length, 3);
+		assert.deepStrictEqual(messages.slice(1).map(item => item.runEvidence?.changedFiles[0]?.path), [
+			'src/change-1.ts',
+			'src/change-2.ts'
+		]);
+	});
+
+	test('round-trips a known-pattern-sanitized bounded workspace snapshot after restart', () => {
 		const messages: readonly FikeyaConversationMessage[] = [
-			{ ...message(1, 'Inspect src/index.ts with sk-or-v1-1234567890abcdefgh.'), providerName: 'openrouter-main' },
+			{ ...message(1, 'Inspect src/index.ts with sk-or-v1-1234567890abcdefgh and synthetic-custom-secret-format:examplevalue123456.'), providerName: 'openrouter-main' },
 			{ ...message(2, 'The relevant function is createServer().'), tone: 'normal' }
 		];
 		const restarted = parseConversationState(serializeConversationState(messages));
 		assert.deepStrictEqual(restarted, [
-			{ ...messages[0], content: 'Inspect src/index.ts with [REDACTED CREDENTIAL].' },
+			{ ...messages[0], content: 'Inspect src/index.ts with [REDACTED CREDENTIAL] and synthetic-custom-secret-format:examplevalue123456.' },
 			messages[1]
 		]);
+	});
+
+	test('clears a saved snapshot on opt-out without changing process-local messages', async () => {
+		const processLocalMessages: readonly FikeyaConversationMessage[] = [message(1), message(2)];
+		let persistedSnapshot: string | undefined = serializeConversationState(processLocalMessages);
+		const clearSnapshot = async () => {
+			persistedSnapshot = undefined;
+		};
+
+		assert.strictEqual(await clearPersistedConversationSnapshotIfDisabled(true, clearSnapshot), false);
+		assert.notStrictEqual(persistedSnapshot, undefined);
+		assert.strictEqual(await clearPersistedConversationSnapshotIfDisabled(false, clearSnapshot), true);
+		assert.strictEqual(persistedSnapshot, undefined);
+		assert.deepStrictEqual(processLocalMessages, [message(1), message(2)]);
+	});
+
+	test('retains exact per-run changed-file evidence across later runs and restart', () => {
+		const firstEvidence = projectConversationRunEvidence({
+			status: 'completed',
+			outcome: {
+				changedFilesScope: 'regular-project-files-v1',
+				changedFilesTruncated: false,
+				changedFiles: [changedFile()]
+			}
+		});
+		const secondFile: FikeyaConversationChangedFileEvidence = {
+			path: 'obsolete/config.json',
+			operation: 'delete',
+			beforeExists: true,
+			afterExists: false,
+			beforeSha256: `sha256:${'c'.repeat(64)}`,
+			afterSha256: null,
+			beforeBytes: 81,
+			afterBytes: null,
+			linesAdded: 0,
+			linesDeleted: 3,
+			lineDeltaStatus: 'exact'
+		};
+		const secondEvidence = projectConversationRunEvidence({
+			status: 'failed',
+			outcome: {
+				changedFilesScope: 'regular-project-files-v1',
+				changedFilesTruncated: true,
+				changedFiles: [secondFile]
+			}
+		});
+		let messages: readonly FikeyaConversationMessage[] = [];
+		messages = appendConversationMessage(messages, { ...message(1, 'Make the first change.'), role: 'user' });
+		messages = appendConversationMessage(messages, { ...message(2, 'First run complete.'), runEvidence: firstEvidence });
+		messages = appendConversationMessage(messages, { ...message(3, 'Run another task.'), role: 'user' });
+		messages = appendConversationMessage(messages, { ...message(4, 'Second run stopped.'), runEvidence: secondEvidence, tone: 'error' });
+
+		const serialized = serializeConversationState(messages);
+		const restarted = parseConversationState(serialized);
+		assert.deepStrictEqual(restarted[1]?.runEvidence, firstEvidence);
+		assert.deepStrictEqual(restarted[3]?.runEvidence, secondEvidence);
+		assert.match(serialized, /src\/change-0\.ts/u);
+		assert.match(serialized, /obsolete\/config\.json/u);
+	});
+
+	test('never sends local run-evidence attachments into provider history', () => {
+		const runEvidence = projectConversationRunEvidence({
+			status: 'completed',
+			outcome: {
+				changedFilesScope: 'regular-project-files-v1',
+				changedFilesTruncated: false,
+				changedFiles: [changedFile()]
+			}
+		});
+		const messages: readonly FikeyaConversationMessage[] = [
+			{ ...message(1, 'Apply the change.'), role: 'user' },
+			{ ...message(2, 'Done.'), runEvidence }
+		];
+		const history = projectProviderHistory(messages);
+		assert.deepStrictEqual(history, [
+			{ role: 'user', content: 'Apply the change.' },
+			{ role: 'assistant', content: 'Done.' }
+		]);
+		assert.doesNotMatch(JSON.stringify(history), /change-0|beforeSha256|runEvidence/u);
+	});
+
+	test('bounds saved run evidence and discloses projection truncation', () => {
+		const runEvidence = projectConversationRunEvidence({
+			status: 'cancelled',
+			outcome: {
+				changedFilesScope: 'regular-project-files-v1',
+				changedFilesTruncated: true,
+				changedFiles: Array.from({ length: 40 }, (_, index) => changedFile(index))
+			}
+		});
+		assert.deepStrictEqual({
+			retained: runEvidence.changedFiles.length,
+			measured: runEvidence.measuredChangedFileCount,
+			projectionTruncated: runEvidence.projectionTruncated,
+			accountingIncomplete: runEvidence.accountingIncomplete
+		}, {
+			retained: 32,
+			measured: 40,
+			projectionTruncated: true,
+			accountingIncomplete: true
+		});
+		const restarted = parseConversationState(serializeConversationState([{ ...message(2), runEvidence }]));
+		assert.deepStrictEqual(restarted[0]?.runEvidence, runEvidence);
+	});
+
+	test('keeps evidence-heavy restart snapshots inside the durable store limit', () => {
+		const messages = Array.from({ length: 10 }, (_, runIndex) => ({
+			...message(runIndex * 2, `Run ${runIndex} complete.`),
+			runEvidence: projectConversationRunEvidence({
+				status: 'completed' as const,
+				outcome: {
+					changedFilesScope: 'regular-project-files-v1' as const,
+					changedFilesTruncated: false,
+					changedFiles: Array.from({ length: 32 }, (_, fileIndex) => ({
+						...changedFile(fileIndex),
+						path: `src/${runIndex}-${fileIndex}-${'x'.repeat(3_900)}.ts`
+					}))
+				}
+			})
+		}));
+		const serialized = serializeConversationState(messages);
+		const restarted = parseConversationState(serialized);
+		assert.ok(serialized.length <= 1_100_000);
+		assert.ok(restarted.length > 0 && restarted.length < messages.length);
+		assert.strictEqual(restarted.at(-1)?.id, messages.at(-1)?.id);
+		assert.strictEqual(restarted.at(-1)?.runEvidence?.changedFiles.length, 32);
+	});
+
+	test('fails closed when persisted run evidence is contradictory or carries extra content', () => {
+		const runEvidence = projectConversationRunEvidence({
+			status: 'completed',
+			outcome: {
+				changedFilesScope: 'regular-project-files-v1',
+				changedFilesTruncated: false,
+				changedFiles: [changedFile()]
+			}
+		});
+		const invalidOperation = {
+			...runEvidence,
+			changedFiles: [{ ...runEvidence.changedFiles[0], operation: 'add' }]
+		};
+		const smuggledContent = {
+			...runEvidence,
+			changedFiles: [{ ...runEvidence.changedFiles[0], fileContent: 'private source text' }]
+		};
+		assert.deepStrictEqual(parseConversationState(JSON.stringify({
+			schemaVersion: 1,
+			messages: [{ ...message(2), runEvidence: invalidOperation }]
+		})), []);
+		assert.deepStrictEqual(parseConversationState(JSON.stringify({
+			schemaVersion: 1,
+			messages: [{ ...message(2), runEvidence: smuggledContent }]
+		})), []);
 	});
 
 	test('retains only content-free attachment metadata across restarts', () => {
@@ -164,6 +352,92 @@ describe('Fikeya live conversation state', () => {
 });
 
 describe('Fikeya chat webview refresh state', () => {
+	test('keeps saved run evidence behind the disabled-by-default workspace history setting', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		const manifest = JSON.parse(await readFile(path.join(__dirname, '..', '..', 'package.json'), 'utf8')) as {
+			contributes?: { configuration?: { properties?: Record<string, { default?: unknown }> } };
+		};
+		const packageStrings = JSON.parse(await readFile(path.join(__dirname, '..', '..', 'package.nls.json'), 'utf8')) as Record<string, string>;
+		const persistenceDescription = packageStrings['configuration.chat.persistWorkspaceHistory.description'] ?? '';
+		assert.strictEqual(manifest.contributes?.configuration?.properties?.['fikeya.chat.persistWorkspaceHistory']?.default, false);
+		assert.match(persistenceDescription, /Chat text and changed-file paths pass through a best-effort known-pattern sanitizer/u);
+		assert.match(persistenceDescription, /attachment metadata is not secret-scanned and unknown formats may remain/u);
+		assert.match(persistenceDescription, /Do not store secrets/u);
+		assert.doesNotMatch(persistenceDescription, /credential-redacted/u);
+		assert.match(source, /if \(!this\.conversationPersistenceEnabled\(\)\) \{\s*await this\.context\.workspaceState\.update\(FikeyaWebviewViewProvider\.conversationKey, undefined\);/u);
+		assert.match(source, /vscode\.workspace\.onDidChangeConfiguration\(event => \{\s*if \(event\.affectsConfiguration\('fikeya\.chat\.persistWorkspaceHistory'\)\) \{\s*void this\.clearPersistedConversationOnOptOut\(\);/u);
+		assert.match(source, /this\.conversationPersistenceConfigurationBinding\.dispose\(\);/u);
+		const clearMethodStart = source.indexOf('private async clearPersistedConversationOnOptOut');
+		const clearMethodEnd = source.indexOf('\n\tprivate ', clearMethodStart + 1);
+		const clearMethod = source.slice(clearMethodStart, clearMethodEnd);
+		assert.ok(clearMethodStart > 0 && clearMethodEnd > clearMethodStart);
+		assert.match(clearMethod, /clearPersistedConversationSnapshotIfDisabled\(\s*this\.conversationPersistenceEnabled\(\),/u);
+		assert.match(clearMethod, /workspaceState\.update\(FikeyaWebviewViewProvider\.conversationKey, undefined\)/u);
+		assert.doesNotMatch(clearMethod, /this\.state\s*=/u, 'turning persistence off must keep the process-local conversation');
+	});
+
+	test('surfaces exact changed-file and Qarinah capture evidence', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /outcome-file-operation/u);
+		assert.match(source, /\{0\} lines touched · \+\{1\} \/ -\{2\}/u);
+		assert.match(source, /Before and after SHA-256/u);
+		assert.match(source, /Saved run evidence/u);
+		assert.match(source, /Saved history retained \{0\} of \{1\} measured regular-file content-change entries/u);
+		assert.match(source, /runEvidence: projectConversationRunEvidence\(result\.value\)/u);
+		assert.match(source, /Recorded in Qarinah · \{0\} run events/u);
+		assert.match(source, /The workspace ledger now has \{0\} events/u);
+		assert.match(source, /Qarinah capture could not be confirmed\. The ledger may contain partial run events/u);
+		assert.doesNotMatch(source, /Qarinah did not record this run/u);
+		assert.match(source, /Showing \{0\} of \{1\} measured regular-file content changes; accounting was incomplete/u);
+		assert.match(source, /Qarinah retained \{0\} measured regular-file content-change entries/u);
+		assert.match(source, /No regular-file content changes were measured; accounting was incomplete/u);
+		assert.match(source, /Qarinah retained 12 of \{0\} bounded tool-outcome entries/u);
+		assert.match(source, /Provider-attempt accounting is unavailable for this legacy runtime result/u);
+		assert.match(source, /This legacy runtime proves at least \{0\} provider attempts/u);
+		assert.match(source, /\{0\} provider requests were attempted; \{1\} completed with durable receipt IDs/u);
+		assert.match(source, /\{0\} measured regular-file content changes · \{1\}\/\{2\} test commands passed/u);
+		assert.doesNotMatch(source, /\{1\}\/\{2\} tests passed/u);
+		assert.match(source, /Scope: regular-file content changes only; runtime\/VCS state, installed dependencies, virtual environments, and conventional build, distribution, coverage, and tool-cache trees are excluded/u);
+		assert.doesNotMatch(source, /provider && item\.status === 'completed'/u);
+		assert.match(source, /status: result\.value\.status/u);
+		assert.match(source, /structuredRuntimeFailure === 'quota'/u);
+		assert.match(source, /await this\.offerProviderHandoff\(prompt, maxOutputTokens, contextMaxCharacters, memoryMode/u);
+		assert.match(source, /Qarinah evidence is recompiled when enabled and available/u);
+		assert.doesNotMatch(source, /same Qarinah project context/u);
+		assert.match(source, /receipts: captureReceipts/u);
+		assert.match(source, /this\.state\.agent\.sessionId !== captureSessionId \|\| this\.state\.agent\.callId !== captureCallId/u);
+		assert.doesNotMatch(source, /\{0\} files saved/u);
+		const methodStart = source.indexOf('\tprivate async runAgent(');
+		const methodEnd = source.indexOf('\n\tprivate async saveWorkspaceEditsBeforeAgentRun(', methodStart);
+		const method = source.slice(methodStart, methodEnd);
+		const barrier = method.indexOf('this.beginQarinahCapture();');
+		const releaseOperation = method.indexOf('this.activeAgentRun = undefined;');
+		const receipts = method.indexOf('await this.refreshReceipts(false);');
+		const capture = method.indexOf('await captureCompletedFikeyaRun({');
+		const releaseBarrier = method.lastIndexOf('this.endQarinahCapture();');
+		assert.ok(barrier > 0 && releaseOperation > barrier && receipts > releaseOperation
+			&& capture > receipts && releaseBarrier > capture, 'single-run finalization must hold the Qarinah barrier before exposing terminal state');
+	});
+
+	test('publishes terminal multi-agent evidence, completes lead reads, then durably captures advisors', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		const methodStart = source.indexOf('\tprivate async runMultiAgent(');
+		const methodEnd = source.indexOf('\n\tprivate async proposePlan(', methodStart);
+		assert.ok(methodStart > 0 && methodEnd > methodStart);
+		const method = source.slice(methodStart, methodEnd);
+		const terminalPersist = method.lastIndexOf('await this.persistConversation();');
+		const terminalRefresh = method.indexOf('this.refresh();', terminalPersist);
+		const leadRun = method.indexOf('await this.runAgent(');
+		const advisorCapture = method.lastIndexOf('await this.captureCompletedMultiAgentRuns(captureInputs,');
+		assert.ok(terminalPersist > 0 && terminalRefresh > terminalPersist && leadRun > terminalRefresh && advisorCapture > leadRun);
+		assert.match(method, /Qarinah rejects a read if its ledger changes mid-read/u);
+		assert.ok(method.indexOf('await this.withQarinahCapture(async () => {') < leadRun);
+		assert.ok(method.lastIndexOf('this.activeMultiAgentRun = undefined;') > advisorCapture);
+		assert.doesNotMatch(method, /await captureCompletedFikeyaRun\(/u);
+		assert.match(source, /await captureCompletedFikeyaRuns\(inputs\)/u);
+		assert.match(source, /this\.state\.conversation\.some\(message => message\.id === originatingMessageId\)/u);
+	});
+
 	test('renders the inline webview JavaScript with literal escapes intact', async () => {
 		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
 		const scriptStart = source.lastIndexOf('<script nonce=');
@@ -183,15 +457,16 @@ describe('Fikeya chat webview refresh state', () => {
 		const modalStart = source.indexOf('<dialog class="provider-modal"');
 		const modalEnd = source.indexOf('</dialog>', modalStart);
 		const modal = source.slice(modalStart, modalEnd);
+		assert.ok(modalStart > 0 && modalEnd > modalStart);
 		assert.match(source, /1\. Open and prepare your project/u);
 		assert.match(source, /2\. Connect one coding model/u);
 		assert.match(modal, /Connect a model/u);
 		assert.match(modal, /data-provider-advanced/u);
 		assert.ok(modal.indexOf('data-provider-advanced') < modal.indexOf('name="profileLabel"'));
 		assert.ok(modal.indexOf('data-provider-advanced') < modal.indexOf('name="baseUrl"'));
-		assert.match(source, /const profileLabel = providerLabelField\?\.value\?\.trim\(\) \|\| selected\?\.dataset\.label \|\| '';/u);
-		assert.match(source, /providerAdvanced\.open = !selected\.dataset\.baseUrl;/u);
-		assert.match(source, /Model saved\. You can run a content-free connection test now\./u);
+		assert.match(source, /profileLabel = providerLabelField\?\.value\?\.trim\(\) \|\| selected\?\.dataset\.label \|\| ''/u);
+		assert.match(source, /providerAdvanced\.open = !selected\.dataset\.baseUrl/u);
+		assert.match(source, /is ready\. Test the connection now\?/u);
 	});
 
 	test('restores composer focus against the rendered Chat surface', async () => {

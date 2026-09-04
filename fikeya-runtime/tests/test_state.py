@@ -80,6 +80,16 @@ def test_fork_lineage_keeps_inherited_and_local_positions_distinct(
     ]
 
 
+def test_failed_session_has_an_explicit_durable_terminal_state(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    session = store.create_session(session_id="ses_failed")
+
+    event = store.fail_session(session.session_id, "provider transport failed")
+
+    assert event.event_type.value == "session.failed"
+    assert store.get_session(session.session_id).status == "failed"
+
+
 def test_event_payload_rejects_credential_shaped_fields(tmp_path: Path) -> None:
     store = _store(tmp_path)
     session = store.create_session()
@@ -285,7 +295,7 @@ def test_provider_call_receipt_is_content_free_and_migrates_schema(
     )
 
     with store._connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'tool_enablements'"

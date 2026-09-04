@@ -14,6 +14,35 @@ export interface FikeyaConversationAttachment {
 	readonly sha256: string;
 }
 
+/** Content-minimal file identity retained with an opted-in local conversation. */
+export interface FikeyaConversationChangedFileEvidence {
+	readonly path: string;
+	readonly operation: 'add' | 'edit' | 'delete';
+	readonly beforeExists: boolean;
+	readonly afterExists: boolean;
+	readonly beforeSha256: string | null;
+	readonly afterSha256: string | null;
+	readonly beforeBytes: number | null;
+	readonly afterBytes: number | null;
+	readonly linesAdded: number | null;
+	readonly linesDeleted: number | null;
+	readonly lineDeltaStatus: 'exact' | 'binary' | 'too-large' | 'unavailable';
+}
+
+/**
+ * Bounded terminal evidence attached to the answer that produced it. This deliberately retains
+ * file metadata only: file contents, tool output, prompts, and provider receipts are excluded.
+ */
+export interface FikeyaConversationRunEvidence {
+	readonly schemaVersion: 1;
+	readonly status: 'completed' | 'cancelled' | 'failed';
+	readonly changedFilesScope: 'regular-project-files-v1' | 'legacy-unspecified';
+	readonly measuredChangedFileCount: number;
+	readonly accountingIncomplete: boolean;
+	readonly projectionTruncated: boolean;
+	readonly changedFiles: readonly FikeyaConversationChangedFileEvidence[];
+}
+
 export interface FikeyaConversationMessage {
 	readonly id: string;
 	readonly role: FikeyaConversationRole;
@@ -23,6 +52,8 @@ export interface FikeyaConversationMessage {
 	readonly tone?: 'normal' | 'error';
 	/** Content-free metadata only. Raw attachment bytes are intentionally never persisted. */
 	readonly attachments?: readonly FikeyaConversationAttachment[];
+	/** Bounded changed-file metadata; never projected into provider history. */
+	readonly runEvidence?: FikeyaConversationRunEvidence;
 }
 
 /** Roles that are safe to send through a provider conversation protocol. */
@@ -48,6 +79,7 @@ const maximumIncomingMessages = maximumMessages * 4;
 const maximumProviderHistoryMessages = 12;
 const maximumProviderHistoryMessageCharacters = 16_000;
 const maximumProviderHistoryCharacters = 64_000;
+const maximumRunEvidenceChangedFiles = 32;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const providerIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const hiddenControlCharactersPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g;
@@ -62,36 +94,78 @@ const redactedCredential = '[REDACTED CREDENTIAL]';
 
 /**
  * Keeps the live chat useful without turning the extension host into an unbounded transcript
- * store. Conversation content remains process-local unless the developer explicitly enables
- * workspace history; durable project evidence belongs to Qarinah and content-free execution
- * metadata belongs to Fikeya Runtime.
+ * store. Conversation content and bounded changed-file metadata remain process-local unless the
+ * developer explicitly enables workspace history; the longer-lived project ledger belongs to
+ * Qarinah and authoritative execution metadata belongs to Fikeya Runtime.
  */
 export function appendConversationMessage(
 	messages: readonly FikeyaConversationMessage[],
 	message: FikeyaConversationMessage
 ): readonly FikeyaConversationMessage[] {
+	const { runEvidence: untrustedRunEvidence, ...messageWithoutRunEvidence } = message;
+	const runEvidence = normalizeRunEvidence(untrustedRunEvidence, false);
 	const boundedMessage = {
-		...message,
-		content: boundMessageContent(message.content)
+		...messageWithoutRunEvidence,
+		content: boundMessageContent(message.content),
+		...(runEvidence === undefined ? {} : { runEvidence })
 	};
-	if (boundedMessage.role === 'assistant' && hasAssistantDuplicateInCurrentTurn(messages, boundedMessage.content)) {
+	if (boundedMessage.role === 'assistant' && hasAssistantDuplicateInCurrentTurn(messages, boundedMessage)) {
 		return messages;
 	}
 	const retained = [...messages.slice(-(maximumMessages - 1)), boundedMessage];
-	let totalCharacters = retained.reduce((total, item) => total + item.content.length, 0);
+	let totalCharacters = retained.reduce((total, item) => total + conversationMessageWeight(item), 0);
 	while (retained.length > 1 && totalCharacters > maximumConversationCharacters) {
 		const removed = retained.shift();
-		totalCharacters -= removed?.content.length ?? 0;
+		totalCharacters -= removed ? conversationMessageWeight(removed) : 0;
 	}
 	return retained;
 }
 
+/**
+ * Projects one validated runtime outcome into a small local-history attachment. The runtime may
+ * report up to 1,000 measured entries; conversation history retains at most 32 and says so.
+ */
+export function projectConversationRunEvidence(input: {
+	readonly status: FikeyaConversationRunEvidence['status'];
+	readonly outcome: {
+		readonly changedFilesScope: FikeyaConversationRunEvidence['changedFilesScope'];
+		readonly changedFilesTruncated: boolean;
+		readonly changedFiles: readonly FikeyaConversationChangedFileEvidence[];
+	};
+}): FikeyaConversationRunEvidence {
+	const changedFiles = input.outcome.changedFiles.slice(0, maximumRunEvidenceChangedFiles).map(file => ({ ...file }));
+	return {
+		schemaVersion: 1,
+		status: input.status,
+		changedFilesScope: input.outcome.changedFilesScope,
+		measuredChangedFileCount: input.outcome.changedFiles.length,
+		accountingIncomplete: input.outcome.changedFilesTruncated,
+		projectionTruncated: changedFiles.length !== input.outcome.changedFiles.length,
+		changedFiles
+	};
+}
+
+/** Applies the persistence toggle without receiving or mutating the process-local conversation. */
+export async function clearPersistedConversationSnapshotIfDisabled(
+	persistenceEnabled: boolean,
+	clearSnapshot: () => PromiseLike<void>
+): Promise<boolean> {
+	if (persistenceEnabled) {
+		return false;
+	}
+	await clearSnapshot();
+	return true;
+}
+
 /** Prevents parallel providers or repeated completion events from rendering one answer twice. */
-function hasAssistantDuplicateInCurrentTurn(messages: readonly FikeyaConversationMessage[], content: string): boolean {
+function hasAssistantDuplicateInCurrentTurn(messages: readonly FikeyaConversationMessage[], message: FikeyaConversationMessage): boolean {
 	const lastUserIndex = messages.findLastIndex(message => message.role === 'user');
-	const comparableContent = normalizeComparableAnswer(content);
-	return messages.slice(lastUserIndex + 1).some(message =>
-		message.role === 'assistant' && normalizeComparableAnswer(message.content) === comparableContent
+	const comparableContent = normalizeComparableAnswer(message.content);
+	const comparableEvidence = JSON.stringify(message.runEvidence ?? null);
+	return messages.slice(lastUserIndex + 1).some(candidate =>
+		candidate.role === 'assistant'
+		&& normalizeComparableAnswer(candidate.content) === comparableContent
+		&& JSON.stringify(candidate.runEvidence ?? null) === comparableEvidence
 	);
 }
 
@@ -100,18 +174,26 @@ function normalizeComparableAnswer(content: string): string {
 }
 
 /**
- * Serializes a bounded, versioned snapshot suitable for workspace-scoped persistence. Obvious
- * credentials and control characters are removed before content crosses the durable boundary.
+ * Serializes a bounded, versioned snapshot suitable for workspace-scoped persistence. Message
+ * content and run-evidence paths receive best-effort known-pattern sanitization; attachment
+ * metadata is not secret-scanned and unknown formats may remain.
  */
 export function serializeConversationState(messages: readonly FikeyaConversationMessage[]): string {
-	const snapshot: FikeyaConversationSnapshot = {
+	const retained = [...boundConversationMessages(messages.flatMap(message => {
+		const normalized = normalizeConversationMessage(message, true);
+		return normalized ? [normalized] : [];
+	}))];
+	let snapshot: FikeyaConversationSnapshot = {
 		schemaVersion: 1,
-		messages: boundConversationMessages(messages.flatMap(message => {
-			const normalized = normalizeConversationMessage(message, true);
-			return normalized ? [normalized] : [];
-		}))
+		messages: retained
 	};
-	return JSON.stringify(snapshot);
+	let serialized = JSON.stringify(snapshot);
+	while (serialized.length > maximumSerializedCharacters && retained.length > 1) {
+		retained.shift();
+		snapshot = { schemaVersion: 1, messages: retained };
+		serialized = JSON.stringify(snapshot);
+	}
+	return serialized;
 }
 
 /**
@@ -182,10 +264,10 @@ function boundConversationMessages(messages: readonly FikeyaConversationMessage[
 		...message,
 		content: boundMessageContent(message.content)
 	}));
-	let totalCharacters = retained.reduce((total, item) => total + item.content.length, 0);
+	let totalCharacters = retained.reduce((total, item) => total + conversationMessageWeight(item), 0);
 	while (retained.length > 1 && totalCharacters > maximumConversationCharacters) {
 		const removed = retained.shift();
-		totalCharacters -= removed?.content.length ?? 0;
+		totalCharacters -= removed ? conversationMessageWeight(removed) : 0;
 	}
 	return retained;
 }
@@ -204,7 +286,8 @@ function normalizeConversationMessage(value: unknown, redact: boolean): FikeyaCo
 		return undefined;
 	}
 	const attachments = normalizeAttachments(value.attachments);
-	if (attachments === undefined) {
+	const runEvidence = normalizeRunEvidence(value.runEvidence, redact);
+	if (attachments === undefined || (value.runEvidence !== undefined && runEvidence === undefined)) {
 		return undefined;
 	}
 	const redactedContent = redact ? redactConversationContent(value.content) : value.content;
@@ -221,8 +304,132 @@ function normalizeConversationMessage(value: unknown, redact: boolean): FikeyaCo
 		createdAt: value.createdAt,
 		...(providerName === undefined ? {} : { providerName }),
 		...(tone === undefined ? {} : { tone }),
-		...(attachments.length === 0 ? {} : { attachments })
+		...(attachments.length === 0 ? {} : { attachments }),
+		...(runEvidence === undefined ? {} : { runEvidence })
 	};
+}
+
+function normalizeRunEvidence(value: unknown, redact: boolean): FikeyaConversationRunEvidence | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!isRecord(value)
+		|| Object.keys(value).some(key => !['accountingIncomplete', 'changedFiles', 'changedFilesScope', 'measuredChangedFileCount', 'projectionTruncated', 'schemaVersion', 'status'].includes(key))
+		|| value.schemaVersion !== 1
+		|| (value.status !== 'completed' && value.status !== 'cancelled' && value.status !== 'failed')
+		|| (value.changedFilesScope !== 'regular-project-files-v1' && value.changedFilesScope !== 'legacy-unspecified')
+		|| !isBoundedInteger(value.measuredChangedFileCount, 0, 1_000)
+		|| typeof value.accountingIncomplete !== 'boolean'
+		|| typeof value.projectionTruncated !== 'boolean'
+		|| !Array.isArray(value.changedFiles)
+		|| value.changedFiles.length > maximumRunEvidenceChangedFiles
+		|| (value.measuredChangedFileCount > 0 && value.changedFiles.length === 0)
+		|| value.measuredChangedFileCount < value.changedFiles.length
+		|| value.projectionTruncated !== (value.measuredChangedFileCount > value.changedFiles.length)) {
+		return undefined;
+	}
+	const changedFiles: FikeyaConversationChangedFileEvidence[] = [];
+	for (const candidate of value.changedFiles) {
+		const file = normalizeChangedFileEvidence(candidate, redact);
+		if (!file) {
+			return undefined;
+		}
+		changedFiles.push(file);
+	}
+	if (new Set(changedFiles.map(file => file.path)).size !== changedFiles.length) {
+		return undefined;
+	}
+	return {
+		schemaVersion: 1,
+		status: value.status,
+		changedFilesScope: value.changedFilesScope,
+		measuredChangedFileCount: value.measuredChangedFileCount,
+		accountingIncomplete: value.accountingIncomplete,
+		projectionTruncated: value.projectionTruncated,
+		changedFiles
+	};
+}
+
+function normalizeChangedFileEvidence(value: unknown, redact: boolean): FikeyaConversationChangedFileEvidence | undefined {
+	if (!isRecord(value)
+		|| Object.keys(value).some(key => !['afterBytes', 'afterExists', 'afterSha256', 'beforeBytes', 'beforeExists', 'beforeSha256', 'lineDeltaStatus', 'linesAdded', 'linesDeleted', 'operation', 'path'].includes(key))) {
+		return undefined;
+	}
+	const rawPath = typeof value.path === 'string' && value.path.length <= 4_096 ? value.path : undefined;
+	const filePath = rawPath === undefined ? undefined : redact ? redactConversationContent(rawPath) : rawPath;
+	const beforeSha256 = normalizeSha256(value.beforeSha256);
+	const afterSha256 = normalizeSha256(value.afterSha256);
+	const beforeBytes = normalizeNullableByteCount(value.beforeBytes);
+	const afterBytes = normalizeNullableByteCount(value.afterBytes);
+	const linesAdded = normalizeNullableLineCount(value.linesAdded);
+	const linesDeleted = normalizeNullableLineCount(value.linesDeleted);
+	const beforeExists = value.beforeExists;
+	const afterExists = value.afterExists;
+	const operation = value.operation;
+	const lineDeltaStatus = value.lineDeltaStatus;
+	const beforeIdentityPresent = beforeSha256 !== null && beforeSha256 !== undefined || beforeBytes !== null && beforeBytes !== undefined;
+	const afterIdentityPresent = afterSha256 !== null && afterSha256 !== undefined || afterBytes !== null && afterBytes !== undefined;
+	const inferredOperation = beforeExists === false && afterExists === true
+		? 'add'
+		: beforeExists === true && afterExists === false
+			? 'delete'
+			: beforeExists === true && afterExists === true
+				? 'edit'
+				: undefined;
+	if (!filePath || filePath.includes('\\') || filePath.startsWith('/') || filePath.split('/').includes('..')
+		|| (operation !== 'add' && operation !== 'edit' && operation !== 'delete')
+		|| operation !== inferredOperation
+		|| typeof beforeExists !== 'boolean' || typeof afterExists !== 'boolean'
+		|| beforeSha256 === undefined || afterSha256 === undefined
+		|| beforeBytes === undefined || afterBytes === undefined
+		|| linesAdded === undefined || linesDeleted === undefined
+		|| (!beforeExists && beforeIdentityPresent) || (!afterExists && afterIdentityPresent)
+		|| (operation === 'edit' && !beforeIdentityPresent && !afterIdentityPresent)
+		|| (lineDeltaStatus !== 'exact' && lineDeltaStatus !== 'binary' && lineDeltaStatus !== 'too-large' && lineDeltaStatus !== 'unavailable')
+		|| (lineDeltaStatus === 'exact' && (linesAdded === null || linesDeleted === null))
+		|| (lineDeltaStatus !== 'exact' && (linesAdded !== null || linesDeleted !== null))
+		|| (operation === 'add' && linesDeleted !== null && linesDeleted !== 0)
+		|| (operation === 'delete' && linesAdded !== null && linesAdded !== 0)
+		|| (operation === 'edit' && beforeSha256 !== null && beforeSha256 === afterSha256)) {
+		return undefined;
+	}
+	return {
+		path: filePath,
+		operation,
+		beforeExists,
+		afterExists,
+		beforeSha256,
+		afterSha256,
+		beforeBytes,
+		afterBytes,
+		linesAdded,
+		linesDeleted,
+		lineDeltaStatus
+	};
+}
+
+function normalizeSha256(value: unknown): string | null | undefined {
+	return value === null
+		? null
+		: typeof value === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value)
+			? value
+			: undefined;
+}
+
+function normalizeNullableByteCount(value: unknown): number | null | undefined {
+	return value === null ? null : isBoundedInteger(value, 0, Number.MAX_SAFE_INTEGER) ? value : undefined;
+}
+
+function normalizeNullableLineCount(value: unknown): number | null | undefined {
+	return value === null ? null : isBoundedInteger(value, 0, 1_000_000_000) ? value : undefined;
+}
+
+function isBoundedInteger(value: unknown, minimum: number, maximum: number): value is number {
+	return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+}
+
+function conversationMessageWeight(message: FikeyaConversationMessage): number {
+	return message.content.length + (message.runEvidence ? JSON.stringify(message.runEvidence).length : 0);
 }
 
 function normalizeAttachments(value: unknown): readonly FikeyaConversationAttachment[] | undefined {

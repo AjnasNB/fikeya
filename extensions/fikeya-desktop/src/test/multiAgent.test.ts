@@ -47,13 +47,17 @@ function profile(id: string): FikeyaAgentProfile {
 function turn(id: string): FikeyaAgentTurn {
 	return {
 		sessionId: `session-${id}`,
+		providerAttemptId: `provider-attempt-${id}`,
+		providerAttemptIds: [`provider-attempt-${id}`],
+		providerAttemptMeasurement: 'exact',
 		callId: `call-${id}`,
 		providerCallIds: [`provider-call-${id}`],
 		status: 'completed',
+		failure: null,
 		output: `Result ${id}`,
 		usage: { measurement: 'provider-reported', inputTokens: 10, outputTokens: 5, cachedInputTokens: 2 },
 		memory: { status: 'used', coverage: 'complete', evidenceCount: 2, receiptId: null, responseSha256: null },
-		outcome: { plan: '', summary: `Result ${id}`, steps: 1, toolCalls: [], tests: [], changedFiles: [] }
+		outcome: { plan: '', summary: `Result ${id}`, steps: 1, toolCalls: [], tests: [], changedFiles: [], changedFilesTruncated: false, changedFilesScope: 'regular-project-files-v1' }
 	};
 }
 

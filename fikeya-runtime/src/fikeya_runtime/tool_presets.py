@@ -54,11 +54,16 @@ _LIMIT_BOUNDS = {
 }
 _EXECUTABLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,79}$")
-_SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-_VERSION_RANGE = re.compile(
-    r"^>=(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*) "
-    r"<(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+_MAX_SEMVER_LENGTH = 128
+_MAX_SEMVER_IDENTIFIERS = 16
+_MAX_SEMVER_IDENTIFIER_LENGTH = 32
+_SEMVER = re.compile(
+    r"^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\."
+    r"(0|[1-9][0-9]{0,8})(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
+_VERSION_RANGE = re.compile(r"^>=(\S{1,128}) <(\S{1,128})$")
+_SemVer = tuple[tuple[int, int, int], tuple[int | str, ...] | None]
 _NPM_CMD_SHIM = re.compile(
     r"\A@ECHO off\n"
     r"GOTO start\n"
@@ -108,7 +113,7 @@ _CONTRACTS: dict[str, dict[str, object]] = {
         "npmEntrypoint": "dist/cli.js",
         "dependency": {
             "package": "cockroach-browser",
-            "versionRange": ">=0.4.1 <0.5.0",
+            "versionRange": ">=0.5.0-rc.1 <0.6.0",
             "license": "AGPL-3.0-or-later",
             "source": "https://github.com/AjnasNB/cockroach-browser",
             "homepage": "https://cockroachbrowser.com",
@@ -116,6 +121,8 @@ _CONTRACTS: dict[str, dict[str, object]] = {
         "effect": "read-and-propose",
         "tools": [
             "browser_capabilities",
+            "browser_engines",
+            "browser_engine_preflight",
             "browser_health",
             "browser_sessions",
             "browser_snapshot",
@@ -938,14 +945,84 @@ def _validate_npm_package(
 
 
 def _version_in_range(version: str, version_range: str) -> bool:
-    value = _SEMVER.fullmatch(version)
     bounds = _VERSION_RANGE.fullmatch(version_range)
-    if value is None or bounds is None:
+    actual = _parse_semver(version)
+    if actual is None or bounds is None:
         return False
-    parsed = tuple(int(part) for part in value.groups())
-    lower = tuple(int(part) for part in bounds.groups()[:3])
-    upper = tuple(int(part) for part in bounds.groups()[3:])
-    return lower <= parsed < upper
+    lower = _parse_semver(bounds.group(1))
+    upper = _parse_semver(bounds.group(2))
+    if lower is None or upper is None or _compare_semver(lower, upper) >= 0:
+        return False
+    if _compare_semver(actual, lower) < 0 or _compare_semver(actual, upper) >= 0:
+        return False
+    # Match comparator-set SemVer behavior: a prerelease is admitted only when
+    # the reviewed range explicitly names a prerelease with the same core.
+    return actual[1] is None or (lower[1] is not None and actual[0] == lower[0])
+
+
+def _parse_semver(value: str) -> _SemVer | None:
+    if not 1 <= len(value) <= _MAX_SEMVER_LENGTH:
+        return None
+    match = _SEMVER.fullmatch(value)
+    if match is None:
+        return None
+    prerelease_text = match.group(4)
+    build_text = match.group(5)
+    prerelease: tuple[int | str, ...] | None = None
+    if prerelease_text is not None:
+        identifiers = _semver_identifiers(prerelease_text)
+        if identifiers is None:
+            return None
+        parsed_identifiers: list[int | str] = []
+        for identifier in identifiers:
+            if identifier.isdigit():
+                if len(identifier) > 1 and identifier.startswith("0"):
+                    return None
+                parsed_identifiers.append(int(identifier))
+            else:
+                parsed_identifiers.append(identifier)
+        prerelease = tuple(parsed_identifiers)
+    if build_text is not None and _semver_identifiers(build_text) is None:
+        return None
+    return (
+        (int(match.group(1)), int(match.group(2)), int(match.group(3))),
+        prerelease,
+    )
+
+
+def _semver_identifiers(value: str) -> tuple[str, ...] | None:
+    identifiers = tuple(value.split("."))
+    if len(identifiers) > _MAX_SEMVER_IDENTIFIERS or any(
+        not 1 <= len(identifier) <= _MAX_SEMVER_IDENTIFIER_LENGTH
+        for identifier in identifiers
+    ):
+        return None
+    return identifiers
+
+
+def _compare_semver(left: _SemVer, right: _SemVer) -> int:
+    if left[0] != right[0]:
+        return -1 if left[0] < right[0] else 1
+    left_prerelease, right_prerelease = left[1], right[1]
+    if left_prerelease is None or right_prerelease is None:
+        if left_prerelease is right_prerelease:
+            return 0
+        return 1 if left_prerelease is None else -1
+    for left_identifier, right_identifier in zip(
+        left_prerelease, right_prerelease
+    ):
+        if left_identifier == right_identifier:
+            continue
+        if isinstance(left_identifier, int):
+            if isinstance(right_identifier, str):
+                return -1
+            return -1 if left_identifier < right_identifier else 1
+        if isinstance(right_identifier, int):
+            return 1
+        return -1 if left_identifier < right_identifier else 1
+    if len(left_prerelease) == len(right_prerelease):
+        return 0
+    return -1 if len(left_prerelease) < len(right_prerelease) else 1
 
 
 def _validate_limits(limits: ToolLimits) -> None:

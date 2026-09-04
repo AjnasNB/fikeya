@@ -236,6 +236,27 @@ UTF-8 edits; invoke an allowlisted process without a shell; run tests; and
 return a structured plan, changed-file hashes, tool receipts, test receipts,
 usage, and Qarinah evidence.
 
+Existing-file writes require the SHA-256 identity that the agent read, and a
+new-file request with a null identity uses an exclusive atomic publish. The
+runtime rechecks the precondition immediately before publication. This is
+optimistic concurrency protection, not a transaction with uncooperative
+external editors: a writer can still change an existing target in the final
+check-to-replace interval. Save editor changes before approval and do not run a
+parallel writer against the same approved path.
+
+Changed-file accounting measures regular-file additions, deletions, and content
+changes; it does not report permission, timestamp, ownership, or other
+metadata-only changes. Its `regular-project-files-v1` scope excludes Fikeya and
+VCS state, installed dependencies, Python virtual environments, and conventional
+build, distribution, coverage, and framework/tool cache trees. In a Git
+workspace, dirty and untracked source paths are prioritized by a read-only Git
+query using the same trusted executable resolution and minimal environment as
+approved tools; that optional query has a one-second bound on each pre/post
+snapshot. Source-shaped directories are then scanned first within the
+5,000-entry and 256 MiB bounds. If the remaining in-scope tree exceeds a bound,
+the receipt marks accounting incomplete instead of claiming a complete project
+diff.
+
 This command is a bidirectional integration protocol for Fikeya Desktop and
 other trusted local clients. Start it with:
 
@@ -387,8 +408,8 @@ stored in the enablement record, and enabling a preset does not start it.
 In Build and Research modes, enabled presets expose only their reviewed MCP
 tools under the `mcp.<preset>.<tool>` namespace. Each call still crosses the
 normal exact, single-use Agent Core approval before the execution broker can
-invoke it. The host validates MCP initialization, package name, compatible
-stable version, complete tool allowlist, JSON-RPC identifiers, tool schemas,
+invoke it. The host validates MCP initialization, package name, version against
+the reviewed SemVer range, complete tool allowlist, JSON-RPC identifiers, tool schemas,
 typed results, sizes, counts, timeouts, and session duration. It captures only
 a bounded redacted stderr tail and owns the whole child process tree so
 cancellation or a protocol failure also terminates descendants.

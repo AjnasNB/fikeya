@@ -27,6 +27,8 @@ _PRESET_ID = "cockroach-browser"
 _SECRET = "test-browser-credential-that-must-never-be-disclosed"
 _TOOLS = [
     "browser_capabilities",
+    "browser_engines",
+    "browser_engine_preflight",
     "browser_health",
     "browser_sessions",
     "browser_snapshot",
@@ -54,7 +56,7 @@ def test_real_stdio_child_initializes_lists_and_calls_with_typed_results(
     ) as host:
         assert host.server_identity is not None
         assert host.server_identity.name == "cockroach-browser"
-        assert host.server_identity.version == "0.4.1"
+        assert host.server_identity.version == "0.5.0-rc.1"
         assert [tool.name for tool in host.list_tools()] == _TOOLS
         result = host.call_tool("browser_capabilities", {"message": "bounded test"})
         assert result.is_error is False
@@ -69,6 +71,52 @@ def test_real_stdio_child_initializes_lists_and_calls_with_typed_results(
         process = host.process
 
     assert process.poll() is not None
+
+
+@pytest.mark.parametrize(
+    ("version", "accepted"),
+    [
+        ("0.5.0-rc.1", True),
+        ("0.5.0-rc.2", True),
+        ("0.5.0-rc.1+fikeya.1", True),
+        ("0.5.0", True),
+        ("0.5.9", True),
+        ("0.4.1", False),
+        ("0.5.0-beta.99", False),
+        ("0.5.0-rc.0", False),
+        ("0.5.0-rc.01", False),
+        ("0.5.1-alpha.1", False),
+        ("0.6.0-rc.1", False),
+        ("0.6.0", False),
+        (f"0.5.0-{'x' * 33}", False),
+        ("0.5.0-" + ".".join(["x"] * 17), False),
+        ("1000000000.5.0", False),
+        (f"0.5.0-rc.1+{'x' * 129}", False),
+    ],
+)
+def test_server_identity_enforces_reviewed_prerelease_range(
+    tmp_path: Path, version: str, accepted: bool
+) -> None:
+    workspace, loader, preset = _workspace_and_loader(tmp_path)
+    _write_fake_server(workspace.root / "mcp", mode="normal", version=version)
+
+    def connect() -> McpStdioHost:
+        return McpStdioHost.connect(
+            loader,
+            workspace,
+            preset.preset_id,
+            expected_preset_digest=preset.digest,
+            secret_resolver=lambda _name: _SECRET,
+            executable_resolver=lambda _command: sys.executable,
+        )
+
+    if accepted:
+        with connect() as host:
+            assert host.server_identity is not None
+            assert host.server_identity.version == version
+    else:
+        with pytest.raises(McpProtocolError, match="outside the reviewed preset range"):
+            connect()
 
 
 def test_digest_mismatch_is_rejected_before_spawn(tmp_path: Path) -> None:
@@ -243,7 +291,13 @@ def _bundled_document() -> dict[str, object]:
     return value
 
 
-def _write_fake_server(path: Path, *, mode: str, noisy_stderr: bool = False) -> None:
+def _write_fake_server(
+    path: Path,
+    *,
+    mode: str,
+    noisy_stderr: bool = False,
+    version: str = "0.5.0-rc.1",
+) -> None:
     source = f"""# deterministic fake MCP child
 import json
 import os
@@ -254,6 +308,7 @@ import time
 
 MODE = {mode!r}
 TOOLS = {json.dumps(_TOOLS)}
+VERSION = {version!r}
 
 if {noisy_stderr!r}:
     sys.stderr.write(os.environ.get("COCKROACH_BROWSER_TOKEN", "") + "x" * 10000)
@@ -278,7 +333,7 @@ for line in sys.stdin:
         continue
     method = request.get("method")
     if method == "initialize":
-        version = "0.3.9" if MODE == "wrong-version" else "0.4.1"
+        version = "0.4.1" if MODE == "wrong-version" else VERSION
         send(request["id"], {{
             "protocolVersion": request["params"]["protocolVersion"],
             "capabilities": {{"tools": {{"listChanged": False}}}},

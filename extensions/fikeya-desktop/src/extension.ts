@@ -9,7 +9,7 @@ import { basename, relative, resolve } from 'path';
 import { FikeyaAgentProfile, FikeyaAgentProfileStore, FikeyaAgentRole } from './agentProfiles';
 import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderPrompt, FikeyaAgentMode, invokeAgentRunRequest } from './agentComposer';
 import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscriptions } from './azureDiscovery';
-import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
+import { appendConversationMessage, clearPersistedConversationSnapshotIfDisabled, FikeyaConversationMessage, FikeyaConversationRunEvidence, parseConversationState, projectConversationRunEvidence, projectProviderHistory, serializeConversationState } from './conversation';
 import {
 	canEnableDangerousLocalMode,
 	createDangerousLocalModeGrant,
@@ -31,12 +31,13 @@ import { escapeHtml, FikeyaAgentComposerMode, FikeyaComposerMode, parseWebviewMe
 import { FikeyaImageInput } from './imageInputs';
 import { renderSafeMarkdown } from './markdown';
 import { FikeyaHostCapabilities, resolveFikeyaHostCapabilities } from './hostCapabilities';
-import { FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
+import { FikeyaMemoryRunCaptureReceipt, FikeyaMemorySnapshot, initializeQarinahMemory, loadQarinahMemory } from './memory';
 import { FikeyaMultiAgentProgress, FikeyaMultiAgentRunHandle, startFikeyaMultiAgentRun } from './multiAgent';
-import { captureCompletedFikeyaRun } from './sessionCapture';
+import { captureCompletedFikeyaRun, captureCompletedFikeyaRuns, FikeyaCompletedRunCaptureInput } from './sessionCapture';
 import { buildChatPlanSummary, buildDurableProjectPresentation, buildRecordedPlanTimeline, fikeyaNarrowPanelMaximumWidth, FikeyaPlanStageId, isChatInteractionBlocked, selectInitialPlanStepId } from './surface';
 import { buildTeamLeadPrompt } from './teamLead';
 import {
+	agentTerminalFailureToRuntimeFailure,
 	configureFikeyaProvider,
 	cancelFikeyaProject,
 	approveFikeyaPlan,
@@ -48,6 +49,7 @@ import {
 	FikeyaAgentRunHandle,
 	FikeyaAgentUsage,
 	FikeyaBrowserLaunchOptions,
+	FikeyaChangedFileOutcome,
 	FikeyaCodingOutcome,
 	FikeyaMemoryMode,
 	FikeyaPlanRecord,
@@ -116,6 +118,8 @@ interface AgentSurfaceState {
 	readonly outcome?: FikeyaCodingOutcome;
 	readonly receiptsStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
 	readonly receipts: readonly FikeyaProviderReceipt[];
+	readonly qarinahCaptureStatus?: 'recorded' | 'unavailable';
+	readonly qarinahCaptureReceipt?: FikeyaMemoryRunCaptureReceipt;
 	readonly failure?: string;
 	readonly progress?: FikeyaRunProgress;
 	readonly multiAgentProgress?: readonly {
@@ -184,6 +188,7 @@ interface DashboardState {
 	readonly workspaceInitialized: boolean;
 	readonly runtimeProviderCount?: number;
 	readonly qarinah: string;
+	readonly qarinahCaptureInProgress: boolean;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -291,6 +296,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private pendingComposerFiles: readonly FikeyaTextFileInput[] = [];
 	private workspaceInitialization: Thenable<boolean> | undefined;
 	private qarinahWorkspaceInitialized = false;
+	private activeQarinahCaptureCount = 0;
+	private readonly qarinahCaptureIdleWaiters = new Set<() => void>();
 	private previousConversation: readonly FikeyaConversationMessage[] | undefined;
 	private projectPanelRequired = false;
 	private disposed = false;
@@ -298,6 +305,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private lastSourceDocument: vscode.Uri | undefined;
 	private dangerousLocalModeGrant: DangerousLocalModeGrant | undefined;
 	private dangerousLocalModeExpiryTimer: NodeJS.Timeout | undefined;
+	private readonly conversationPersistenceConfigurationBinding: vscode.Disposable;
 
 	public constructor(
 		private readonly context: vscode.ExtensionContext,
@@ -310,6 +318,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				this.lastSourceDocument = editor.document.uri;
 			}
 		}));
+		this.conversationPersistenceConfigurationBinding = vscode.workspace.onDidChangeConfiguration(event => {
+			if (event.affectsConfiguration('fikeya.chat.persistWorkspaceHistory')) {
+				void this.clearPersistedConversationOnOptOut();
+			}
+		});
 		const persistConversation = this.conversationPersistenceEnabled();
 		this.state = {
 			activeMode: 'chat',
@@ -329,7 +342,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			runtime: 'not-checked',
 			workspaceInitialized: false,
 			runtimeProviderCount: undefined,
-			qarinah: vscode.l10n.t('Not checked')
+			qarinah: vscode.l10n.t('Not checked'),
+			qarinahCaptureInProgress: false
 		};
 		if (!persistConversation) {
 			void context.workspaceState.update(FikeyaWebviewViewProvider.conversationKey, undefined);
@@ -573,6 +587,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 	public dispose(): void {
 		this.disposed = true;
+		this.conversationPersistenceConfigurationBinding.dispose();
 		this.disableDangerousLocalMode(false);
 		this.projectPanelRequired = false;
 		this.activeAgentRun?.cancel();
@@ -911,7 +926,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				break;
 			case 'clearConversation':
 				if (!isChatInteractionBlocked({
-					agentRunning: this.state.agent.status === 'running',
+					agentRunning: this.state.agent.status === 'running' || this.state.qarinahCaptureInProgress,
 					planRunning: this.activePlanRun !== undefined || this.activeProjectRun !== undefined,
 					planCancellationInProgress: this.planCancellationInProgress
 				})) {
@@ -1188,9 +1203,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 		await this.refreshProviders(false);
 		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
-		void vscode.window.showInformationMessage(vscode.l10n.t('{0} was configured in Fikeya Runtime.', profileLabel.trim()));
 		const testConnection = vscode.l10n.t('Test connection');
-		if (await vscode.window.showInformationMessage(vscode.l10n.t('Model saved. You can run a content-free connection test now.'), testConnection) === testConnection) {
+		const choice = await vscode.window.showInformationMessage(
+			vscode.l10n.t('{0} is ready. Test the connection now?', profileLabel.trim()),
+			testConnection
+		);
+		if (choice === testConnection) {
 			await this.testProvider(runtimeName);
 		}
 	}
@@ -1234,9 +1252,12 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		}
 		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
 		await this.refreshProviders(false);
-		void vscode.window.showInformationMessage(vscode.l10n.t('{0} is ready.', profileLabel));
 		const testConnection = vscode.l10n.t('Test connection');
-		if (await vscode.window.showInformationMessage(vscode.l10n.t('Model saved. You can run a content-free connection test now.'), testConnection) === testConnection) {
+		const choice = await vscode.window.showInformationMessage(
+			vscode.l10n.t('{0} is ready. Test the connection now?', profileLabel),
+			testConnection
+		);
+		if (choice === testConnection) {
 			await this.testProvider(runtimeName);
 		}
 	}
@@ -1426,12 +1447,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		files: readonly FikeyaTextFileInput[] = [],
 		attemptedProviderNames: ReadonlySet<string> = new Set(),
 		providerHistory = projectProviderHistory(this.state.conversation),
-		onAccepted?: () => void
+		onAccepted?: () => void,
+		allowQarinahBarrier = false
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
 		const chatBlocked = isChatInteractionBlocked({
-			agentRunning: this.activeAgentRun !== undefined || this.activeMultiAgentRun !== undefined,
+			agentRunning: this.activeAgentRun !== undefined
+				|| (!allowQarinahBarrier && (this.activeMultiAgentRun !== undefined || this.state.qarinahCaptureInProgress)),
 			planRunning: this.activePlanRun !== undefined || this.activeProjectRun !== undefined,
 			planCancellationInProgress: this.planCancellationInProgress
 		});
@@ -1491,6 +1514,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if (this.activeAgentRun !== operation) {
 			return;
 		}
+		// Acquire the reader/writer barrier before clearing the active operation or publishing a
+		// terminal UI. A second request therefore cannot start a Qarinah read before this turn's
+		// receipts, ledger append, and derived dashboard read are finished.
+		this.beginQarinahCapture();
+		try {
 		this.activeAgentRun = undefined;
 		if (!result.ok || !result.value) {
 			const cancelled = result.failure === 'cancelled';
@@ -1512,54 +1540,85 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			await this.persistConversation();
 			this.refresh();
 			if (result.failure === 'quota') {
-				await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, runtimeMode, composerMode, images, files, attempted, providerHistory);
+				await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, runtimeMode, composerMode, images, files, attempted, providerHistory, true);
 			}
 			return;
 		}
 
 		const completed = result.value.status === 'completed';
+		const structuredRuntimeFailure = result.value.failure
+			? agentTerminalFailureToRuntimeFailure(result.value.failure)
+			: undefined;
+		const terminalFailure = result.value.status === 'cancelled'
+			? vscode.l10n.t('Run cancelled. Completed tool receipts and measured regular-file content changes remain available below.')
+			: result.value.status === 'failed'
+				? structuredRuntimeFailure
+					? vscode.l10n.t('{0} Completed tool receipts and measured regular-file content changes remain available below.', runtimeFailureMessage(structuredRuntimeFailure))
+					: vscode.l10n.t('Run failed before a reviewed answer was produced. Completed tool receipts and measured regular-file content changes remain available below.')
+				: undefined;
 		this.state = {
 			...this.state,
 			conversation: appendConversationMessage(
 				this.state.conversation,
-				createConversationMessage(
-					'assistant',
-					result.value.output,
-					providerName,
-					completed ? 'normal' : 'error'
-				)
+				{
+					...createConversationMessage(
+						'assistant',
+						result.value.output,
+						providerName,
+						completed ? 'normal' : 'error'
+					),
+					runEvidence: projectConversationRunEvidence(result.value)
+				}
 			),
-			agent: {
-				status: completed ? 'completed' : 'cancelled',
+				agent: {
+				status: result.value.status,
 				providerName,
 				output: result.value.output,
 				sessionId: result.value.sessionId,
-				callId: result.value.callId,
+				callId: result.value.callId ?? undefined,
 				usage: result.value.usage,
 				memory: result.value.memory,
 				outcome: result.value.outcome,
 				receiptsStatus: 'loading',
 				receipts: [],
-				failure: completed ? undefined : vscode.l10n.t('Run cancelled at an approval boundary. Completed tool receipts remain available below.')
+				failure: terminalFailure
 			}
 		};
 		await this.persistConversation();
 		this.refresh();
-		await this.refreshReceipts(false);
+		const captureSessionId = result.value.sessionId;
+		const captureCallId = result.value.callId ?? undefined;
+		const captureReceipts = await this.refreshReceipts(false);
 		await this.refreshStatistics(false);
-		if (!completed) {
-			return;
-		}
 		const capture = await captureCompletedFikeyaRun({
-			extensionPath: this.context.extensionPath,
-			workspacePath,
-			prompt,
-			profile,
-			turn: result.value,
-			receipts: this.state.agent.receipts
+				extensionPath: this.context.extensionPath,
+				workspacePath,
+				prompt,
+				profile,
+				turn: result.value,
+				receipts: captureReceipts
 		});
 		if (capture.ok) {
-			await this.refreshMemory(false);
+			await this.refreshMemory(false, false);
+		}
+		if (this.state.agent.sessionId !== captureSessionId || this.state.agent.callId !== captureCallId) {
+			return;
+		}
+		this.state = {
+			...this.state,
+			agent: {
+				...this.state.agent,
+				qarinahCaptureStatus: capture.ok ? 'recorded' : 'unavailable',
+				qarinahCaptureReceipt: capture.receipt
+			}
+		};
+		this.refresh();
+		if (structuredRuntimeFailure === 'quota') {
+			const attempted = new Set(attemptedProviderNames).add(providerName);
+			await this.offerProviderHandoff(prompt, maxOutputTokens, contextMaxCharacters, memoryMode, runtimeMode, composerMode, images, files, attempted, providerHistory, true);
+		}
+		} finally {
+			this.endQarinahCapture();
 		}
 	}
 
@@ -1603,6 +1662,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if (!workspacePath
 			|| this.activeAgentRun
 			|| this.activeMultiAgentRun
+			|| this.state.qarinahCaptureInProgress
 			|| this.activePlanProposalRun
 			|| this.activePlanRun
 			|| this.activeProjectRun
@@ -1668,21 +1728,56 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		if (this.activeMultiAgentRun !== operation) {
 			return;
 		}
-		this.activeMultiAgentRun = undefined;
-
+		try {
+			await this.withQarinahCapture(async () => {
 		let conversation = this.state.conversation;
+		const captureInputs: FikeyaCompletedRunCaptureInput[] = [];
 		for (const item of result.agents) {
 			const label = `${item.profile.displayName} · ${item.profile.providerName}`;
 			if (item.runtime.ok && item.runtime.value) {
 				const provider = this.state.providers.find(candidate => candidate.name === item.profile.providerName);
-				if (provider && item.status === 'completed') {
-					await captureCompletedFikeyaRun({
+				if (provider) {
+					captureInputs.push({
 						extensionPath: this.context.extensionPath,
 						workspacePath,
 						prompt,
 						profile: provider,
 						turn: item.runtime.value,
 						receipts: item.receipts
+					});
+				}
+				const outcome = item.runtime.value.outcome;
+				if (item.status !== 'completed') {
+					const visibleChangeCount = Math.min(24, outcome.changedFiles.length);
+					const visibleChanges = outcome.changedFiles.slice(0, visibleChangeCount).map(file => {
+						const lines = file.lineDeltaStatus === 'exact'
+							? `+${file.linesAdded ?? 0}/-${file.linesDeleted ?? 0}`
+							: file.lineDeltaStatus;
+						return `- ${file.operation}: ${file.path} (${lines}; ${file.beforeBytes ?? 'absent'} → ${file.afterBytes ?? 'absent'} bytes; ${file.beforeSha256 ?? 'no before hash'} → ${file.afterSha256 ?? 'no after hash'})`;
+					}).join('\n');
+					const retained = outcome.changedFiles.length > visibleChangeCount
+						? vscode.l10n.t('\nShowing 24 of {0} measured regular-file content changes.', outcome.changedFiles.length)
+						: '';
+					const captureLabel = provider
+						? vscode.l10n.t('Qarinah capture will follow lead synthesis; local run evidence is already retained.')
+						: vscode.l10n.t('Qarinah capture was unavailable for this terminal evidence.');
+					conversation = appendConversationMessage(conversation, {
+						...createConversationMessage(
+							'notice',
+							`${item.runtime.value.output}\n\n${outcome.changedFiles.length} measured regular-file content changes.${visibleChanges ? `\n${visibleChanges}${retained}` : ''}\n\n${captureLabel}`,
+							label,
+							item.status === 'cancelled' ? 'normal' : 'error'
+						),
+						runEvidence: projectConversationRunEvidence(item.runtime.value)
+					});
+				} else if (outcome.changedFiles.length > 0 || outcome.changedFilesTruncated) {
+					conversation = appendConversationMessage(conversation, {
+						...createConversationMessage(
+							'notice',
+							vscode.l10n.t('{0} completed and reported regular-file content-change evidence. The bounded exact metadata is retained below.', item.profile.displayName),
+							label
+						),
+						runEvidence: projectConversationRunEvidence(item.runtime.value)
 					});
 				}
 			} else {
@@ -1710,10 +1805,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		await this.persistConversation();
 		this.refresh();
 		await this.refreshStatistics(false);
-		await this.refreshMemory(false);
+		const advisorCaptureMessageId = conversation.at(-1)?.id;
 
 		const completedAdvisors = result.agents.filter(item => item.status === 'completed' && item.runtime.ok && item.runtime.value);
 		if (result.status === 'cancelled' || completedAdvisors.length === 0) {
+			await this.captureCompletedMultiAgentRuns(captureInputs, advisorCaptureMessageId);
 			return;
 		}
 		const leadPrompt = buildTeamLeadPrompt(prompt, completedAdvisors.map(item => ({
@@ -1732,8 +1828,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			[],
 			[],
 			new Set(['fikeya-team']),
-			history
+			history,
+			undefined,
+			true
 		);
+		// Qarinah rejects a read if its ledger changes mid-read. The lead completes its context read,
+		// execution, receipt capture, and dashboard refresh before advisor writers start.
+		await this.captureCompletedMultiAgentRuns(captureInputs, advisorCaptureMessageId);
+			});
+		} finally {
+			if (this.activeMultiAgentRun === operation) {
+				this.activeMultiAgentRun = undefined;
+			}
+		}
 	}
 
 	private async proposePlan(
@@ -1748,7 +1855,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
-		if (!workspacePath || this.activeAgentRun || this.activeMultiAgentRun || this.activePlanProposalRun || this.activePlanRun || this.activeProjectRun || this.planCancellationInProgress || !profile) {
+		if (!workspacePath || this.activeAgentRun || this.activeMultiAgentRun || this.state.qarinahCaptureInProgress || this.activePlanProposalRun || this.activePlanRun || this.activeProjectRun || this.planCancellationInProgress || !profile) {
 			return;
 		}
 		if (!await this.ensureWorkspaceInitialized(workspacePath, false)) {
@@ -1851,13 +1958,14 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		images: readonly FikeyaImageInput[],
 		files: readonly FikeyaTextFileInput[],
 		attemptedProviderNames: ReadonlySet<string>,
-		providerHistory: ReturnType<typeof projectProviderHistory>
+		providerHistory: ReturnType<typeof projectProviderHistory>,
+		allowQarinahBarrier = false
 	): Promise<void> {
 		const alternatives = this.state.providers.filter(provider => !attemptedProviderNames.has(provider.name));
 		if (alternatives.length === 0) {
 			const configure = vscode.l10n.t('Configure Provider');
 			const selected = await vscode.window.showWarningMessage(
-				vscode.l10n.t('The provider reported that its current quota or rate limit is exhausted. Configure another model to continue with the same Qarinah project context.'),
+				vscode.l10n.t('The provider reported that its current quota or rate limit is exhausted. Configure another model to continue with the same context setting; Qarinah evidence is recompiled when enabled and available.'),
 				configure
 			);
 			if (selected === configure) {
@@ -1871,7 +1979,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			const choose = vscode.l10n.t('Choose Another Model');
 			const always = vscode.l10n.t('Always Switch');
 			const selected = await vscode.window.showWarningMessage(
-				vscode.l10n.t('This model has reached a quota or rate limit. Continue with another configured model and retrieve the same Qarinah project context?'),
+				vscode.l10n.t('This model has reached a quota or rate limit. Continue with another configured model and preserve the current context setting? Qarinah evidence is recompiled when enabled and available.'),
 				{ modal: true },
 				choose,
 				always
@@ -1895,13 +2003,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				provider
 			})), {
 				title: vscode.l10n.t('Continue with another configured model'),
-				placeHolder: vscode.l10n.t('Fikeya will recompile the same task-relevant Qarinah context for this model.')
+				placeHolder: vscode.l10n.t('Fikeya preserves the context setting and recompiles task-relevant Qarinah evidence when enabled and available.')
 			}))?.provider;
 		if (!target) {
 			return;
 		}
 		void vscode.window.showInformationMessage(vscode.l10n.t('Continuing with {0} ({1}).', target.name, target.model));
-		await this.runAgent(target.name, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, runtimeMode, composerMode, images, files, attemptedProviderNames, providerHistory);
+		await this.runAgent(target.name, prompt, maxOutputTokens, contextMaxCharacters, memoryMode, runtimeMode, composerMode, images, files, attemptedProviderNames, providerHistory, undefined, allowQarinahBarrier);
 	}
 
 	public async toggleChatPane(): Promise<void> {
@@ -1925,6 +2033,17 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			);
 		} catch {
 			void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya could not retain this conversation in the local workspace store. The current window can continue.'));
+		}
+	}
+
+	private async clearPersistedConversationOnOptOut(): Promise<void> {
+		try {
+			await clearPersistedConversationSnapshotIfDisabled(
+				this.conversationPersistenceEnabled(),
+				() => this.context.workspaceState.update(FikeyaWebviewViewProvider.conversationKey, undefined)
+			);
+		} catch {
+			void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya could not remove the saved conversation from the local workspace store. The current process-local conversation is unchanged.'));
 		}
 	}
 
@@ -1995,7 +2114,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private async startProject(providerName: string, goal: string, onAccepted?: () => void): Promise<void> {
 		const workspacePath = getLocalWorkspacePath();
 		const profile = this.state.providers.find(provider => provider.name === providerName);
-		if (!workspacePath || !profile || this.activeAgentRun || this.activeMultiAgentRun
+		if (!workspacePath || !profile || this.activeAgentRun || this.activeMultiAgentRun || this.state.qarinahCaptureInProgress
 			|| this.activePlanProposalRun || this.activePlanRun || this.activeProjectRun || this.planCancellationInProgress) {
 			return;
 		}
@@ -2116,7 +2235,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			void vscode.window.showErrorMessage(vscode.l10n.t('Choose a configured model and re-enter the exact original project goal before resuming this recovered run.'));
 			return;
 		}
-		if (this.activeAgentRun || this.activeMultiAgentRun || this.activePlanProposalRun || this.activePlanRun || this.activeProjectRun) {
+		if (this.activeAgentRun || this.activeMultiAgentRun || this.state.qarinahCaptureInProgress || this.activePlanProposalRun || this.activePlanRun || this.activeProjectRun) {
 			return;
 		}
 		let allowPrivateBrowser = false;
@@ -2433,17 +2552,17 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		void vscode.window.showErrorMessage(message);
 	}
 
-	private async refreshReceipts(showFailure: boolean): Promise<void> {
+	private async refreshReceipts(showFailure: boolean): Promise<readonly FikeyaProviderReceipt[]> {
 		const workspacePath = getLocalWorkspacePath();
 		const sessionId = this.state.agent.sessionId;
 		if (!workspacePath || !sessionId) {
-			return;
+			return [];
 		}
 		this.state = { ...this.state, agent: { ...this.state.agent, receiptsStatus: 'loading' } };
 		this.refresh();
 		const result = await loadFikeyaAgentReceipts(sessionId, workspacePath);
 		if (this.state.agent.sessionId !== sessionId) {
-			return;
+			return result.ok && result.value ? result.value : [];
 		}
 		if (!result.ok || !result.value) {
 			this.state = { ...this.state, agent: { ...this.state.agent, receiptsStatus: 'unavailable', receipts: [] } };
@@ -2451,10 +2570,11 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			if (showFailure) {
 				void vscode.window.showErrorMessage(runtimeFailureMessage(result.failure));
 			}
-			return;
+			return [];
 		}
 		this.state = { ...this.state, agent: { ...this.state.agent, receiptsStatus: 'ready', receipts: result.value } };
 		this.refresh();
+		return result.value;
 	}
 
 	private async refreshStatistics(showFailure: boolean): Promise<void> {
@@ -2479,7 +2599,84 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 	}
 
-	private async refreshMemory(showFailure: boolean): Promise<void> {
+	private async captureCompletedMultiAgentRuns(
+		inputs: readonly FikeyaCompletedRunCaptureInput[],
+		originatingMessageId: string | undefined
+	): Promise<void> {
+		try {
+			if (inputs.length === 0) {
+				return;
+			}
+			await this.withQarinahCapture(async () => {
+				const results = await captureCompletedFikeyaRuns(inputs);
+				if (this.disposed) {
+					return;
+				}
+				const captured = results.filter(result => result.ok).length;
+				const failed = results.length - captured;
+				if (originatingMessageId && this.state.conversation.some(message => message.id === originatingMessageId)) {
+					const content = failed === 0
+						? vscode.l10n.t('Qarinah captured terminal evidence for all {0} advisors.', captured)
+						: vscode.l10n.t('Qarinah captured terminal evidence for {0} of {1} advisors. {2} captures could not be confirmed; their ledger may contain partial run events.', captured, results.length, failed);
+					this.state = {
+						...this.state,
+						conversation: appendConversationMessage(this.state.conversation, createConversationMessage(
+							'notice',
+							content,
+							vscode.l10n.t('Qarinah advisor capture'),
+							failed === 0 ? 'normal' : 'error'
+						))
+					};
+					await this.persistConversation();
+					this.refresh();
+				}
+				await this.refreshMemory(false, false);
+			});
+		} catch {
+			// Terminal run evidence remains in the conversation when durable capture is unavailable.
+		}
+	}
+
+	private async withQarinahCapture<T>(action: () => Promise<T>): Promise<T> {
+		this.beginQarinahCapture();
+		try {
+			return await action();
+		} finally {
+			this.endQarinahCapture();
+		}
+	}
+
+	private beginQarinahCapture(): void {
+		this.activeQarinahCaptureCount += 1;
+		if (!this.state.qarinahCaptureInProgress) {
+			this.state = { ...this.state, qarinahCaptureInProgress: true };
+			this.refresh();
+		}
+	}
+
+	private endQarinahCapture(): void {
+		this.activeQarinahCaptureCount = Math.max(0, this.activeQarinahCaptureCount - 1);
+		if (this.activeQarinahCaptureCount === 0) {
+			this.state = { ...this.state, qarinahCaptureInProgress: false };
+			for (const resolve of this.qarinahCaptureIdleWaiters) {
+				resolve();
+			}
+			this.qarinahCaptureIdleWaiters.clear();
+			this.refresh();
+		}
+	}
+
+	private async waitForQarinahCaptureIdle(): Promise<void> {
+		if (this.activeQarinahCaptureCount === 0) {
+			return;
+		}
+		await new Promise<void>(resolve => this.qarinahCaptureIdleWaiters.add(resolve));
+	}
+
+	private async refreshMemory(showFailure: boolean, waitForCapture = true): Promise<void> {
+		if (waitForCapture) {
+			await this.waitForQarinahCaptureIdle();
+		}
 		const workspacePath = getLocalWorkspacePath();
 		if (!workspacePath) {
 			this.state = { ...this.state, memory: { status: 'unavailable' } };
@@ -2561,10 +2758,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const fullAccessRemainingMinutes = fullAccessActive && this.dangerousLocalModeGrant
 			? Math.max(1, Math.ceil((this.dangerousLocalModeGrant.expiresAt - Date.now()) / 60_000))
 			: 0;
-		const setupCards = `<section class="grid two compact-grid">
+		const setupCards = `<section class="grid two compact-grid setup-flow">
 			<article class="card">
 				<div class="card-heading"><h2>${escapeHtml(vscode.l10n.t('1. Open and prepare your project'))}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
-				<p>${escapeHtml(vscode.l10n.t('Open a trusted local folder, then initialize its project context before asking Fikeya to work.'))}</p>
+				<p>${escapeHtml(vscode.l10n.t('Fikeya works from the trusted folder you have open. Initialize once to prepare local project state.'))}</p>
 				<div class="actions"><button data-command="fikeya.initializeWorkspace" type="button">${escapeHtml(strings.initializeWorkspace)}</button><button data-command="fikeya.runDoctor" class="secondary" type="button">${escapeHtml(strings.runDoctor)}</button></div>
 			</article>
 			<article class="card">
@@ -2574,7 +2771,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 				<div class="actions"><button data-provider-modal-open type="button">${escapeHtml(vscode.l10n.t('Connect a model'))}</button><button data-command="fikeya.configureProvider" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Azure CLI discovery'))}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
 			</article>
 		</section>`;
-		const usageSurface = `${statisticsSurface}${this.state.agent.outcome ? `<section class="card">${renderCodingOutcome(this.state.agent.outcome, strings)}</section>` : ''}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
+		const usageSurface = `${statisticsSurface}${this.state.agent.outcome ? `<section class="card">${renderCodingOutcome(this.state.agent.outcome, strings, this.state.agent.qarinahCaptureStatus, this.state.agent.qarinahCaptureReceipt)}</section>` : ''}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
 		const closeOverlay = `<button class="quiet overlay-close" data-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">${escapeHtml(vscode.l10n.t('Close'))}</button>`;
 		const chatWorkspace = `<div class="active-surface" data-initial-modal="${initialModal}" data-plan-id="${escapeHtml(this.state.plan.record?.planId ?? '')}" data-accepted-request-id="${escapeHtml(this.lastAcceptedComposerRequestId ?? '')}">
 			<nav class="workspace-navigation" aria-label="${escapeHtml(vscode.l10n.t('Fikeya workspace'))}">
@@ -2587,13 +2784,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			<dialog class="workspace-overlay" data-workspace-modal="setup" aria-label="${escapeHtml(vscode.l10n.t('Models and setup'))}"><header><strong>${escapeHtml(vscode.l10n.t('Models and setup'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${setupCards}</div></dialog>
 			<dialog class="provider-modal" data-provider-modal aria-label="${escapeHtml(vscode.l10n.t('Connect a model'))}">
 				<form data-provider-form autocomplete="off">
-					<header><div><strong>${escapeHtml(vscode.l10n.t('Connect a model'))}</strong><span>${escapeHtml(vscode.l10n.t('Choose a provider, then enter its exact model ID and credential. Your credential is sent once to the local runtime and stored in the operating system credential store.'))}</span></div><button class="quiet" data-provider-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">×</button></header>
+					<header><div><strong>${escapeHtml(vscode.l10n.t('Connect a model'))}</strong><span>${escapeHtml(vscode.l10n.t('Choose a provider, add the exact model ID your account exposes, then save it in the local OS credential store.'))}</span></div><button class="quiet" data-provider-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">×</button></header>
 					<div class="provider-modal-body">
 						<label class="field"><span>${escapeHtml(vscode.l10n.t('Provider'))}</span><select name="providerId">${providerDefinitionOptions}</select></label>
 						<p class="provider-definition-detail" data-provider-detail></p>
-						<label class="field"><span>${escapeHtml(vscode.l10n.t('Model or deployment'))}</span><input name="model" maxlength="160" autocomplete="off" placeholder="${escapeHtml(vscode.l10n.t('Enter the exact model ID'))}" required></label>
+						<label class="field"><span>${escapeHtml(vscode.l10n.t('Model or deployment'))}</span><input name="model" maxlength="160" autocomplete="off" placeholder="${escapeHtml(vscode.l10n.t('Enter the model ID from your provider account'))}" required></label>
 						<label class="field" data-provider-secret-field><span>${escapeHtml(vscode.l10n.t('API key or token'))}</span><input name="secret" type="password" maxlength="16384" autocomplete="new-password"></label>
-						<details class="provider-advanced" data-provider-advanced><summary>${escapeHtml(vscode.l10n.t('Advanced connection options'))}</summary><p>${escapeHtml(vscode.l10n.t('Use these only for a custom connection or Azure endpoint.'))}</p><div class="provider-fields"><label class="field"><span>${escapeHtml(vscode.l10n.t('Internal label (optional)'))}</span><input name="profileLabel" maxlength="80"></label><label class="field"><span>${escapeHtml(vscode.l10n.t('Endpoint'))}</span><input name="baseUrl" type="url" maxlength="4096" required></label></div></details>
+						<details class="provider-advanced" data-provider-advanced><summary>${escapeHtml(vscode.l10n.t('Advanced connection options'))}</summary><p>${escapeHtml(vscode.l10n.t('Use this only for a custom endpoint or an internal label. Known provider endpoints are filled in automatically.'))}</p><div class="provider-fields"><label class="field"><span>${escapeHtml(vscode.l10n.t('Internal label'))}</span><input name="profileLabel" maxlength="80" autocomplete="off" placeholder="${escapeHtml(vscode.l10n.t('Optional'))}"></label><label class="field"><span>${escapeHtml(vscode.l10n.t('Endpoint'))}</span><input name="baseUrl" type="url" maxlength="4096" autocomplete="url"></label></div></details>
 						<p class="provider-form-error" data-provider-error role="alert" hidden></p>
 					</div>
 					<footer><button class="secondary" data-provider-modal-close type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button><button type="submit">${escapeHtml(vscode.l10n.t('Save model'))}</button></footer>
@@ -2691,6 +2888,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.provider-advanced[open] { background: var(--vscode-textBlockQuote-background); }
 		.provider-definition-detail, .provider-form-error { padding: 8px 9px; border-left: 2px solid var(--vscode-focusBorder); background: var(--vscode-textBlockQuote-background); font-size: 11px; }
 		.provider-form-error { border-left-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
+		.provider-advanced { padding: 10px; border: 1px solid var(--vscode-widget-border); background: var(--vscode-editor-background); }
+		.provider-advanced summary { cursor: pointer; color: var(--vscode-textLink-foreground); font-size: 11px; font-weight: 600; }
+		.provider-advanced > p { margin: 9px 0; color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.45; }
+		.provider-advanced[open] { display: grid; gap: 8px; }
 		.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 		.sidebar-launch { border-top: 2px solid var(--vscode-focusBorder); }
 		.sidebar-destinations { display: grid; gap: 6px; }
@@ -2884,8 +3085,28 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.run-details-body { display: grid; gap: 12px; padding: 10px; border-top: 1px solid var(--vscode-widget-border); }
 		.agent-output { max-height: 360px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--vscode-widget-border); color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 		.agent-receipt { display: grid; gap: 8px; }
-		.outcome-files { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-		.outcome-file { width: 100%; min-height: 28px; border-color: var(--vscode-widget-border); color: var(--vscode-foreground); background: transparent; font-family: var(--vscode-editor-font-family); font-size: 11px; text-align: left; }
+		.outcome-files { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+		.outcome-file-entry { display: grid; min-width: 0; gap: 6px; padding: 8px; border: 1px solid var(--vscode-widget-border); border-left-width: 3px; background: color-mix(in srgb, var(--vscode-editorWidget-background) 84%, var(--vscode-editor-background)); }
+		.outcome-file-entry[data-operation="add"] { border-left-color: var(--vscode-gitDecoration-addedResourceForeground); }
+		.outcome-file-entry[data-operation="edit"] { border-left-color: var(--vscode-gitDecoration-modifiedResourceForeground); }
+		.outcome-file-entry[data-operation="delete"] { border-left-color: var(--vscode-gitDecoration-deletedResourceForeground); }
+		.outcome-file-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; min-width: 0; }
+		.outcome-file-operation { padding: 2px 5px; border: 1px solid var(--vscode-widget-border); border-radius: 999px; color: var(--vscode-descriptionForeground); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+		.outcome-file { display: block; width: 100%; min-width: 0; min-height: 24px; overflow: hidden; box-sizing: border-box; padding: 2px 4px; border-color: transparent; color: var(--vscode-textLink-foreground); background: transparent; font-family: var(--vscode-editor-font-family); font-size: 11px; line-height: 20px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+		button.outcome-file:hover { border-color: var(--vscode-widget-border); background: var(--vscode-toolbar-hoverBackground); }
+		code.outcome-file { overflow-wrap: anywhere; white-space: normal; }
+		.outcome-file-stats { display: flex; flex-wrap: wrap; gap: 5px 10px; margin: 0; color: var(--vscode-descriptionForeground); font-size: 10px; }
+		.outcome-file-stats div { display: flex; min-width: 0; gap: 4px; }
+		.outcome-file-stats dt { font-weight: 600; }
+		.outcome-file-stats dd { min-width: 0; margin: 0; }
+		.outcome-file-evidence { color: var(--vscode-descriptionForeground); font-size: 10px; }
+		.outcome-file-evidence > summary { width: max-content; max-width: 100%; cursor: pointer; }
+		.outcome-file-hashes { display: grid; gap: 3px; margin-top: 5px; }
+		.outcome-file-hashes code { overflow-wrap: anywhere; }
+		.outcome-file-limit { margin: 0; color: var(--vscode-descriptionForeground); font-size: 10px; }
+		.outcome-capture { margin: 2px 0 0; padding: 7px 8px; border: 1px solid var(--vscode-widget-border); color: var(--vscode-descriptionForeground); background: var(--vscode-textBlockQuote-background); font-size: 10px; }
+		details.outcome-capture > summary { cursor: pointer; color: var(--vscode-foreground); font-weight: 600; }
+		.outcome-capture .receipt { margin-top: 7px; }
 		.chat-run-outcome { width: min(100%, 760px); align-self: start; border: 1px solid var(--vscode-widget-border); border-radius: 10px; background: var(--vscode-editorWidget-background); }
 		.chat-run-outcome > summary { display: flex; min-height: 34px; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; cursor: pointer; }
 		.chat-run-outcome > summary span { color: var(--vscode-descriptionForeground); font-size: 10px; }
@@ -3086,7 +3307,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			if (!selected) return;
 			if (providerLabelField) providerLabelField.value = selected.dataset.label || '';
 			if (providerBaseUrlField) providerBaseUrlField.value = selected.dataset.baseUrl || '';
-			if (providerAdvanced) providerAdvanced.open = !selected.dataset.baseUrl;
+			if (providerAdvanced instanceof HTMLDetailsElement) providerAdvanced.open = !selected.dataset.baseUrl;
 			if (providerSecretField) {
 				providerSecretField.value = '';
 				providerSecretField.required = selected.dataset.requiresSecret === 'true';
@@ -4435,7 +4656,7 @@ function renderDurableProject(project: ProjectSurfaceState): string {
 function renderAgentSurface(state: DashboardState, strings: WebviewStrings, planOperationInProgress: boolean, projectOperationInProgress: boolean, canRestoreConversation: boolean, planSurface: string): string {
 	const workspaceReady = getLocalWorkspacePath() !== undefined;
 	const running = state.agent.status === 'running';
-	const interactionBlocked = isChatInteractionBlocked({ agentRunning: running, planRunning: planOperationInProgress || projectOperationInProgress, planCancellationInProgress: false });
+	const interactionBlocked = isChatInteractionBlocked({ agentRunning: running || state.qarinahCaptureInProgress, planRunning: planOperationInProgress || projectOperationInProgress, planCancellationInProgress: false });
 	const controlsDisabled = interactionBlocked;
 	const providerControlsDisabled = interactionBlocked || state.providers.length === 0;
 	const initialComposerMode: FikeyaComposerMode = state.activeMode === 'research' ? 'research' : state.activeMode === 'plan' ? 'plan' : 'build';
@@ -4465,8 +4686,8 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 	const progress = running
 		? `<article class="chat-message assistant-message" aria-label="${escapeHtml(vscode.l10n.t('Fikeya is working'))}"><div class="message-meta"><strong>${escapeHtml(vscode.l10n.t('Fikeya'))}</strong><span class="thinking-dot" aria-hidden="true"></span><span role="status">${escapeHtml(state.agent.progress ? formatRunProgress(state.agent.progress) : vscode.l10n.t('Starting a bounded run'))}</span></div>${renderAutonomousProgress(state.agent.progress)}${multiAgentProgress}</article>`
 		: '';
-	const outcome = !running && state.agent.status === 'completed' && state.agent.outcome
-		? renderChatRunOutcome(state.agent.outcome)
+	const outcome = !running && (state.agent.status === 'completed' || state.agent.status === 'cancelled' || state.agent.status === 'failed') && state.agent.outcome
+		? renderChatRunOutcome(state.agent.outcome, state.agent.qarinahCaptureStatus, state.agent.qarinahCaptureReceipt)
 		: '';
 	const projectSurface = renderDurableProject(state.project);
 	const chatPlan = state.plan.record ? renderChatPlanStrip(state.plan.record, state.plan.status === 'running', planSurface) : '';
@@ -4482,6 +4703,8 @@ function renderAgentSurface(state: DashboardState, strings: WebviewStrings, plan
 		: '';
 	const status = state.providers.length === 0
 		? vscode.l10n.t('Add a model to begin')
+		: state.qarinahCaptureInProgress && !running
+			? vscode.l10n.t('Finalizing verified Qarinah run evidence')
 		: projectOperationInProgress
 			? vscode.l10n.t('Chat is paused while the audited project runs')
 			: planOperationInProgress
@@ -4545,7 +4768,8 @@ function renderConversationMessage(message: FikeyaConversationMessage): string {
 		}).join('')}</div>`
 		: '';
 	const actions = message.role === 'notice' ? '' : renderConversationMessageActions(message.id);
-	return `<article class="chat-message ${className}" data-tone="${message.tone ?? 'normal'}"><div class="message-meta"><strong>${escapeHtml(roleLabel)}</strong>${provider}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatConversationTime(message.createdAt))}</time></div>${attachments}<div class="message-content">${content}</div>${actions}</article>`;
+	const runEvidence = message.runEvidence ? renderConversationRunEvidence(message.runEvidence) : '';
+	return `<article class="chat-message ${className}" data-tone="${message.tone ?? 'normal'}"><div class="message-meta"><strong>${escapeHtml(roleLabel)}</strong>${provider}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatConversationTime(message.createdAt))}</time></div>${attachments}<div class="message-content">${content}</div>${runEvidence}${actions}</article>`;
 }
 
 function renderConversationMessageActions(messageId: string): string {
@@ -4553,12 +4777,144 @@ function renderConversationMessageActions(messageId: string): string {
 	return `<div class="message-actions" role="toolbar" aria-label="${escapeHtml(vscode.l10n.t('Message actions'))}"><button class="message-action" data-copy-message="${escapeHtml(messageId)}" type="button" aria-label="${escapeHtml(copyLabel)}" title="${escapeHtml(copyLabel)}"><svg class="message-action-icon copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M5 13H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"></path></svg><svg class="message-action-icon copied-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-9"></path></svg></button><span class="sr-only" data-copy-status aria-live="polite"></span></div>`;
 }
 
-function renderChatRunOutcome(outcome: FikeyaCodingOutcome): string {
-	const changedFiles = outcome.changedFiles.length === 0
-		? `<span>${escapeHtml(vscode.l10n.t('No files changed'))}</span>`
-		: `<ul class="outcome-files">${outcome.changedFiles.slice(0, 24).map(file => `<li><button class="outcome-file" data-open-file="${escapeHtml(file.path)}" type="button" title="${escapeHtml(vscode.l10n.t('Open changed file'))}">${escapeHtml(file.path)}</button></li>`).join('')}</ul>`;
-	const passingTests = outcome.tests.filter(test => test.status === 'ok').length;
-	return `<details class="chat-run-outcome"${outcome.changedFiles.length > 0 ? ' open' : ''}><summary><strong>${escapeHtml(vscode.l10n.t('Run result'))}</strong><span>${escapeHtml(vscode.l10n.t('{0} files saved · {1}/{2} tests passed', outcome.changedFiles.length, passingTests, outcome.tests.length))}</span></summary><div><p>${escapeHtml(outcome.summary)}</p>${changedFiles}</div></details>`;
+function renderChatRunOutcome(
+	outcome: FikeyaCodingOutcome,
+	qarinahCaptureStatus?: AgentSurfaceState['qarinahCaptureStatus'],
+	qarinahCaptureReceipt?: FikeyaMemoryRunCaptureReceipt
+): string {
+	const changedFiles = renderChangedFileList(outcome, 24);
+	const passingTestCommands = outcome.tests.filter(test => test.status === 'ok').length;
+	const changedFileSummary = outcome.changedFilesTruncated
+		? vscode.l10n.t('{0} measured regular-file content changes · accounting incomplete · {1}/{2} test commands passed', outcome.changedFiles.length, passingTestCommands, outcome.tests.length)
+		: vscode.l10n.t('{0} measured regular-file content changes · {1}/{2} test commands passed', outcome.changedFiles.length, passingTestCommands, outcome.tests.length);
+	return `<details class="chat-run-outcome"${outcome.changedFiles.length > 0 || outcome.changedFilesTruncated ? ' open' : ''}><summary><strong>${escapeHtml(vscode.l10n.t('Run result'))}</strong><span>${escapeHtml(changedFileSummary)}</span></summary><div><p>${escapeHtml(outcome.summary)}</p>${changedFiles}${renderQarinahRunCapture(qarinahCaptureStatus, qarinahCaptureReceipt, outcome)}</div></details>`;
+}
+
+function renderConversationRunEvidence(evidence: FikeyaConversationRunEvidence): string {
+	const status = evidence.status === 'completed'
+		? vscode.l10n.t('Completed')
+		: evidence.status === 'cancelled'
+			? vscode.l10n.t('Cancelled')
+			: vscode.l10n.t('Failed');
+	const summary = evidence.accountingIncomplete
+		? vscode.l10n.t('{0} · {1} measured regular-file content changes · accounting incomplete', status, evidence.measuredChangedFileCount)
+		: vscode.l10n.t('{0} · {1} measured regular-file content changes', status, evidence.measuredChangedFileCount);
+	const files = evidence.changedFiles.length === 0
+		? `<span>${escapeHtml(vscode.l10n.t('No measured regular-file content changes'))}</span>`
+		: `<ul class="outcome-files">${evidence.changedFiles.map(renderChangedFileOutcome).join('')}</ul>`;
+	const projection = evidence.projectionTruncated
+		? `<p class="outcome-file-limit">${escapeHtml(vscode.l10n.t('Saved history retained {0} of {1} measured regular-file content-change entries.', evidence.changedFiles.length, evidence.measuredChangedFileCount))}</p>`
+		: '';
+	const accounting = evidence.accountingIncomplete
+		? `<p class="outcome-file-limit">${escapeHtml(vscode.l10n.t('The source run marked regular-file content-change accounting incomplete.'))}</p>`
+		: '';
+	const scope = evidence.changedFilesScope === 'regular-project-files-v1'
+		? `<p class="outcome-file-scope">${escapeHtml(vscode.l10n.t('Scope: regular-file content changes only; runtime/VCS state, installed dependencies, virtual environments, and conventional build, distribution, coverage, and tool-cache trees are excluded.'))}</p>`
+		: `<p class="outcome-file-scope">${escapeHtml(vscode.l10n.t('Regular-file content-change accounting scope was not reported by this legacy runtime.'))}</p>`;
+	return `<details class="chat-run-outcome saved-run-evidence"><summary><strong>${escapeHtml(vscode.l10n.t('Saved run evidence'))}</strong><span>${escapeHtml(summary)}</span></summary><div>${files}${projection}${accounting}${scope}</div></details>`;
+}
+
+function renderChangedFileList(outcome: FikeyaCodingOutcome, limit: number): string {
+	const scope = outcome.changedFilesScope === 'regular-project-files-v1'
+		? `<p class="outcome-file-scope">${escapeHtml(vscode.l10n.t('Scope: regular-file content changes only; runtime/VCS state, installed dependencies, virtual environments, and conventional build, distribution, coverage, and tool-cache trees are excluded.'))}</p>`
+		: `<p class="outcome-file-scope">${escapeHtml(vscode.l10n.t('Regular-file content-change accounting scope was not reported by this legacy runtime.'))}</p>`;
+	if (outcome.changedFiles.length === 0) {
+		const empty = outcome.changedFilesTruncated
+			? `<span>${escapeHtml(vscode.l10n.t('No regular-file content changes were measured; accounting was incomplete.'))}</span>`
+			: `<span>${escapeHtml(vscode.l10n.t('No measured regular-file content changes'))}</span>`;
+		return `${empty}${scope}`;
+	}
+	const visible = outcome.changedFiles.slice(0, limit);
+	const list = `<ul class="outcome-files">${visible.map(renderChangedFileOutcome).join('')}</ul>`;
+	if (outcome.changedFilesTruncated) {
+		return `${list}<p class="outcome-file-limit">${escapeHtml(vscode.l10n.t('Showing {0} of {1} measured regular-file content changes; accounting was incomplete.', visible.length, outcome.changedFiles.length))}</p>${scope}`;
+	}
+	return visible.length === outcome.changedFiles.length
+		? `${list}${scope}`
+		: `${list}<p class="outcome-file-limit">${escapeHtml(vscode.l10n.t('Showing {0} of {1} changed files.', visible.length, outcome.changedFiles.length))}</p>${scope}`;
+}
+
+function renderChangedFileOutcome(file: FikeyaChangedFileOutcome): string {
+	const operation = changedFileOperationLabel(file.operation);
+	const lineDelta = file.lineDeltaStatus === 'exact'
+		? vscode.l10n.t('{0} lines touched · +{1} / -{2}', (file.linesAdded ?? 0) + (file.linesDeleted ?? 0), file.linesAdded ?? 0, file.linesDeleted ?? 0)
+		: file.lineDeltaStatus === 'binary'
+			? vscode.l10n.t('Binary file; line counts do not apply')
+			: file.lineDeltaStatus === 'too-large'
+				? vscode.l10n.t('Line delta exceeds the bounded text or line-count measurement')
+				: vscode.l10n.t('Line delta was not captured');
+	const sizeDelta = changedFileSizeLabel(file);
+	const beforeIdentity = file.beforeSha256 ?? (file.operation === 'add' ? vscode.l10n.t('File did not exist') : vscode.l10n.t('SHA-256 not captured'));
+	const afterIdentity = file.afterSha256 ?? (file.operation === 'delete' ? vscode.l10n.t('File deleted') : vscode.l10n.t('SHA-256 not captured'));
+	const pathControl = file.operation === 'delete'
+		? `<code class="outcome-file" title="${escapeHtml(vscode.l10n.t('Deleted file: {0}', file.path))}">${escapeHtml(file.path)}</code>`
+		: `<button class="outcome-file" data-open-file="${escapeHtml(file.path)}" type="button" title="${escapeHtml(vscode.l10n.t('Open {0}', file.path))}">${escapeHtml(file.path)}</button>`;
+	return `<li class="outcome-file-entry" data-operation="${escapeHtml(file.operation)}">
+		<div class="outcome-file-heading"><span class="outcome-file-operation">${escapeHtml(operation)}</span>${pathControl}</div>
+		<dl class="outcome-file-stats"><div><dt>${escapeHtml(vscode.l10n.t('Lines'))}</dt><dd>${escapeHtml(lineDelta)}</dd></div><div><dt>${escapeHtml(vscode.l10n.t('Bytes'))}</dt><dd>${escapeHtml(sizeDelta)}</dd></div></dl>
+		<details class="outcome-file-evidence"><summary>${escapeHtml(vscode.l10n.t('Before and after SHA-256'))}</summary><div class="outcome-file-hashes"><span>${escapeHtml(vscode.l10n.t('Before'))}: <code>${escapeHtml(beforeIdentity)}</code></span><span>${escapeHtml(vscode.l10n.t('After'))}: <code>${escapeHtml(afterIdentity)}</code></span></div></details>
+	</li>`;
+}
+
+function changedFileOperationLabel(operation: FikeyaChangedFileOutcome['operation']): string {
+	switch (operation) {
+		case 'add':
+			return vscode.l10n.t('Added');
+		case 'edit':
+			return vscode.l10n.t('Edited');
+		case 'delete':
+			return vscode.l10n.t('Deleted');
+	}
+}
+
+function changedFileSizeLabel(file: FikeyaChangedFileOutcome): string {
+	if (file.operation === 'add') {
+		return file.afterBytes === null ? vscode.l10n.t('Not captured') : formatExactByteCount(file.afterBytes);
+	}
+	if (file.operation === 'delete') {
+		return file.beforeBytes === null ? vscode.l10n.t('Not captured') : formatExactByteCount(file.beforeBytes);
+	}
+	if (file.beforeBytes === null || file.afterBytes === null) {
+		return vscode.l10n.t('Not captured');
+	}
+	return vscode.l10n.t('{0} to {1}', formatExactByteCount(file.beforeBytes), formatExactByteCount(file.afterBytes));
+}
+
+function formatExactByteCount(value: number): string {
+	return vscode.l10n.t('{0} B', value.toLocaleString());
+}
+
+function renderQarinahRunCapture(
+	status?: AgentSurfaceState['qarinahCaptureStatus'],
+	receipt?: FikeyaMemoryRunCaptureReceipt,
+	outcome?: FikeyaCodingOutcome
+): string {
+	if (!status) {
+		return '';
+	}
+	if (status === 'unavailable' || !receipt) {
+		return `<p class="outcome-capture" data-status="unavailable">${escapeHtml(vscode.l10n.t('Qarinah capture could not be confirmed. The ledger may contain partial run events; the on-screen execution details remain available for review.'))}</p>`;
+	}
+	const changedFileCapture = !outcome
+		? ''
+		: outcome.changedFilesTruncated
+			? `<p>${escapeHtml(vscode.l10n.t('Qarinah retained {0} measured regular-file content-change entries; the source run marked accounting incomplete.', Math.min(32, outcome.changedFiles.length)))}</p>`
+			: outcome.changedFiles.length > 32
+				? `<p>${escapeHtml(vscode.l10n.t('Qarinah retained 32 of {0} measured regular-file content-change entries.', outcome.changedFiles.length))}</p>`
+				: '';
+	const toolCapture = outcome && outcome.toolCalls.length > 12
+		? `<p>${escapeHtml(vscode.l10n.t('Qarinah retained 12 of {0} bounded tool-outcome entries.', outcome.toolCalls.length))}</p>`
+		: '';
+	const providerCapture = receipt.providerAttemptMeasurement === 'unavailable'
+		? `<p>${escapeHtml(vscode.l10n.t('Provider-attempt accounting is unavailable for this legacy runtime result; {0} completed receipt IDs were retained.', receipt.providerReceiptCount))}</p>`
+		: receipt.providerAttemptMeasurement === 'legacy-minimum'
+			? `<p>${escapeHtml(vscode.l10n.t('This legacy runtime proves at least {0} provider attempts through completed receipt IDs; failed or cancelled attempts may be absent.', receipt.providerCallCount))}</p>`
+			: receipt.providerReceiptCount < receipt.providerCallCount
+		? `<p>${escapeHtml(vscode.l10n.t('{0} provider requests were attempted; {1} completed with durable receipt IDs, and {2} matching receipt details were retained in this Qarinah event.', receipt.providerCallCount, receipt.providerReceiptCount, receipt.providerReceiptsCaptured))}</p>`
+		: receipt.providerReceiptsTruncated
+			? `<p>${escapeHtml(vscode.l10n.t('{0} provider requests completed with durable receipt IDs; Qarinah retained {1} matching receipt details.', receipt.providerReceiptCount, receipt.providerReceiptsCaptured))}</p>`
+			: '';
+	return `<details class="outcome-capture" data-status="recorded"><summary>${escapeHtml(vscode.l10n.t('Recorded in Qarinah · {0} run events', receipt.events.length))}</summary><p>${escapeHtml(vscode.l10n.t('The workspace ledger now has {0} events.', receipt.eventCount))}</p>${changedFileCapture}${toolCapture}${providerCapture}<dl class="receipt"><dt>${escapeHtml(vscode.l10n.t('Terminal status'))}</dt><dd>${escapeHtml(receipt.outcomeStatus)}</dd><dt>${escapeHtml(vscode.l10n.t('Captured turn'))}</dt><dd><code>${escapeHtml(receipt.capturedTurnHash)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Ledger head'))}</dt><dd><code>${escapeHtml(receipt.ledgerHeadHash)}</code></dd><dt>${escapeHtml(vscode.l10n.t('Graph manifest'))}</dt><dd><code>${escapeHtml(receipt.graphManifestHash)}</code></dd></dl></details>`;
 }
 
 function formatByteCount(value: number): string {
@@ -4589,19 +4945,22 @@ function renderReceipt(receipt: FikeyaProviderReceipt | undefined, agent: AgentS
 	</dl>`;
 }
 
-function renderCodingOutcome(outcome: FikeyaCodingOutcome, strings: WebviewStrings): string {
-	const changedFiles = outcome.changedFiles.length === 0
-		? `<p class="empty">${escapeHtml(strings.noChangedFiles)}</p>`
-		: `<ul class="outcome-files">${outcome.changedFiles.slice(0, 100).map(file => `<li><button class="outcome-file" data-open-file="${escapeHtml(file.path)}" type="button" title="${escapeHtml(vscode.l10n.t('Open changed file'))}">${escapeHtml(file.path)}</button></li>`).join('')}</ul>`;
+function renderCodingOutcome(
+	outcome: FikeyaCodingOutcome,
+	strings: WebviewStrings,
+	qarinahCaptureStatus?: AgentSurfaceState['qarinahCaptureStatus'],
+	qarinahCaptureReceipt?: FikeyaMemoryRunCaptureReceipt
+): string {
+	const changedFiles = renderChangedFileList(outcome, 100);
 	const tools = outcome.toolCalls.length === 0
 		? `<p class="empty">${escapeHtml(strings.noToolCalls)}</p>`
-		: `<ul>${outcome.toolCalls.slice(0, 100).map(tool => `<li><code>${escapeHtml(tool.name)}</code> - ${escapeHtml(tool.status)}${tool.test ? ` - ${escapeHtml(strings.test)}` : ''}${tool.exitCode === null ? '' : ` - ${escapeHtml(vscode.l10n.t('exit {0}', tool.exitCode))}`}</li>`).join('')}</ul>`;
+		: `<ul>${outcome.toolCalls.slice(0, 100).map(tool => `<li><code>${escapeHtml(tool.name)}</code> - ${escapeHtml(tool.status)}${tool.test ? ` - ${escapeHtml(strings.test)}` : ''}${tool.exitCode === null ? '' : ` - ${escapeHtml(vscode.l10n.t('exit {0}', tool.exitCode))}`}</li>`).join('')}</ul>${outcome.toolCalls.length > 100 ? `<p class="outcome-file-limit">${escapeHtml(vscode.l10n.t('Showing 100 of {0} tool outcomes.', outcome.toolCalls.length))}</p>` : ''}`;
 	return `<div class="agent-receipt">
 		<h2>${escapeHtml(strings.executionOutcome)}</h2>
 		<h3>${escapeHtml(strings.codingPlan)}</h3>
 		<pre class="agent-output" tabindex="0">${escapeHtml(outcome.plan)}</pre>
 		<p>${escapeHtml(vscode.l10n.t('{0} reviewed steps', outcome.steps))}</p>
-		<h3>${escapeHtml(strings.changedFiles)}</h3>${changedFiles}
+		<h3>${escapeHtml(strings.changedFiles)}</h3>${changedFiles}${renderQarinahRunCapture(qarinahCaptureStatus, qarinahCaptureReceipt, outcome)}
 		<h3>${escapeHtml(strings.toolActivity)}</h3>${tools}
 	</div>`;
 }

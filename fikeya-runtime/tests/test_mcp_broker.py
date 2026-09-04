@@ -37,6 +37,8 @@ _PRESET_ID = "cockroach-browser"
 _SECRET = "deterministic-keyring-only-test-credential"
 _UPSTREAM_TOOLS = (
     "browser_capabilities",
+    "browser_engines",
+    "browser_engine_preflight",
     "browser_health",
     "browser_sessions",
     "browser_snapshot",
@@ -333,7 +335,7 @@ for line in sys.stdin:
         send(request["id"], {{
             "protocolVersion": request["params"]["protocolVersion"],
             "capabilities": {{"tools": {{"listChanged": False}}}},
-            "serverInfo": {{"name": "cockroach-browser", "version": "0.4.1"}}
+            "serverInfo": {{"name": "cockroach-browser", "version": "0.5.0-rc.1"}}
         }})
     elif method == "tools/list":
         send(request["id"], {{"tools": [{{

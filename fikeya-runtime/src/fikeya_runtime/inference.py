@@ -335,8 +335,7 @@ class ProviderExecutor:
         token = cancellation or CancellationToken()
         token.raise_if_cancelled()
         url = _execution_url(profile)
-        payload_object = _request_payload(profile, request)
-        payload = stable_json(payload_object).encode("utf-8")
+        payload = _serialized_provider_request(profile, request)
         if len(payload) > MAX_REQUEST_BYTES:
             raise ConfigurationError(
                 f"Serialized provider request exceeds {MAX_REQUEST_BYTES} bytes."
@@ -377,7 +376,7 @@ def provider_request_fingerprint(
 ) -> ProviderRequestFingerprint:
     """Hash the exact request representation without retaining its content."""
 
-    payload = stable_json(_request_payload(profile, request)).encode("utf-8")
+    payload = _serialized_provider_request(profile, request)
     if len(payload) > MAX_REQUEST_BYTES:
         raise ConfigurationError(
             f"Serialized provider request exceeds {MAX_REQUEST_BYTES} bytes."
@@ -386,6 +385,22 @@ def provider_request_fingerprint(
         request_sha256=sha256_bytes(payload),
         request_bytes=len(payload),
     )
+
+
+def serialized_provider_request_bytes(
+    profile: ProviderProfile,
+    request: InferenceRequest,
+) -> int:
+    """Measure the exact UTF-8 request body for any supported provider API mode."""
+
+    return len(_serialized_provider_request(profile, request))
+
+
+def _serialized_provider_request(
+    profile: ProviderProfile,
+    request: InferenceRequest,
+) -> bytes:
+    return stable_json(_request_payload(profile, request)).encode("utf-8")
 
 
 def _execution_url(profile: ProviderProfile) -> str:
