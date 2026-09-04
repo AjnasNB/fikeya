@@ -18,6 +18,7 @@ from typing import cast
 
 from fikeya_agent_core import CancellationToken, ToolCall
 
+from .browser import BrowserEngine
 from .coding import ToolExecutionReceipt, WorkspaceExecutionBroker
 from .errors import ConfigurationError, FikeyaError, StateError
 from .state import StateStore
@@ -884,6 +885,7 @@ class PlanService:
         *,
         allowed_executables: frozenset[str] | None = None,
         allow_private_browser: bool = False,
+        browser_engine: BrowserEngine | str = "playwright",
         resume: bool = False,
         cancellation: CancellationToken | None = None,
     ) -> PlanRecord:
@@ -899,12 +901,14 @@ class PlanService:
             WorkspaceExecutionBroker(
                 self.workspace,
                 allow_private_browser=allow_private_browser,
+                browser_engine=browser_engine,
             )
             if allowed_executables is None
             else WorkspaceExecutionBroker(
                 self.workspace,
                 allowed_executables=allowed_executables,
                 allow_private_browser=allow_private_browser,
+                browser_engine=browser_engine,
             )
         )
         try:

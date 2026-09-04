@@ -92,6 +92,7 @@ extensions/vscode-api-tests/testWorkspace/worker.js
 extensions/vscode-colorize-tests/test/colorize-fixtures/test.js
 extensions/vscode-colorize-tests/test/colorize-fixtures/test6916.js
 extensions/yaml/build/update-grammar.js
+fikeya-runtime/src/fikeya_runtime/puppeteer_bridge.mjs
 gulpfile.mjs
 scripts/chat-simulation/common/perf-scenarios.js
 scripts/chat-simulation/common/utils.js

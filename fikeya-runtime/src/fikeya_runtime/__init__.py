@@ -5,17 +5,20 @@
 
 from .browser import (
     BrowserActionResult,
+    BrowserEngine,
     BrowserError,
     BrowserLimitError,
     BrowserReceipt,
     BrowserSecurityError,
     BrowserSession,
     BrowserUnavailable,
+    SUPPORTED_BROWSER_ENGINES,
 )
 from .events import EventEnvelope, EventType
 
 __all__ = [
     "BrowserActionResult",
+    "BrowserEngine",
     "BrowserError",
     "BrowserLimitError",
     "BrowserReceipt",
@@ -24,5 +27,6 @@ __all__ = [
     "BrowserUnavailable",
     "EventEnvelope",
     "EventType",
+    "SUPPORTED_BROWSER_ENGINES",
 ]
 __version__ = "0.1.0b8"

@@ -45,6 +45,8 @@ describe('Fikeya webview message validation', () => {
 	test('accepts only the declared commands and rejects retired surface controls', () => {
 		assert.deepStrictEqual([
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.runDoctor' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.dangerousLocalMode.enable' }),
+			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.dangerousLocalMode.disable' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.mode.lab' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.mode.research' }),
 			parseWebviewMessage({ type: 'openCommand', command: 'fikeya.view.usage' }),
@@ -57,6 +59,8 @@ describe('Fikeya webview message validation', () => {
 			parseWebviewMessage({ type: 'switchLayout', layout: 'agentFocus' })
 		], [
 			{ type: 'openCommand', command: 'fikeya.runDoctor' },
+			{ type: 'openCommand', command: 'fikeya.dangerousLocalMode.enable' },
+			{ type: 'openCommand', command: 'fikeya.dangerousLocalMode.disable' },
 			{ type: 'openCommand', command: 'fikeya.mode.lab' },
 			{ type: 'openCommand', command: 'fikeya.mode.research' },
 			{ type: 'openCommand', command: 'fikeya.view.usage' },

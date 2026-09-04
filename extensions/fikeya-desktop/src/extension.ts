@@ -11,6 +11,14 @@ import { agentComposerConstraints, agentComposerDefaults, buildAgentProviderProm
 import { listAzureOpenAIDeployments, listAzureOpenAIResources, listAzureSubscriptions } from './azureDiscovery';
 import { appendConversationMessage, FikeyaConversationMessage, parseConversationState, projectProviderHistory, serializeConversationState } from './conversation';
 import {
+	canEnableDangerousLocalMode,
+	createDangerousLocalModeGrant,
+	dangerousLocalModeConfirmation,
+	dangerousLocalModeDurationMs,
+	dangerousLocalModeIsActive,
+	DangerousLocalModeGrant
+} from './dangerousLocalMode';
+import {
 	appendTextFilesToPrompt,
 	FikeyaTextFileInput,
 	isAllowedTextFileName,
@@ -39,6 +47,7 @@ import {
 	FikeyaAgentMemory,
 	FikeyaAgentRunHandle,
 	FikeyaAgentUsage,
+	FikeyaBrowserLaunchOptions,
 	FikeyaCodingOutcome,
 	FikeyaMemoryMode,
 	FikeyaPlanRecord,
@@ -66,6 +75,20 @@ import {
 	startFikeyaPlan,
 	testFikeyaProvider
 } from './runtime';
+
+function configuredBrowserLaunchOptions(): FikeyaBrowserLaunchOptions {
+	const configuration = vscode.workspace.getConfiguration('fikeya');
+	const engine = configuration.get<string>('browser.engine') === 'puppeteer'
+		? 'puppeteer'
+		: 'playwright';
+	const puppeteerRoot = configuration.get<string>('browser.puppeteerRoot')?.trim();
+	const chromeExecutable = configuration.get<string>('browser.chromeExecutable')?.trim();
+	return {
+		engine,
+		...(engine === 'puppeteer' && puppeteerRoot ? { puppeteerRoot } : {}),
+		...(engine === 'puppeteer' && chromeExecutable ? { chromeExecutable } : {})
+	};
+}
 
 export interface ProviderDefinition {
 	readonly id: string;
@@ -171,6 +194,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	const provider = new FikeyaWebviewViewProvider(context, hostCapabilities);
 	void vscode.commands.executeCommand('setContext', 'fikeya.isFikeyaProduct', hostCapabilities.isFikeyaProduct);
 	void vscode.commands.executeCommand('setContext', 'fikeya.supportsDesktopWorkbench', hostCapabilities.supportsDesktopWorkbench);
+	void vscode.commands.executeCommand('setContext', 'fikeya.dangerousLocalModeActive', false);
 	context.subscriptions.push(provider);
 	context.subscriptions.push(vscode.window.registerWebviewViewProvider(FikeyaWebviewViewProvider.viewType, provider));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.open', () => provider.openDefaultLayout('chat')));
@@ -194,6 +218,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.runDoctor', async () => {
 		await provider.runRuntimeCommand('doctor');
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.dangerousLocalMode.enable', async () => {
+		await provider.enableDangerousLocalMode();
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('fikeya.dangerousLocalMode.disable', () => {
+		provider.disableDangerousLocalMode(true);
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('fikeya.mode.editor', async () => {
 		await provider.focusEditor();
@@ -266,6 +296,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	private disposed = false;
 	private readonly agentProfileStore: FikeyaAgentProfileStore;
 	private lastSourceDocument: vscode.Uri | undefined;
+	private dangerousLocalModeGrant: DangerousLocalModeGrant | undefined;
+	private dangerousLocalModeExpiryTimer: NodeJS.Timeout | undefined;
 
 	public constructor(
 		private readonly context: vscode.ExtensionContext,
@@ -309,6 +341,83 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.state = { ...this.state, conversation: [] };
 		this.refresh();
 		void vscode.window.showInformationMessage(vscode.l10n.t('Saved Fikeya Chat history was deleted from this workspace.'));
+	}
+
+	public async enableDangerousLocalMode(): Promise<void> {
+		const folder = vscode.workspace.workspaceFolders?.find(candidate => candidate.uri.scheme === 'file');
+		const workspacePath = folder?.uri.fsPath;
+		const eligible = canEnableDangerousLocalMode({
+			desktopUi: vscode.env.uiKind === vscode.UIKind.Desktop,
+			remoteName: vscode.env.remoteName,
+			trustedWorkspace: vscode.workspace.isTrusted,
+			workspaceScheme: folder?.uri.scheme,
+			workspacePath
+		});
+		if (!eligible || !workspacePath) {
+			void vscode.window.showErrorMessage(vscode.l10n.t('Full Access is available only for one trusted local desktop workspace. It is disabled in web, remote, virtual, and untrusted windows.'));
+			return;
+		}
+
+		const continueLabel = vscode.l10n.t('Continue');
+		const selected = await vscode.window.showWarningMessage(
+			vscode.l10n.t('Enable Full Access for 15 minutes?'),
+			{
+				modal: true,
+				detail: vscode.l10n.t('Fikeya will approve its own workspace and process tool requests for this exact local folder until the timer expires. Path containment, secret redaction, output limits, network controls, receipts, and cancellation stay enforced. This grant is process-local and is never restored after restart.')
+			},
+			continueLabel
+		);
+		if (selected !== continueLabel) {
+			return;
+		}
+
+		const phrase = dangerousLocalModeConfirmation(folder.name);
+		const confirmation = await vscode.window.showInputBox({
+			title: vscode.l10n.t('Confirm temporary Full Access'),
+			prompt: vscode.l10n.t('Type exactly: {0}', phrase),
+			placeHolder: phrase,
+			ignoreFocusOut: true,
+			validateInput: value => value === phrase ? undefined : vscode.l10n.t('The confirmation phrase must match exactly.')
+		});
+		if (confirmation !== phrase) {
+			return;
+		}
+
+		this.dangerousLocalModeGrant = createDangerousLocalModeGrant(workspacePath);
+		this.scheduleDangerousLocalModeExpiry();
+		void vscode.commands.executeCommand('setContext', 'fikeya.dangerousLocalModeActive', true);
+		this.refresh();
+		void vscode.window.showWarningMessage(vscode.l10n.t('Fikeya Full Access is active for this folder for 15 minutes. Tool requests are still recorded with exact receipts.'));
+	}
+
+	public disableDangerousLocalMode(showMessage = false): void {
+		if (this.dangerousLocalModeExpiryTimer) {
+			clearTimeout(this.dangerousLocalModeExpiryTimer);
+			this.dangerousLocalModeExpiryTimer = undefined;
+		}
+		const wasActive = this.dangerousLocalModeGrant !== undefined;
+		this.dangerousLocalModeGrant = undefined;
+		void vscode.commands.executeCommand('setContext', 'fikeya.dangerousLocalModeActive', false);
+		if (!this.disposed) {
+			this.refresh();
+		}
+		if (showMessage && wasActive) {
+			void vscode.window.showInformationMessage(vscode.l10n.t('Fikeya Full Access was disabled. Tool requests require approval again.'));
+		}
+	}
+
+	private scheduleDangerousLocalModeExpiry(): void {
+		if (this.dangerousLocalModeExpiryTimer) {
+			clearTimeout(this.dangerousLocalModeExpiryTimer);
+		}
+		const grant = this.dangerousLocalModeGrant;
+		if (!grant) {
+			return;
+		}
+		this.dangerousLocalModeExpiryTimer = setTimeout(() => {
+			this.disableDangerousLocalMode(false);
+			void vscode.window.showInformationMessage(vscode.l10n.t('Fikeya Full Access expired. Tool requests require approval again.'));
+		}, Math.max(1, Math.min(dangerousLocalModeDurationMs, grant.expiresAt - Date.now())));
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -464,6 +573,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
 	public dispose(): void {
 		this.disposed = true;
+		this.disableDangerousLocalMode(false);
 		this.projectPanelRequired = false;
 		this.activeAgentRun?.cancel();
 		this.activeAgentRun = undefined;
@@ -1019,26 +1129,19 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			}
 		}
 
-		const profileLabel = await vscode.window.showInputBox({
-			title: vscode.l10n.t('Configure {0}', provider.definition.label),
-			prompt: vscode.l10n.t('Profile Name'),
-			value: discoveredLabel ?? provider.definition.label,
-			ignoreFocusOut: true,
-			validateInput: value => value.trim().length > 0 && value.trim().length <= 80 ? undefined : vscode.l10n.t('Enter a name with 1 to 80 characters.')
-		});
-		if (!profileLabel) {
-			return;
-		}
-
-		const baseUrl = await vscode.window.showInputBox({
-			title: vscode.l10n.t('Configure {0}', provider.definition.label),
-			prompt: vscode.l10n.t('Endpoint URL'),
-			value: discoveredBaseUrl ?? provider.definition.defaultBaseUrl,
-			ignoreFocusOut: true,
-			validateInput: value => validateProviderUrl(value, true)
-		});
-		if (baseUrl === undefined) {
-			return;
+		const profileLabel = discoveredLabel ?? provider.definition.label;
+		let baseUrl = discoveredBaseUrl ?? provider.definition.defaultBaseUrl;
+		if (!baseUrl) {
+			const enteredBaseUrl = await vscode.window.showInputBox({
+				title: vscode.l10n.t('Configure {0}', provider.definition.label),
+				prompt: vscode.l10n.t('Endpoint URL'),
+				ignoreFocusOut: true,
+				validateInput: value => validateProviderUrl(value, true)
+			});
+			if (enteredBaseUrl === undefined) {
+				return;
+			}
+			baseUrl = enteredBaseUrl;
 		}
 
 		const model = await vscode.window.showInputBox({
@@ -1086,6 +1189,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		await this.refreshProviders(false);
 		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
 		void vscode.window.showInformationMessage(vscode.l10n.t('{0} was configured in Fikeya Runtime.', profileLabel.trim()));
+		const testConnection = vscode.l10n.t('Test connection');
+		if (await vscode.window.showInformationMessage(vscode.l10n.t('Model saved. You can run a content-free connection test now.'), testConnection) === testConnection) {
+			await this.testProvider(runtimeName);
+		}
 	}
 
 	private async configureProviderProfile(providerId: string, profileLabel: string, baseUrl: string, model: string, suppliedSecret?: string): Promise<void> {
@@ -1107,8 +1214,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 
+		const runtimeName = createProviderName(definition.id, profileLabel);
 		const configuration: FikeyaProviderConfiguration = {
-			name: createProviderName(definition.id, profileLabel),
+			name: runtimeName,
 			kind: definition.runtimeKind,
 			model,
 			baseUrl,
@@ -1127,6 +1235,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		await this.context.globalState.update('fikeya.desktop.onboarding.completed.v3', true);
 		await this.refreshProviders(false);
 		void vscode.window.showInformationMessage(vscode.l10n.t('{0} is ready.', profileLabel));
+		const testConnection = vscode.l10n.t('Test connection');
+		if (await vscode.window.showInformationMessage(vscode.l10n.t('Model saved. You can run a content-free connection test now.'), testConnection) === testConnection) {
+			await this.testProvider(runtimeName);
+		}
 	}
 
 	public async runRuntimeCommand(command: 'doctor' | 'init'): Promise<void> {
@@ -1359,7 +1471,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			request => this.approveAgentTool(request),
 			providerHistory,
 			images,
-			composerMode
+			composerMode,
+			undefined,
+			undefined,
+			configuredBrowserLaunchOptions()
 		);
 		this.activeAgentRun = operation;
 		const disposeProgress = operation.onProgress(progress => {
@@ -1834,6 +1949,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 	}
 
 	private async approveAgentTool(request: FikeyaAgentApproval): Promise<FikeyaAgentApprovalDecision> {
+		const workspacePath = getLocalWorkspacePath();
+		if (dangerousLocalModeIsActive(this.dangerousLocalModeGrant, workspacePath)) {
+			return 'allow_once';
+		}
+		if (this.dangerousLocalModeGrant) {
+			this.disableDangerousLocalMode(false);
+		}
 		const allow = vscode.l10n.t('Allow Once');
 		const deny = vscode.l10n.t('Deny Once');
 		const cancel = vscode.l10n.t('Cancel Run');
@@ -1904,7 +2026,13 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 		const operation = startFikeyaProject(
 			'start', providerName, goal, workspacePath,
-			request => this.approveAgentTool(request)
+			request => this.approveAgentTool(request),
+			undefined,
+			[],
+			false,
+			undefined,
+			undefined,
+			configuredBrowserLaunchOptions()
 		);
 		this.activeProjectRun = operation;
 		const stopStartedObserver = operation.onStarted(started => {
@@ -2008,7 +2136,8 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		this.refresh();
 		const operation = startFikeyaProject(
 			'resume', providerName, goal, workspacePath,
-			request => this.approveAgentTool(request), view.runId, [], allowPrivateBrowser
+			request => this.approveAgentTool(request), view.runId, [], allowPrivateBrowser,
+			undefined, undefined, configuredBrowserLaunchOptions()
 		);
 		this.activeProjectRun = operation;
 		this.activeProjectRunId = view.runId;
@@ -2242,7 +2371,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			return;
 		}
 
-		const operation = startFikeyaPlan(action, plan.planId, workspacePath, allowPrivateBrowser);
+		const operation = startFikeyaPlan(
+			action,
+			plan.planId,
+			workspacePath,
+			allowPrivateBrowser,
+			undefined,
+			undefined,
+			configuredBrowserLaunchOptions()
+		);
 		this.activePlanRun = operation;
 		const disposeProgress = operation.onProgress(progress => {
 			if (this.activePlanRun !== operation) {
@@ -2420,16 +2557,21 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			? this.state.activeMode
 			: '';
 		const providerDefinitionOptions = getProviderDefinitions().map((definition, index) => `<option value="${escapeHtml(definition.id)}" data-label="${escapeHtml(definition.label)}" data-detail="${escapeHtml(definition.detail)}" data-base-url="${escapeHtml(definition.defaultBaseUrl)}" data-requires-secret="${definition.secretPrompt ? 'true' : 'false'}"${index === 0 ? ' selected' : ''}>${escapeHtml(definition.label)}</option>`).join('');
+		const fullAccessActive = dangerousLocalModeIsActive(this.dangerousLocalModeGrant, getLocalWorkspacePath());
+		const fullAccessRemainingMinutes = fullAccessActive && this.dangerousLocalModeGrant
+			? Math.max(1, Math.ceil((this.dangerousLocalModeGrant.expiresAt - Date.now()) / 60_000))
+			: 0;
 		const setupCards = `<section class="grid two compact-grid">
 			<article class="card">
-				<div class="card-heading"><h2>${escapeHtml(strings.getStarted)}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
-				<p>${escapeHtml(strings.getStartedDescription)}</p>
+				<div class="card-heading"><h2>${escapeHtml(vscode.l10n.t('1. Open and prepare your project'))}</h2><span class="badge">${escapeHtml(this.state.workspaceInitialized ? strings.initialized : strings.notInitialized)}</span></div>
+				<p>${escapeHtml(vscode.l10n.t('Open a trusted local folder, then initialize its project context before asking Fikeya to work.'))}</p>
 				<div class="actions"><button data-command="fikeya.initializeWorkspace" type="button">${escapeHtml(strings.initializeWorkspace)}</button><button data-command="fikeya.runDoctor" class="secondary" type="button">${escapeHtml(strings.runDoctor)}</button></div>
 			</article>
 			<article class="card">
-				<div class="card-heading"><h2>${escapeHtml(strings.providers)}</h2><span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span></div>
+				<div class="card-heading"><h2>${escapeHtml(vscode.l10n.t('2. Connect one coding model'))}</h2><span class="badge">${escapeHtml(providerStatusSummary(this.state, strings))}</span></div>
+				<p>${escapeHtml(vscode.l10n.t('Choose a provider, enter its model ID and credential, then run one optional content-free connection test. Advanced endpoints stay out of the first-run path.'))}</p>
 				<div class="providers">${providerCards}</div>
-				<div class="actions"><button data-provider-modal-open type="button">${escapeHtml(strings.configureProvider)}</button><button data-command="fikeya.configureProvider" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Azure CLI discovery'))}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
+				<div class="actions"><button data-provider-modal-open type="button">${escapeHtml(vscode.l10n.t('Connect a model'))}</button><button data-command="fikeya.configureProvider" class="secondary" type="button">${escapeHtml(vscode.l10n.t('Azure CLI discovery'))}</button><button data-action="refresh-providers" class="secondary" type="button">${escapeHtml(strings.refresh)}</button></div>
 			</article>
 		</section>`;
 		const usageSurface = `${statisticsSurface}${this.state.agent.outcome ? `<section class="card">${renderCodingOutcome(this.state.agent.outcome, strings)}</section>` : ''}${this.state.agent.sessionId ? `<section class="card"><h2>${escapeHtml(strings.latestCallReceipt)}</h2>${renderReceipt(latestReceipt, this.state.agent, strings)}</section>` : ''}`;
@@ -2437,23 +2579,24 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const chatWorkspace = `<div class="active-surface" data-initial-modal="${initialModal}" data-plan-id="${escapeHtml(this.state.plan.record?.planId ?? '')}" data-accepted-request-id="${escapeHtml(this.lastAcceptedComposerRequestId ?? '')}">
 			<nav class="workspace-navigation" aria-label="${escapeHtml(vscode.l10n.t('Fikeya workspace'))}">
 				<div class="workspace-current"><img class="workspace-mark" src="${logoUri}" alt=""><strong>${escapeHtml(vscode.l10n.t('Fikeya Chat'))}</strong><span class="workspace-label" title="${escapeHtml(this.state.workspaceName)}">${escapeHtml(this.state.workspaceName)}</span></div>
+				${fullAccessActive ? `<button class="full-access-indicator" data-command="fikeya.dangerousLocalMode.disable" type="button" title="${escapeHtml(vscode.l10n.t('Disable temporary Full Access'))}"><span aria-hidden="true">⚠</span>${escapeHtml(vscode.l10n.t('Full Access · {0} min', fullAccessRemainingMinutes))}</button>` : ''}
 			</nav>
 			<section id="surface-panel-chat" class="surface-panel" role="region" aria-label="${escapeHtml(vscode.l10n.t('Chat'))}" data-surface-panel="chat">${agentSurface}</section>
 			<dialog class="workspace-overlay" data-workspace-modal="context" aria-label="${escapeHtml(vscode.l10n.t('Context graph'))}"><header><strong>${escapeHtml(vscode.l10n.t('Qarinah context graph'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${memoryGraph}</div></dialog>
 			<dialog class="workspace-overlay" data-workspace-modal="usage" aria-label="${escapeHtml(vscode.l10n.t('Usage and receipts'))}"><header><strong>${escapeHtml(vscode.l10n.t('Usage and receipts'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${usageSurface}</div></dialog>
 			<dialog class="workspace-overlay" data-workspace-modal="setup" aria-label="${escapeHtml(vscode.l10n.t('Models and setup'))}"><header><strong>${escapeHtml(vscode.l10n.t('Models and setup'))}</strong>${closeOverlay}</header><div class="workspace-overlay-body">${setupCards}</div></dialog>
-			<dialog class="provider-modal" data-provider-modal aria-label="${escapeHtml(vscode.l10n.t('Add a model'))}">
+			<dialog class="provider-modal" data-provider-modal aria-label="${escapeHtml(vscode.l10n.t('Connect a model'))}">
 				<form data-provider-form autocomplete="off">
-					<header><div><strong>${escapeHtml(vscode.l10n.t('Add a model'))}</strong><span>${escapeHtml(vscode.l10n.t('Your credential is sent once to the local runtime and stored in the operating system credential store.'))}</span></div><button class="quiet" data-provider-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">×</button></header>
+					<header><div><strong>${escapeHtml(vscode.l10n.t('Connect a model'))}</strong><span>${escapeHtml(vscode.l10n.t('Choose a provider, then enter its exact model ID and credential. Your credential is sent once to the local runtime and stored in the operating system credential store.'))}</span></div><button class="quiet" data-provider-modal-close type="button" aria-label="${escapeHtml(vscode.l10n.t('Close'))}">×</button></header>
 					<div class="provider-modal-body">
 						<label class="field"><span>${escapeHtml(vscode.l10n.t('Provider'))}</span><select name="providerId">${providerDefinitionOptions}</select></label>
 						<p class="provider-definition-detail" data-provider-detail></p>
-						<div class="provider-fields"><label class="field"><span>${escapeHtml(vscode.l10n.t('Profile name'))}</span><input name="profileLabel" maxlength="80" required></label><label class="field"><span>${escapeHtml(vscode.l10n.t('Model or deployment'))}</span><input name="model" maxlength="160" placeholder="${escapeHtml(vscode.l10n.t('Enter the exact model ID'))}" required></label></div>
-						<label class="field"><span>${escapeHtml(vscode.l10n.t('Endpoint'))}</span><input name="baseUrl" type="url" maxlength="4096" required></label>
+						<label class="field"><span>${escapeHtml(vscode.l10n.t('Model or deployment'))}</span><input name="model" maxlength="160" autocomplete="off" placeholder="${escapeHtml(vscode.l10n.t('Enter the exact model ID'))}" required></label>
 						<label class="field" data-provider-secret-field><span>${escapeHtml(vscode.l10n.t('API key or token'))}</span><input name="secret" type="password" maxlength="16384" autocomplete="new-password"></label>
+						<details class="provider-advanced" data-provider-advanced><summary>${escapeHtml(vscode.l10n.t('Advanced connection options'))}</summary><p>${escapeHtml(vscode.l10n.t('Use these only for a custom connection or Azure endpoint.'))}</p><div class="provider-fields"><label class="field"><span>${escapeHtml(vscode.l10n.t('Internal label (optional)'))}</span><input name="profileLabel" maxlength="80"></label><label class="field"><span>${escapeHtml(vscode.l10n.t('Endpoint'))}</span><input name="baseUrl" type="url" maxlength="4096" required></label></div></details>
 						<p class="provider-form-error" data-provider-error role="alert" hidden></p>
 					</div>
-					<footer><button class="secondary" data-provider-modal-close type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button><button type="submit">${escapeHtml(vscode.l10n.t('Add model'))}</button></footer>
+					<footer><button class="secondary" data-provider-modal-close type="button">${escapeHtml(vscode.l10n.t('Cancel'))}</button><button type="submit">${escapeHtml(vscode.l10n.t('Save model'))}</button></footer>
 				</form>
 			</dialog>
 		</div>`;
@@ -2542,6 +2685,10 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.provider-modal footer { justify-content: flex-end; border-top: 1px solid var(--vscode-widget-border); }
 		.provider-modal-body { display: grid; gap: 10px; padding: 14px; overflow: auto; }
 		.provider-fields { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 10px; }
+		.provider-advanced { display: grid; gap: 10px; padding: 10px; border: 1px solid var(--vscode-widget-border); border-radius: 8px; }
+		.provider-advanced summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 11px; }
+		.provider-advanced > p { margin: 0; color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.4; }
+		.provider-advanced[open] { background: var(--vscode-textBlockQuote-background); }
 		.provider-definition-detail, .provider-form-error { padding: 8px 9px; border-left: 2px solid var(--vscode-focusBorder); background: var(--vscode-textBlockQuote-background); font-size: 11px; }
 		.provider-form-error { border-left-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
 		.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -2829,6 +2976,9 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		.memory-graph[data-expanded="true"] { position: fixed; inset: 0; z-index: 1000; align-content: start; overflow: auto; padding: 12px; background: var(--vscode-editor-background); }
 		.memory-graph[data-expanded="true"] .graph-viewport, .memory-graph[data-expanded="true"] .graph-canvas { min-height: calc(100vh - 160px); }
 		.disclaimer { padding-left: 9px; border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.45; }
+		.full-access-card { border-color: var(--vscode-editorWarning-foreground); }
+		.full-access-card[data-active="true"] { box-shadow: inset 3px 0 0 var(--vscode-editorWarning-foreground); }
+		.full-access-indicator { min-height: 24px; margin-left: auto; padding: 2px 7px; border-color: var(--vscode-editorWarning-foreground); color: var(--vscode-editorWarning-foreground); background: transparent; font-size: 10px; font-weight: 700; }
 		@media (min-width: 620px) { .run-strip { grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(82px, 1fr)); } .run-metric.provider { grid-column: auto; } }
 			@media (min-width: 520px) { .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .statistics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 		@media (max-width: 900px) { .graph-workspace, .plan-workspace { grid-template-columns: 1fr; } .graph-details { max-height: none; } }
@@ -2923,6 +3073,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		const providerModal = document.querySelector('[data-provider-modal]');
 		const providerForm = providerModal?.querySelector('[data-provider-form]');
 		const providerIdField = providerForm?.querySelector('[name="providerId"]');
+		const providerAdvanced = providerForm?.querySelector('[data-provider-advanced]');
 		const providerLabelField = providerForm?.querySelector('[name="profileLabel"]');
 		const providerModelField = providerForm?.querySelector('[name="model"]');
 		const providerBaseUrlField = providerForm?.querySelector('[name="baseUrl"]');
@@ -2935,6 +3086,7 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 			if (!selected) return;
 			if (providerLabelField) providerLabelField.value = selected.dataset.label || '';
 			if (providerBaseUrlField) providerBaseUrlField.value = selected.dataset.baseUrl || '';
+			if (providerAdvanced) providerAdvanced.open = !selected.dataset.baseUrl;
 			if (providerSecretField) {
 				providerSecretField.value = '';
 				providerSecretField.required = selected.dataset.requiresSecret === 'true';
@@ -2958,15 +3110,15 @@ class FikeyaWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Di
 		providerForm?.addEventListener('submit', event => {
 			event.preventDefault();
 			const providerId = providerIdField?.value || '';
-			const profileLabel = providerLabelField?.value?.trim() || '';
+			const selected = providerIdField?.selectedOptions?.[0];
+			const profileLabel = providerLabelField?.value?.trim() || selected?.dataset.label || '';
 			const model = providerModelField?.value?.trim() || '';
 			const baseUrl = providerBaseUrlField?.value?.trim() || '';
 			const secret = providerSecretField?.value || undefined;
-			const selected = providerIdField?.selectedOptions?.[0];
 			const requiresSecret = selected?.dataset.requiresSecret === 'true';
 			if (!providerId || !profileLabel || !model || !baseUrl || (requiresSecret && !secret)) {
 				if (providerError) {
-					providerError.textContent = 'Complete the required model fields.';
+					providerError.textContent = 'Add a model ID and endpoint. Open Advanced connection options for a custom or Azure endpoint.';
 					providerError.hidden = false;
 				}
 				return;

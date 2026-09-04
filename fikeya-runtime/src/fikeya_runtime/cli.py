@@ -11,6 +11,7 @@ import getpass
 import hashlib
 import json
 import math
+import os
 import signal
 import sqlite3
 import sys
@@ -23,6 +24,7 @@ from fikeya_agent_core import ApprovalDecision
 from . import __version__
 from .agent import AgentRunner
 from .autonomy import AutonomousProjectLoop, AutonomyRecord, ProviderOptions
+from .browser import SUPPORTED_BROWSER_ENGINES
 from .coding import CodingAgentRunner
 from .conversation import parse_conversation_history
 from .credentials import CredentialResolver
@@ -33,8 +35,10 @@ from .errors import (
     ProviderError,
     ProviderHttpError,
     SecretStoreUnavailable,
+    ToolPresetError,
 )
 from .inference import MAX_REQUEST_BYTES, CancellationToken, parse_inference_images
+from .mcp_broker import McpCredentialStore, preset_broker_tools
 from .modes import AgentMode
 from .planning import (
     PLAN_PROPOSAL_PROTOCOL,
@@ -58,6 +62,7 @@ from .tool_presets import (
     ToolEnablementStore,
     ToolPreset,
     ToolPresetLoader,
+    ToolStatus,
 )
 from .util import sha256_text, utc_now
 from .workspace import Workspace, initialize_workspace, runtime_home
@@ -194,6 +199,15 @@ def _parser() -> argparse.ArgumentParser:
             "Off by default."
         ),
     )
+    agent_execute.add_argument(
+        "--browser-engine",
+        choices=SUPPORTED_BROWSER_ENGINES,
+        default="playwright",
+        help=(
+            "Use Playwright by default or explicitly select the optional "
+            "Puppeteer transport."
+        ),
+    )
     agent_execute.add_argument("--timeout", type=float, default=60.0)
     agent_execute.add_argument("--max-output-tokens", type=int, default=1_024)
     agent_execute.add_argument(
@@ -247,6 +261,9 @@ def _parser() -> argparse.ArgumentParser:
     project_start.add_argument("--json-lines", action="store_true")
     project_start.add_argument("--allow-network", action="store_true")
     project_start.add_argument("--allow-private-browser", action="store_true")
+    project_start.add_argument(
+        "--browser-engine", choices=SUPPORTED_BROWSER_ENGINES, default="playwright"
+    )
     project_start.add_argument("--timeout", type=float, default=120.0)
     project_start.add_argument("--max-output-tokens", type=int, default=4_096)
     project_start.add_argument(
@@ -265,6 +282,9 @@ def _parser() -> argparse.ArgumentParser:
     project_resume.add_argument("--json-lines", action="store_true")
     project_resume.add_argument("--allow-network", action="store_true")
     project_resume.add_argument("--allow-private-browser", action="store_true")
+    project_resume.add_argument(
+        "--browser-engine", choices=SUPPORTED_BROWSER_ENGINES, default="playwright"
+    )
     project_resume.add_argument("--timeout", type=float, default=120.0)
     project_resume.add_argument("--max-output-tokens", type=int, default=4_096)
     project_resume.add_argument(
@@ -362,6 +382,11 @@ def _parser() -> argparse.ArgumentParser:
             action="store_true",
             help="Permit approved browser steps to access private or loopback hosts.",
         )
+        plan_run.add_argument(
+            "--browser-engine",
+            choices=SUPPORTED_BROWSER_ENGINES,
+            default="playwright",
+        )
         plan_run.add_argument("--json", action="store_true")
 
     plan_cancel = plan_commands.add_parser("cancel", help="Cancel a non-terminal plan.")
@@ -400,6 +425,29 @@ def _parser() -> argparse.ArgumentParser:
     tool_status.add_argument("preset_id", nargs="?")
     tool_status.add_argument("--workspace", required=True)
     tool_status.add_argument("--json", action="store_true")
+
+    tool_credential_set = tool_commands.add_parser(
+        "credential-set",
+        help="Store one declared external-tool credential in the OS keyring.",
+    )
+    tool_credential_set.add_argument("preset_id")
+    tool_credential_set.add_argument("credential_name")
+    tool_credential_set.add_argument("--workspace", required=True)
+    tool_credential_set.add_argument(
+        "--secret-stdin",
+        action="store_true",
+        help="Read the credential from stdin instead of a hidden terminal prompt.",
+    )
+    tool_credential_set.add_argument("--json", action="store_true")
+
+    tool_credential_remove = tool_commands.add_parser(
+        "credential-remove",
+        help="Remove one declared external-tool credential from the OS keyring.",
+    )
+    tool_credential_remove.add_argument("preset_id")
+    tool_credential_remove.add_argument("credential_name")
+    tool_credential_remove.add_argument("--workspace", required=True)
+    tool_credential_remove.add_argument("--json", action="store_true")
     return parser
 
 
@@ -653,7 +701,7 @@ def _run_provider(args: argparse.Namespace) -> int:
                     "defaultBaseUrl": definition.default_base_url,
                     "defaultCredentialType": definition.default_credential_type,
                     "kind": definition.kind.value,
-                    "secretRequired": definition.secret_required,
+                    "credentialRequired": definition.credential_required,
                 }
                 for definition in PROVIDER_REGISTRY.values()
             ]
@@ -922,6 +970,7 @@ def _run_project(args: argparse.Namespace) -> int:
         provider_name=args.provider,
         allow_network=args.allow_network,
         allow_private_browser=args.allow_private_browser,
+        browser_engine=args.browser_engine,
         timeout=args.timeout,
         max_output_tokens=args.max_output_tokens,
         memory_mode=args.memory,
@@ -1129,6 +1178,7 @@ def _run_coding_agent(
                     images=images,
                     mode=args.mode,
                     allow_private_browser=args.allow_private_browser,
+                    browser_engine=args.browser_engine,
                 )
             )
     except ProviderConnectivityError as error:
@@ -1349,6 +1399,7 @@ def _run_plan(args: argparse.Namespace) -> int:
                     args.plan_id,
                     allowed_executables=allowed,
                     allow_private_browser=args.allow_private_browser,
+                    browser_engine=args.browser_engine,
                     resume=args.plan_command == "resume",
                     cancellation=cancellation,
                 )
@@ -1478,6 +1529,48 @@ def _run_tool(args: argparse.Namespace) -> int:
             as_json=args.json,
         )
         return 0
+    if args.tool_command == "credential-set":
+        preset = catalog.get(args.preset_id)
+        _require_declared_tool_credential(preset, args.credential_name)
+        credential = _read_tool_credential(args)
+        McpCredentialStore().set(
+            workspace,
+            preset.preset_id,
+            args.credential_name,
+            credential,
+        )
+        _emit(
+            {
+                "configured": True,
+                "credentialName": args.credential_name,
+                "message": "External-tool credential stored in the OS keyring.",
+                "ok": True,
+                "presetId": preset.preset_id,
+                "workspaceId": workspace.config.workspace_id,
+            },
+            as_json=args.json,
+        )
+        return 0
+    if args.tool_command == "credential-remove":
+        preset = catalog.get(args.preset_id)
+        _require_declared_tool_credential(preset, args.credential_name)
+        McpCredentialStore().remove(
+            workspace,
+            preset.preset_id,
+            args.credential_name,
+        )
+        _emit(
+            {
+                "configured": False,
+                "credentialName": args.credential_name,
+                "message": "External-tool credential removed from the OS keyring.",
+                "ok": True,
+                "presetId": preset.preset_id,
+                "workspaceId": workspace.config.workspace_id,
+            },
+            as_json=args.json,
+        )
+        return 0
     raise AssertionError("argparse accepted an unknown tool command")
 
 
@@ -1488,19 +1581,106 @@ def _tool_entry(
 ) -> dict[str, object]:
     status = enablements.status(preset) if enablements is not None else None
     diagnostic = loader.diagnostic(preset)
+    workspace = enablements.workspace if enablements is not None else None
+    configuration = [
+        {
+            "configured": bool(os.environ.get(str(item["name"]))),
+            "name": str(item["name"]),
+            "required": bool(item["required"]),
+        }
+        for item in preset.configuration
+    ]
+    credential_store = McpCredentialStore()
+    credentials = [
+        {
+            "configured": (
+                credential_store.configured(
+                    workspace, preset.preset_id, str(item["name"])
+                )
+                if workspace is not None
+                else None
+            ),
+            "name": str(item["name"]),
+            "required": bool(item["required"]),
+        }
+        for item in preset.secret_references
+    ]
     value = preset.public_json()
     value.update(
         {
+            "brokerNamespace": f"mcp.{preset.preset_id}",
+            "brokerTools": list(preset_broker_tools(preset)),
+            "configuration": configuration,
+            "credentials": credentials,
             "enabled": status.enabled if status is not None else False,
             "enabledAt": status.enabled_at if status is not None else None,
             "executableFound": diagnostic.executable_found,
             "provenanceWarning": diagnostic.warning,
+            "executionTrust": "trusted-local-executable",
+            "osSandboxed": False,
+            "sandboxWarning": (
+                "Exact approval limits when Fikeya may call this executable; it does "
+                "not restrict the executable's desktop-user filesystem or network "
+                "permissions. Install only reviewed local binaries or add OS sandboxing."
+            ),
+            "processTreeContained": True,
+            "requiresExactApproval": True,
             "requiresConfirmation": (
                 status.requires_confirmation if status is not None else False
             ),
+            "runtimeState": _tool_runtime_state(
+                status,
+                diagnostic.executable_found,
+                configuration,
+                credentials,
+            ),
+            "transport": "stdio",
         }
     )
     return value
+
+
+def _tool_runtime_state(
+    status: ToolStatus | None,
+    executable_found: bool,
+    configuration: list[dict[str, object]],
+    credentials: list[dict[str, object]],
+) -> str:
+    if status is None:
+        return "workspace-required"
+    if status.requires_confirmation:
+        return "preset-reconfirmation-required"
+    if not status.enabled:
+        return "disabled"
+    if not executable_found:
+        return "executable-missing"
+    if any(item["required"] and not item["configured"] for item in configuration):
+        return "configuration-missing"
+    if any(item["required"] and not item["configured"] for item in credentials):
+        return "credential-missing"
+    return "preflight-ready"
+
+
+def _require_declared_tool_credential(preset: ToolPreset, name: str) -> None:
+    declared = {str(item["name"]) for item in preset.secret_references}
+    if name not in declared:
+        raise ToolPresetError(
+            f"Preset {preset.preset_id} does not declare credential {name}."
+        )
+
+
+def _read_tool_credential(args: argparse.Namespace) -> str:
+    if args.secret_stdin:
+        value = sys.stdin.read(16_385)
+        if len(value) > 16_384:
+            raise ToolPresetError("External-tool credential exceeds 16384 characters.")
+        return value.rstrip("\r\n")
+    if not sys.stdin.isatty():
+        raise ToolPresetError(
+            "An external-tool credential requires a hidden terminal prompt or "
+            "--secret-stdin."
+        )
+    return getpass.getpass("External-tool credential: ")
 
 
 @contextmanager

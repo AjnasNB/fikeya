@@ -5,6 +5,20 @@
 
 from .cancellation import CancellationToken
 from .checkpoints import CheckpointStore, InMemoryCheckpointStore, SqliteCheckpointStore
+from .deep_agents import (
+    DeepAgentsCheckpointRef,
+    DeepAgentsCompatibilityAdapter,
+    DeepAgentsDependencyStatus,
+    DeepAgentsGraph,
+    DeepAgentsIntegrationDiagnostic,
+    DeepAgentsInterrupt,
+    DeepAgentsProviderAdapter,
+    DeepAgentsSession,
+    deep_agents_dependency_status,
+    deep_agents_diagnostic,
+    require_deep_agents_dependencies,
+)
+from .deep_agents_sample import DeterministicDecisionGraph, deterministic_read_sample_graph
 from .engine import AgentOrchestrator
 from .errors import (
     AgentCoreError,
@@ -64,6 +78,15 @@ __all__ = [
     "CheckpointStore",
     "ConfigurationError",
     "DecisionKind",
+    "DeepAgentsCheckpointRef",
+    "DeepAgentsCompatibilityAdapter",
+    "DeepAgentsDependencyStatus",
+    "DeepAgentsGraph",
+    "DeepAgentsIntegrationDiagnostic",
+    "DeepAgentsInterrupt",
+    "DeepAgentsProviderAdapter",
+    "DeepAgentsSession",
+    "DeterministicDecisionGraph",
     "EvidenceCitation",
     "EvidenceContext",
     "EventKind",
@@ -88,6 +111,10 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     "decode_provider_decision",
+    "deep_agents_dependency_status",
+    "deep_agents_diagnostic",
+    "deterministic_read_sample_graph",
     "render_provider_prompt",
     "render_system_instructions",
+    "require_deep_agents_dependencies",
 ]

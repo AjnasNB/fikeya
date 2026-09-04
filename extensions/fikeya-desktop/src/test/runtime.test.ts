@@ -10,6 +10,7 @@ import path from 'node:path';
 import { describe, test } from 'node:test';
 import {
 	buildAgentRunArguments,
+	buildFikeyaBrowserEnvironment,
 	buildFikeyaRuntimeEnvironment,
 	buildPlanActionArguments,
 	buildPlanApproveArguments,
@@ -380,7 +381,7 @@ describe('Fikeya runtime protocol', () => {
 		const args = buildAgentRunArguments('openrouter-primary', 2048, 12_000, 'auto', 'review');
 		assert.deepStrictEqual(args.slice(0, 7), ['agent', 'execute', '.', '--provider', 'openrouter-primary', '--protocol-stdin', '--allow-network']);
 		assert.ok(!args.includes(prompt));
-		assert.deepStrictEqual(args.slice(-7), ['--context-max-characters', '12000', '--memory', 'auto', '--mode', 'review', '--json-lines']);
+		assert.deepStrictEqual(args.slice(-9), ['--context-max-characters', '12000', '--memory', 'auto', '--mode', 'review', '--browser-engine', 'playwright', '--json-lines']);
 		assert.ok(args.includes('--context-max-characters'));
 		assert.ok(args.includes('--json-lines'));
 	});
@@ -390,9 +391,10 @@ describe('Fikeya runtime protocol', () => {
 		const start = buildProjectRunArguments('start', 'azure-primary');
 		const resume = buildProjectRunArguments('resume', 'azure-primary', 'aut_fixture');
 		const localBrowserResume = buildProjectRunArguments('resume', 'azure-primary', 'aut_fixture', true);
-		assert.deepStrictEqual(start, ['project', 'start', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--json-lines']);
-		assert.deepStrictEqual(resume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--json-lines']);
-		assert.deepStrictEqual(localBrowserResume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--allow-private-browser', '--json-lines']);
+		assert.deepStrictEqual(start, ['project', 'start', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--browser-engine', 'playwright', '--json-lines']);
+		assert.deepStrictEqual(resume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--browser-engine', 'playwright', '--json-lines']);
+		assert.deepStrictEqual(localBrowserResume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--allow-private-browser', '--browser-engine', 'playwright', '--json-lines']);
+		assert.deepStrictEqual(buildProjectRunArguments('start', 'azure-primary', undefined, false, 'puppeteer').slice(-3), ['--browser-engine', 'puppeteer', '--json-lines']);
 		assert.ok(!start.includes(goal));
 		assert.ok(!resume.includes(goal));
 	});
@@ -745,12 +747,39 @@ describe('Fikeya runtime protocol', () => {
 		assert.deepStrictEqual(parentEnvironment, { PATH: 'fixed-path' });
 	});
 
+	test('keeps Puppeteer selection explicit and removes stale transport paths', () => {
+		const parentEnvironment: NodeJS.ProcessEnv = {
+			FIKEYA_PUPPETEER_ROOT: 'stale-root',
+			FIKEYA_CHROME_EXECUTABLE: 'stale-chrome',
+			PATH: 'fixed-path'
+		};
+		assert.deepStrictEqual(buildFikeyaBrowserEnvironment({ engine: 'playwright' }, parentEnvironment), {
+			FIKEYA_BROWSER_ENGINE: 'playwright',
+			PATH: 'fixed-path'
+		});
+		assert.deepStrictEqual(buildFikeyaBrowserEnvironment({
+			engine: 'puppeteer',
+			puppeteerRoot: 'D:\\reviewed\\puppeteer',
+			chromeExecutable: 'D:\\reviewed\\chrome.exe'
+		}, parentEnvironment), {
+			FIKEYA_BROWSER_ENGINE: 'puppeteer',
+			FIKEYA_PUPPETEER_ROOT: 'D:\\reviewed\\puppeteer',
+			FIKEYA_CHROME_EXECUTABLE: 'D:\\reviewed\\chrome.exe',
+			PATH: 'fixed-path'
+		});
+		assert.deepStrictEqual(parentEnvironment, {
+			FIKEYA_PUPPETEER_ROOT: 'stale-root',
+			FIKEYA_CHROME_EXECUTABLE: 'stale-chrome',
+			PATH: 'fixed-path'
+		});
+	});
+
 	test('keeps exact plan specifications out of process arguments', () => {
 		const privateContent = 'private file content';
 		assert.deepStrictEqual(buildPlanCreateArguments(), ['plan', 'create', '.', '--spec-stdin', '--json']);
 		assert.ok(!buildPlanCreateArguments().includes(privateContent));
-		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--json']);
-		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example', true), ['plan', 'resume', 'pln_example', '--workspace', '.', '--allow-private-browser', '--json']);
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--browser-engine', 'playwright', '--json']);
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example', true), ['plan', 'resume', 'pln_example', '--workspace', '.', '--allow-private-browser', '--browser-engine', 'playwright', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', ['inspect', 'verify']), ['plan', 'approve', 'pln_example', '--workspace', '.', '--step', 'inspect', '--step', 'verify', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', 'all'), ['plan', 'approve', 'pln_example', '--workspace', '.', '--all', '--json']);
 		const proposalArgs = buildPlanProposalArguments('azure-primary', 2048, 12_000, 'required');

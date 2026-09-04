@@ -407,11 +407,13 @@ source = { directory = "../fikeya-agent-core" }
 
 [package.metadata]
 requires-dist = [
+    { name = "deepagents", marker = "python_full_version >= '3.11' and extra == 'deep-agents'", specifier = ">=0.7,<0.8" },
+    { name = "langgraph", marker = "python_full_version >= '3.11' and extra == 'deep-agents'", specifier = ">=1.2,<2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<10" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25,<2" },
     { name = "ruff", marker = "extra == 'test'", specifier = ">=0.12,<1" },
 ]
-provides-extras = ["test"]
+provides-extras = ["deep-agents", "test"]
 
 [[package]]
 name = "fikeya-runtime"

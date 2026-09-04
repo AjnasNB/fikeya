@@ -56,6 +56,8 @@ export type FikeyaCommand =
 	| 'fikeya.configureAgents'
 	| 'fikeya.initializeWorkspace'
 	| 'fikeya.runDoctor'
+	| 'fikeya.dangerousLocalMode.enable'
+	| 'fikeya.dangerousLocalMode.disable'
 	| 'fikeya.mode.editor'
 	| 'fikeya.mode.agent'
 	| 'fikeya.mode.terminal'
@@ -73,6 +75,8 @@ const allowedCommands: readonly FikeyaCommand[] = [
 	'fikeya.configureAgents',
 	'fikeya.initializeWorkspace',
 	'fikeya.runDoctor',
+	'fikeya.dangerousLocalMode.enable',
+	'fikeya.dangerousLocalMode.disable',
 	'fikeya.mode.editor',
 	'fikeya.mode.agent',
 	'fikeya.mode.terminal',

@@ -178,6 +178,22 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(script, /replaceAll\('\\\\', '\/'\)/u);
 	});
 
+	test('keeps first-run model connection focused and moves custom provider fields behind Advanced', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		const modalStart = source.indexOf('<dialog class="provider-modal"');
+		const modalEnd = source.indexOf('</dialog>', modalStart);
+		const modal = source.slice(modalStart, modalEnd);
+		assert.match(source, /1\. Open and prepare your project/u);
+		assert.match(source, /2\. Connect one coding model/u);
+		assert.match(modal, /Connect a model/u);
+		assert.match(modal, /data-provider-advanced/u);
+		assert.ok(modal.indexOf('data-provider-advanced') < modal.indexOf('name="profileLabel"'));
+		assert.ok(modal.indexOf('data-provider-advanced') < modal.indexOf('name="baseUrl"'));
+		assert.match(source, /const profileLabel = providerLabelField\?\.value\?\.trim\(\) \|\| selected\?\.dataset\.label \|\| '';/u);
+		assert.match(source, /providerAdvanced\.open = !selected\.dataset\.baseUrl;/u);
+		assert.match(source, /Model saved\. You can run a content-free connection test now\./u);
+	});
+
 	test('restores composer focus against the rendered Chat surface', async () => {
 		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
 		assert.match(source, /focusSurface: initialSurface/u);
@@ -241,6 +257,13 @@ describe('Fikeya chat webview refresh state', () => {
 		assert.match(source, /this\.projectPanelRequired = true/u);
 		assert.match(source, /if \(this\.projectPanelRequired && !this\.disposed && !this\.panel\)/u);
 		assert.doesNotMatch(source, /data-layout-switch/u);
+	});
+
+	test('keeps temporary full access explicit and immediately revocable', async () => {
+		const source = await readFile(path.join(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+		assert.match(source, /class="full-access-indicator" data-command="fikeya\.dangerousLocalMode\.disable"/u);
+		assert.match(source, /Full Access · \{0\} min/u);
+		assert.match(source, /process-local and is never restored after restart/u);
 	});
 
 	test('initializes Fikeya and retries Qarinah before accepting any coding request', async () => {
