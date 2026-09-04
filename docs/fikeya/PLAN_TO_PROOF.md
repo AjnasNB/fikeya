@@ -108,7 +108,7 @@ Every persisted step currently has:
 
 ### Chat
 
-- Shows a bounded multi-turn conversation; it is process-local by default and can be persisted only when the developer explicitly enables credential-redacted workspace history. It is not provider-native session replay.
+- Shows a bounded multi-turn conversation; it is process-local by default and can be persisted only when the developer explicitly enables workspace history. Chat text and changed-file paths receive best-effort known-pattern sanitization, not comprehensive secret detection; attachment metadata is not secret-scanned and unknown formats may remain, so users are warned not to store secrets in Chat, attachment names, or file paths. History includes at most 32 validated changed-file metadata entries per terminal run, discloses any projection truncation, excludes file contents and receipts, and never sends that attachment to the provider. It is not provider-native session replay.
 - Exposes provider, model, context mode, and effort or output budget without turning the composer into a settings page.
 - Starts either an ordinary interactive agent run or a separate planning-only proposal call from the same composer.
 - Provides direct actions for stop, create/open plan, open context, usage, and settings.

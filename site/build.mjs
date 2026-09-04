@@ -1,6 +1,8 @@
-import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { renderBrowserIntegrationGuide, renderBrowserPaper } from './paper.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const output = path.resolve(root, 'dist');
@@ -44,6 +46,7 @@ const pageDirectories = [
 	'docs',
 	'download',
 	'enterprise',
+	'opensource',
 	'privacy',
 	'product',
 	'proof',
@@ -67,8 +70,15 @@ const fontFiles = [
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await mkdir(path.join(output, 'fonts'), { recursive: true });
+await mkdir(path.join(output, 'papers'), { recursive: true });
+await mkdir(path.join(output, 'papers', 'fikeya-cockroach-browser'), { recursive: true });
+await mkdir(path.join(output, 'docs', 'cockroach-browser'), { recursive: true });
 await Promise.all(pageDirectories.map(directory => mkdir(path.join(output, directory), { recursive: true })));
 await Promise.all(dataDirectories.map(directory => mkdir(path.join(output, directory), { recursive: true })));
+const browserPaperSource = path.resolve(root, '..', 'docs', 'FIKEYA_COCKROACH_BROWSER_PAPER.md');
+const browserPaperMarkdown = await readFile(browserPaperSource, 'utf8');
+const browserIntegrationGuideSource = path.resolve(root, '..', 'docs', 'fikeya', 'COCKROACH_BROWSER_OPEN_SOURCE_INTEGRATIONS.md');
+const browserIntegrationGuideMarkdown = await readFile(browserIntegrationGuideSource, 'utf8');
 await Promise.all([
 	...publicFiles.map(file => copyFile(path.join(root, file), path.join(output, file))),
 	...pageDirectories.map(directory => copyFile(
@@ -79,9 +89,23 @@ await Promise.all([
 		path.join(root, directory, 'latest.json'),
 		path.join(output, directory, 'latest.json')
 	)),
+	copyFile(
+		browserPaperSource,
+		path.join(output, 'papers', 'fikeya-cockroach-browser.md')
+	),
+	writeFile(
+		path.join(output, 'papers', 'fikeya-cockroach-browser', 'index.html'),
+		renderBrowserPaper(browserPaperMarkdown),
+		'utf8'
+	),
+	writeFile(
+		path.join(output, 'docs', 'cockroach-browser', 'index.html'),
+		renderBrowserIntegrationGuide(browserIntegrationGuideMarkdown),
+		'utf8'
+	),
 	...fontFiles.map(([source, destination]) => copyFile(
 		path.join(root, 'node_modules', source),
 		path.join(output, 'fonts', destination)
 	))
 ]);
-process.stdout.write(`Built ${publicFiles.length + pageDirectories.length + dataDirectories.length} public files and ${fontFiles.length} fonts in ${output}.\n`);
+process.stdout.write(`Built ${publicFiles.length + pageDirectories.length + dataDirectories.length + 3} public files and ${fontFiles.length} fonts in ${output}.\n`);

@@ -4,7 +4,7 @@
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<meta name="description" content="Fikeya is an open AI code editor that compiles task-relevant project evidence and records provider-reported usage so developers can measure whether matched tasks use fewer billed input tokens.">
-		<meta name="robots" content="index, follow, max-image-preview:large">
+		<meta name="robots" content="noindex, follow">
 		<meta name="theme-color" content="#0b0f0e">
 		<meta name="color-scheme" content="dark">
 		<meta property="og:type" content="website">
@@ -18,23 +18,23 @@
 		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
 		<title>Fikeya | Build with your model. Spend fewer tokens.</title>
 		<link rel="canonical" href="https://fikeya.com/">
-		<link rel="icon" href="favicon.svg?v=20260825h" type="image/svg+xml">
-		<link rel="manifest" href="site.webmanifest">
-		<link rel="stylesheet" href="styles.css?v=20260903c">
-		<script src="app.js?v=20260825k" defer></script>
+		<link rel="icon" href="/favicon.svg?v=20260825h" type="image/svg+xml">
+		<link rel="manifest" href="/site.webmanifest">
+		<link rel="stylesheet" href="/styles.css?v=20260903c">
+		<script src="/app.js?v=20260825k" defer></script>
 	</head>
 	<body>
 		<a class="skip-link" href="#main">Skip to content</a>
 		<header class="site-header">
 			<div class="shell nav-shell">
 				<a class="brand" href="/" aria-label="Fikeya home">
-					<img src="favicon.svg?v=20260825h" width="30" height="30" alt="">
+					<img src="/favicon.svg?v=20260825h" width="30" height="30" alt="">
 					<span>Fikeya</span>
 				</a>
 				<nav aria-label="Primary navigation">
 					<ul class="nav-links">
 						<li><a href="/">Home</a></li>
-						<li><a href="/opensource/">Open Source</a></li>
+						<li><a href="/opensource/" aria-current="page">Open Source</a></li>
 						<li><a href="/product/">Product</a></li>
 						<li><a href="/proof/">Proof</a></li>
 						<li><a href="/docs/">Docs</a></li>
@@ -283,7 +283,7 @@ fikeya provider list --json</code></pre>
 								<div><dt>Exact maximum</dt><dd>29,622,272 bytes</dd></div>
 								<div><dt>Measured scope</dt><dd>30 MiB verification run; 20 measured launches after one warmup, pinned Obscura 0.2.1 constrained non-visual fixture</dd></div>
 							</dl>
-							<div class="browser-proof-links"><a href="/papers/fikeya-cockroach-browser/">Read the Fikeya + Cockroach paper</a><a href="https://github.com/AjnasNB/cockroach-browser/blob/v0.5.0-rc.1/docs/benchmarks/obscura-non-visual-2026-09-03.md" rel="noopener noreferrer">Benchmark and raw samples</a><a href="https://github.com/AjnasNB/cockroach-browser/releases/tag/v0.5.0-rc.1" rel="noopener noreferrer">Open v0.5.0-rc.1 release</a></div>
+							<div class="browser-proof-links"><a href="/docs/cockroach-browser/">Open-source integration map</a><a href="/papers/fikeya-cockroach-browser/">Read the Fikeya + Cockroach paper</a><a href="https://github.com/AjnasNB/cockroach-browser/blob/v0.5.0-rc.1/docs/benchmarks/obscura-non-visual-2026-09-03.md" rel="noopener noreferrer">Benchmark and raw samples</a><a href="https://github.com/AjnasNB/cockroach-browser/releases/tag/v0.5.0-rc.1" rel="noopener noreferrer">Open v0.5.0-rc.1 release</a></div>
 							<p class="browser-proof-boundary">This is the maximum complete owned browser process-tree RSS in the 30 MiB verification run for that fixture. The Node coordinator was measured separately; persistent and attached sessions were not measured. It is not Fikeya Desktop, whole-app, rendered-page, arbitrary-site, or full-engine memory.</p>
 						</article>
 					</div>
@@ -376,7 +376,7 @@ fikeya doctor .</code></pre>
 
 		<footer class="site-footer">
 			<div class="shell footer-layout">
-				<div class="brand footer-brand"><img src="favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div>
+				<div class="brand footer-brand"><img src="/favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div>
 				<p>Open AI code editor, local context engine, and inspectable provider receipts.</p>
 				<div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a href="/opensource/">Open Source</a><a href="/product/">Product</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a><a href="/enterprise/">Enterprise</a><a href="/download/">Download</a></div>
 			</div>

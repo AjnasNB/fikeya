@@ -9,7 +9,7 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 - **Five working modes:** Editor, Agent, Terminal, Review, and Lab, each focused on a distinct development workflow in Fikeya Desktop. The VS Code extension stays a focused Agent workspace instead of duplicating the host editor.
 - **Two desktop layouts:** Studio for code-first work and Agent Focus for plan-first work.
 - **Provider-neutral configuration:** Azure OpenAI, Azure AI Foundry compatible endpoints, OpenAI API models (including Codex-capable models available to the API account), Anthropic, OpenRouter, NVIDIA NIM, Google Gemini, Hugging Face Inference Providers, Groq, DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, Amazon Bedrock's OpenAI-compatible endpoint, Ollama, local no-auth servers, Vertex AI through its compatible endpoint, and other OpenAI-compatible endpoints.
-- **Quota-aware model handoff:** when a provider returns HTTP 429, the Desktop can ask to continue with another configured profile or remember an always-switch preference. The new run recompiles the same bounded Qarinah project context; credentials and failed response bodies are not carried across providers.
+- **Quota-aware model handoff:** when a provider returns HTTP 429, the Desktop can ask to continue with another configured profile or remember an always-switch preference. When Qarinah context is enabled and available, the new run recompiles the same bounded project context; credentials and failed response bodies are not carried across providers.
 - **One runtime for Desktop and CLI:** shared provider, approval, tool, usage, context, and evidence contracts across both interfaces.
 - **Qarinah context engine:** compact, evidence-linked project context assembled from decisions, tool outcomes, worktrees, symbols, and cited receipts.
 - **Bounded provider execution:** workspace-root validation, explicit network consent, cancellation, and content-free request and response hashes.
@@ -96,6 +96,8 @@ npm run compile
 ```
 
 The Python runtime also has focused setup and test commands in [`fikeya-runtime/README.md`](fikeya-runtime/README.md).
+
+For the browser architecture, exact 28.25 MiB benchmark scope, current integration boundary, capability priorities, and go-to-market plan, read the [Fikeya + Cockroach Browser technical and market paper](docs/FIKEYA_COCKROACH_BROWSER_PAPER.md). The companion [open-source integration map](docs/fikeya/COCKROACH_BROWSER_OPEN_SOURCE_INTEGRATIONS.md) classifies the protocol, engine, agent, observability, security, extraction, and testing components as current, next, optional, experimental, or license-review work.
 
 ## Licensing
 
