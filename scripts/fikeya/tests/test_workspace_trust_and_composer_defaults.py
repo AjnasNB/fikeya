@@ -143,8 +143,9 @@ class WorkspaceTrustAndComposerDefaultsTests(unittest.TestCase):
         ]
 
         self.assertIn('data-open-file=', outcome)
-        self.assertIn("files saved", outcome)
-        self.assertIn("tests passed", outcome)
+        self.assertIn("measured regular-file content changes", outcome)
+        self.assertIn("test commands passed", outcome)
+        self.assertIn("Before and after SHA-256", outcome)
 
     def test_composer_accepts_ephemeral_files_and_images_without_persisting_content(self) -> None:
         source = (
