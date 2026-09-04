@@ -9,7 +9,7 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 - **Five working modes:** Editor, Agent, Terminal, Review, and Lab, each focused on a distinct development workflow in Fikeya Desktop. The VS Code extension stays a focused Agent workspace instead of duplicating the host editor.
 - **Two desktop layouts:** Studio for code-first work and Agent Focus for plan-first work.
 - **Provider-neutral configuration:** Azure OpenAI, Azure AI Foundry compatible endpoints, OpenAI API models (including Codex-capable models available to the API account), Anthropic, OpenRouter, NVIDIA NIM, Google Gemini, Hugging Face Inference Providers, Groq, DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, Amazon Bedrock's OpenAI-compatible endpoint, Ollama, local no-auth servers, Vertex AI through its compatible endpoint, and other OpenAI-compatible endpoints.
-- **Quota-aware model handoff:** when a provider returns HTTP 429, the Desktop can ask to continue with another configured profile or remember an always-switch preference. The new run recompiles the same bounded Qarinah project context; credentials and failed response bodies are not carried across providers.
+- **Quota-aware model handoff:** when a provider returns HTTP 429, the Desktop can ask to continue with another configured profile or remember an always-switch preference. When Qarinah context is enabled and available, the new run recompiles the same bounded project context; credentials and failed response bodies are not carried across providers.
 - **One runtime for Desktop and CLI:** shared provider, approval, tool, usage, context, and evidence contracts across both interfaces.
 - **Qarinah context engine:** compact, evidence-linked project context assembled from decisions, tool outcomes, worktrees, symbols, and cited receipts.
 - **Bounded provider execution:** workspace-root validation, explicit network consent, cancellation, and content-free request and response hashes.
@@ -20,7 +20,7 @@ Its optimization goal is **verified work per dollar**: preserve task quality and
 - **Coordinated team runs:** bounded read-only specialists investigate in parallel, then one selected lead model verifies their findings and performs a normal approval-gated coding run.
 - **Plan before execution:** Chat can ask one configured provider for a strict `fikeya.plan-proposal.v1` draft. That planning turn has no tool channel and cannot execute workspace operations. The persisted draft must be reviewed, each canonical tool call must receive its own exact single-use approval, and bounded execution must finish with verification evidence before Fikeya labels the plan successful.
 - **Durable Project mode:** a restart-resumable `plan -> audit plan -> execute -> audit code -> verify` loop records its exact plan, audits, approvals, workspace snapshot, and completion evidence. It continues only while progress remains bounded and stops for cancellation, denial, exhausted limits, repeated lack of progress, or a safety boundary.
-- **Approval-gated browser verification:** Build and Project runs can navigate, inspect, click, type, scroll, wait, assert text, capture bounded screenshots, and close a dedicated Playwright browser session. Web content remains untrusted, private or loopback navigation needs separate consent, and Research mode remains read-only with respect to the workspace.
+- **Approval-gated browser verification:** Build and Project runs can navigate, inspect, click, type, scroll, wait, assert text, capture bounded screenshots, and close a dedicated browser session. Playwright remains the default; reviewed Puppeteer or Puppeteer Core installations are an explicit per-workspace alternative behind the same URL guard, limits, approvals, and receipts. Web content remains untrusted, private or loopback navigation needs separate consent, and Research mode remains read-only with respect to the workspace.
 
 ## Product Shape
 
@@ -96,6 +96,8 @@ npm run compile
 ```
 
 The Python runtime also has focused setup and test commands in [`fikeya-runtime/README.md`](fikeya-runtime/README.md).
+
+For the browser architecture, exact 28.25 MiB benchmark scope, current integration boundary, capability priorities, and go-to-market plan, read the [Fikeya + Cockroach Browser technical and market paper](docs/FIKEYA_COCKROACH_BROWSER_PAPER.md). The companion [open-source integration map](docs/fikeya/COCKROACH_BROWSER_OPEN_SOURCE_INTEGRATIONS.md) classifies the protocol, engine, agent, observability, security, extraction, and testing components as current, next, optional, experimental, or license-review work.
 
 ## Licensing
 

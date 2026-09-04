@@ -25,6 +25,17 @@ test("validates every checked-in preset", async () => {
   assert.deepEqual(files, ["cockroach-browser.preset.json", "cockroach-crawler.preset.json"]);
 });
 
+test("pins Cockroach Browser RC1 and its read-only engine negotiation tools", async () => {
+  const preset = await load("cockroach-browser");
+
+  assert.equal(preset.dependency.versionRange, ">=0.5.0-rc.1 <0.6.0");
+  assert.deepEqual(preset.capabilities.allowedTools.slice(0, 3), [
+    "browser_capabilities",
+    "browser_engines",
+    "browser_engine_preflight"
+  ]);
+});
+
 test("rejects implicit enablement", async () => {
   const preset = clone(await load("cockroach-browser"));
   preset.enabledByDefault = true;

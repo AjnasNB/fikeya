@@ -12,6 +12,7 @@
 	"devDependencies": {
 		"@fontsource/ibm-plex-mono": "^5.3.0",
 		"@fontsource/ibm-plex-sans": "^5.3.0",
+		"marked": "18.0.11",
 		"wrangler": "^4.83.0"
 	}
 }

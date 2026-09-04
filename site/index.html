@@ -20,7 +20,7 @@
 		<link rel="canonical" href="https://fikeya.com/">
 		<link rel="icon" href="favicon.svg?v=20260825h" type="image/svg+xml">
 		<link rel="manifest" href="site.webmanifest">
-		<link rel="stylesheet" href="styles.css?v=20260826a">
+		<link rel="stylesheet" href="styles.css?v=20260903c">
 		<script src="app.js?v=20260825k" defer></script>
 	</head>
 	<body>
@@ -34,6 +34,7 @@
 				<nav aria-label="Primary navigation">
 					<ul class="nav-links">
 						<li><a href="/">Home</a></li>
+						<li><a href="/opensource/">Open Source</a></li>
 						<li><a href="/product/">Product</a></li>
 						<li><a href="/proof/">Proof</a></li>
 						<li><a href="/docs/">Docs</a></li>
@@ -181,7 +182,7 @@
 						<h2>Use the model that fits the job.</h2>
 						<p>Fikeya keeps provider metadata inspectable and credential bytes in the operating-system keyring. Use OpenAI API models, including Codex-capable models available to your API account, Azure OpenAI, Azure AI Foundry compatible endpoints, Anthropic, Gemini, Vertex AI, Hugging Face, Groq, OpenRouter, NVIDIA NIM, DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, Amazon Bedrock, Ollama, a local no-auth server, or another OpenAI-compatible endpoint.</p>
 						<p class="scope-note">Bring your own API credential or local model. Fikeya does not reuse a ChatGPT, Codex, Claude, Gemini, or other consumer subscription as API access. Vertex uses a short-lived Google Cloud token today; automatic ADC refresh is a release follow-up.</p>
-						<p class="scope-note">You choose the exact profile and model. If a provider returns a quota or rate-limit response, Fikeya can ask to continue with another configured model or remember an "always switch" preference while recompiling the same task-relevant Qarinah context.</p>
+						<p class="scope-note">You choose the exact profile and model. If a provider returns a quota or rate-limit response, Fikeya can ask to continue with another configured model or remember an "always switch" preference. When Qarinah context is enabled and available, the next run recompiles the same task-relevant evidence.</p>
 						<ul class="provider-badges" aria-label="Supported provider paths">
 							<li>OpenAI / Codex models</li><li>Azure OpenAI / Foundry</li><li>Anthropic</li><li>Google Gemini / Vertex</li><li>OpenRouter</li><li>NVIDIA NIM</li><li>Hugging Face</li><li>Groq</li><li>DeepSeek</li><li>Mistral / xAI</li><li>Together / Fireworks</li><li>Cerebras</li><li>Amazon Bedrock</li><li>Ollama / local</li><li>OpenAI compatible</li>
 						</ul>
@@ -271,8 +272,56 @@ fikeya provider list --json</code></pre>
 						<article><span class="status standalone">Standalone adapter</span><h3>ACP and MCP</h3><p>Typed clients and contract tests exist. Live desktop session routing remains integration work.</p></article>
 						<article><span class="status standalone">Standalone adapter</span><h3>Codex App Server</h3><p>Local stdio lifecycle, approval, and event contracts are tested outside the desktop flow.</p></article>
 						<article><span class="status integrated">Desktop</span><h3>Capture and diagnostics</h3><p>Native screenshot and screen-recording commands, Qarinah graph, and local usage dashboard.</p></article>
-						<article><span class="status preset">Explicit preset</span><h3>Browser and Crawler</h3><p>Tool executables are installed separately and remain disabled by default.</p></article>
+						<article class="browser-proof">
+							<span class="status preset">Reviewed preset</span>
+							<div class="browser-proof-layout">
+								<div><h3>Browser and Crawler</h3><p>Cockroach Browser 0.5.0-rc.1 connects through Fikeya's reviewed local MCP preset. The current preset is read-and-propose: it observes, preflights, and prepares canonical actions without dispatching them. Tool executables are installed separately and remain disabled by default.</p></div>
+								<p class="browser-proof-value" aria-label="28.25 MiB maximum owned browser process-tree RSS in the 30 MiB verification run"><strong>28.25</strong><span>MiB max RSS</span></p>
+							</div>
+							<dl class="browser-proof-facts">
+								<div><dt>Verdict</dt><dd>30 MiB PASS</dd></div>
+								<div><dt>Exact maximum</dt><dd>29,622,272 bytes</dd></div>
+								<div><dt>Measured scope</dt><dd>30 MiB verification run; 20 measured launches after one warmup, pinned Obscura 0.2.1 constrained non-visual fixture</dd></div>
+							</dl>
+							<div class="browser-proof-links"><a href="/papers/fikeya-cockroach-browser/">Read the Fikeya + Cockroach paper</a><a href="https://github.com/AjnasNB/cockroach-browser/blob/v0.5.0-rc.1/docs/benchmarks/obscura-non-visual-2026-09-03.md" rel="noopener noreferrer">Benchmark and raw samples</a><a href="https://github.com/AjnasNB/cockroach-browser/releases/tag/v0.5.0-rc.1" rel="noopener noreferrer">Open v0.5.0-rc.1 release</a></div>
+							<p class="browser-proof-boundary">This is the maximum complete owned browser process-tree RSS in the 30 MiB verification run for that fixture. The Node coordinator was measured separately; persistent and attached sessions were not measured. It is not Fikeya Desktop, whole-app, rendered-page, arbitrary-site, or full-engine memory.</p>
+						</article>
 					</div>
+				</div>
+			</section>
+
+			<section class="section engine-control-section" id="browser-engines">
+				<div class="shell">
+					<div class="section-intro engine-control-intro">
+						<p class="eyebrow">One browser control plane</p>
+						<h2>Choose the engines your agent must satisfy.</h2>
+						<p>Select one lane for focused work or several lanes to compare a plan before execution. Fikeya keeps the selected engine identities, capability preflight, code changes, tests, and receipts in the same review trail.</p>
+					</div>
+					<div class="engine-control" data-engine-picker>
+						<fieldset class="engine-choices">
+							<legend>Engines to preflight</legend>
+							<label class="engine-choice is-selected" data-engine-choice-card="chromium"><input type="checkbox" data-engine-choice value="chromium" checked><span><strong>Chromium</strong><small>Full fidelity</small></span><em>Supported</em></label>
+							<label class="engine-choice is-selected" data-engine-choice-card="firefox"><input type="checkbox" data-engine-choice value="firefox" checked><span><strong>Firefox</strong><small>Full fidelity</small></span><em>Supported</em></label>
+							<label class="engine-choice is-selected" data-engine-choice-card="webkit"><input type="checkbox" data-engine-choice value="webkit" checked><span><strong>WebKit</strong><small>Full fidelity</small></span><em>Supported</em></label>
+							<label class="engine-choice" data-engine-choice-card="obscura"><input type="checkbox" data-engine-choice value="obscura"><span><strong>Obscura</strong><small>Non-visual lane</small></span><em>Experimental</em></label>
+							<label class="engine-choice" data-engine-choice-card="lightpanda"><input type="checkbox" data-engine-choice value="lightpanda"><span><strong>Lightpanda</strong><small>Manifest lane</small></span><em>Preflight only</em></label>
+						</fieldset>
+						<aside class="engine-selection" aria-live="polite">
+							<p class="engine-selection-label">Selected browser paths</p>
+							<strong class="engine-selection-count" data-engine-selection-count>3 engines selected</strong>
+							<p data-engine-selection-summary>Chromium, Firefox, and WebKit are selected for the same governed browser plan. Their common actions are preflighted before a session is created.</p>
+							<div class="engine-selection-actions"><button class="button button-primary" type="button" data-engine-select-full>Select Full Engines</button><button class="button button-text" type="button" data-engine-clear>Clear Selection</button></div>
+							<p class="engine-selection-note">This selector prepares comparison and preflight intent. Creating sessions and dispatching actions stay behind the authenticated Cockroach Browser and Fikeya approval boundaries.</p>
+						</aside>
+					</div>
+					<div class="engine-card-grid" aria-label="Cockroach Browser engine lanes">
+						<article class="engine-card engine-card-full" data-engine-detail="chromium"><span>Chromium</span><h3>Deep Chromium control</h3><p>CDP, Puppeteer, PDF, extensions, screenshots, traces, and full Playwright automation.</p><small>Choose when Chromium-specific evidence or DevTools control matters.</small></article>
+						<article class="engine-card engine-card-full" data-engine-detail="firefox"><span>Firefox</span><h3>Independent browser fidelity</h3><p>Full governed rendering, DOM, forms, screenshots, video, traces, profiles, and network routing.</p><small>CDP, PDF export, and Chromium extensions are not implied.</small></article>
+						<article class="engine-card engine-card-full" data-engine-detail="webkit"><span>WebKit</span><h3>WebKit coverage in the same plan</h3><p>Full governed rendering, DOM, forms, screenshots, video, traces, profiles, and network routing.</p><small>Puppeteer, CDP, BiDi, PDF export, and extensions are not implied.</small></article>
+						<article class="engine-card engine-card-light" data-engine-detail="obscura"><span>Obscura</span><h3>Constrained compatible work</h3><p>Experimental CDP lane for preflighted navigation, JavaScript, DOM, forms, and structured extraction.</p><small>Requires explicit opt-in. The 28.25 MiB result applies only to its measured non-visual fixture.</small></article>
+						<article class="engine-card engine-card-light" data-engine-detail="lightpanda"><span>Lightpanda</span><h3>Inspect before you adopt</h3><p>Manifest and machine preflight are visible in the control plane so an agent can see the boundary.</p><small>Managed runtime launch remains disabled until its complete egress-conformance lane passes.</small></article>
+					</div>
+					<div class="engine-control-links"><a href="/docs/cockroach-browser/">Open the Fikeya integration map</a><a href="/papers/fikeya-cockroach-browser/">Read the architecture and release gates</a></div>
 				</div>
 			</section>
 
@@ -329,7 +378,7 @@ fikeya doctor .</code></pre>
 			<div class="shell footer-layout">
 				<div class="brand footer-brand"><img src="favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div>
 				<p>Open AI code editor, local context engine, and inspectable provider receipts.</p>
-				<div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a href="/product/">Product</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a><a href="/enterprise/">Enterprise</a><a href="/download/">Download</a></div>
+				<div><a href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">Source</a><a href="https://github.com/sponsors/AjnasNB" rel="noopener noreferrer">Sponsor</a><a href="/opensource/">Open Source</a><a href="/product/">Product</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a><a href="/enterprise/">Enterprise</a><a href="/download/">Download</a></div>
 			</div>
 		</footer>
 	</body>

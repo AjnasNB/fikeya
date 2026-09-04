@@ -56,6 +56,8 @@ def test_registry_contains_all_first_party_provider_shapes() -> None:
     azure = PROVIDER_REGISTRY[ProviderKind.AZURE_OPENAI]
     assert azure.default_credential_type == "entra-id"
     assert azure.default_api_mode == "responses"
+    assert azure.credential_required is False
+    assert PROVIDER_REGISTRY[ProviderKind.OPENAI].credential_required is True
 
     gemini = build_profile(
         name="gemini",

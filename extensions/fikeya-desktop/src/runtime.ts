@@ -23,6 +23,12 @@ const processTerminationGraceMilliseconds = 2_000;
 const identifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const contextReceiptPattern = /^ctx_[0-9a-f]{32}$/;
 
+function isBrowserLaunchOptions(value: FikeyaBrowserLaunchOptions): boolean {
+	return (value.engine === 'playwright' || value.engine === 'puppeteer')
+		&& [value.puppeteerRoot, value.chromeExecutable].every(candidate => candidate === undefined
+			|| (candidate.length > 0 && candidate.length <= 4096 && !candidate.includes('\0')));
+}
+
 export type FikeyaRuntimeFailure = 'none' | 'not-found' | 'timeout' | 'output-limit' | 'runtime-error' | 'provider-error' | 'provider-unreachable' | 'agent-no-progress' | 'authentication' | 'quota' | 'invalid-json' | 'cancelled';
 
 export type FikeyaRuntimeCommand = 'doctor' | 'init';
@@ -76,6 +82,13 @@ export interface FikeyaAgentUsage {
 
 export type FikeyaMemoryMode = 'auto' | 'off' | 'required';
 export type FikeyaExecutionMode = 'ask' | 'build' | 'review' | 'research';
+export type FikeyaBrowserEngine = 'playwright' | 'puppeteer';
+
+export interface FikeyaBrowserLaunchOptions {
+	readonly engine: FikeyaBrowserEngine;
+	readonly puppeteerRoot?: string;
+	readonly chromeExecutable?: string;
+}
 
 export interface FikeyaAgentMemory {
 	readonly status: 'off' | 'unavailable' | 'used';
@@ -111,8 +124,16 @@ export interface FikeyaToolOutcome {
 
 export interface FikeyaChangedFileOutcome {
 	readonly path: string;
+	readonly operation: 'add' | 'edit' | 'delete';
+	readonly beforeExists: boolean;
+	readonly afterExists: boolean;
 	readonly beforeSha256: string | null;
 	readonly afterSha256: string | null;
+	readonly beforeBytes: number | null;
+	readonly afterBytes: number | null;
+	readonly linesAdded: number | null;
+	readonly linesDeleted: number | null;
+	readonly lineDeltaStatus: 'exact' | 'binary' | 'too-large' | 'unavailable';
 }
 
 export interface FikeyaCodingOutcome {
@@ -122,17 +143,31 @@ export interface FikeyaCodingOutcome {
 	readonly toolCalls: readonly FikeyaToolOutcome[];
 	readonly tests: readonly FikeyaToolOutcome[];
 	readonly changedFiles: readonly FikeyaChangedFileOutcome[];
+	readonly changedFilesTruncated: boolean;
+	readonly changedFilesScope: 'regular-project-files-v1' | 'legacy-unspecified';
+}
+
+export interface FikeyaAgentTerminalFailure {
+	readonly kind: 'connectivity' | 'quota' | 'authentication' | 'provider' | 'agent_no_progress' | 'runtime';
+	readonly retryable: boolean;
+	readonly statusCode: number | null;
 }
 
 export interface FikeyaAgentTurn {
 	readonly sessionId: string;
-	readonly callId: string;
+	/** Latest durable provider-request event, including requests that produced no receipt. */
+	readonly providerAttemptId: string | null;
+	readonly providerAttemptIds: readonly string[];
+	readonly providerAttemptMeasurement: 'exact' | 'legacy-minimum' | 'unavailable';
+	/** Latest completed provider receipt. Null when every attempt failed or was cancelled. */
+	readonly callId: string | null;
 	readonly providerCallIds: readonly string[];
 	readonly status: 'completed' | 'cancelled' | 'failed';
 	readonly output: string;
 	readonly usage: FikeyaAgentUsage;
 	readonly memory: FikeyaAgentMemory;
 	readonly outcome: FikeyaCodingOutcome;
+	readonly failure: FikeyaAgentTerminalFailure | null;
 }
 
 export interface FikeyaProviderReceipt {
@@ -373,6 +408,25 @@ export function buildFikeyaRuntimeEnvironment(
 	return result;
 }
 
+/** Adds only explicit, non-secret browser transport metadata to one child environment. */
+export function buildFikeyaBrowserEnvironment(
+	options: FikeyaBrowserLaunchOptions,
+	environment: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+	const result: NodeJS.ProcessEnv = { ...environment, FIKEYA_BROWSER_ENGINE: options.engine };
+	delete result.FIKEYA_PUPPETEER_ROOT;
+	delete result.FIKEYA_CHROME_EXECUTABLE;
+	if (options.engine === 'puppeteer') {
+		if (options.puppeteerRoot) {
+			result.FIKEYA_PUPPETEER_ROOT = options.puppeteerRoot;
+		}
+		if (options.chromeExecutable) {
+			result.FIKEYA_CHROME_EXECUTABLE = options.chromeExecutable;
+		}
+	}
+	return result;
+}
+
 /** Runs a bounded Fikeya workspace command with no shell interpolation. */
 export async function runFikeyaRuntime(
 	command: FikeyaRuntimeCommand,
@@ -439,7 +493,8 @@ export function startFikeyaAgentRun(
 	images: readonly FikeyaImageInput[] = [],
 	mode: FikeyaExecutionMode = 'build',
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment(),
+	browser: FikeyaBrowserLaunchOptions = { engine: 'playwright' }
 ): FikeyaAgentRunHandle {
 	if (!identifierPattern.test(providerName)
 		|| !prompt.trim()
@@ -452,6 +507,7 @@ export function startFikeyaAgentRun(
 		|| contextMaxCharacters > 64_000
 		|| !['auto', 'off', 'required'].includes(memoryMode)
 		|| !['ask', 'build', 'review', 'research'].includes(mode)
+		|| !isBrowserLaunchOptions(browser)
 		|| !isValidProviderHistory(history)
 		|| !isImageInputs(images)) {
 		return {
@@ -462,7 +518,7 @@ export function startFikeyaAgentRun(
 	}
 
 	const operation = startAgentProtocolCli(
-		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode, mode),
+		buildAgentRunArguments(providerName, maxOutputTokens, contextMaxCharacters, memoryMode, mode, browser.engine),
 		workspacePath,
 		prompt,
 		history,
@@ -471,7 +527,7 @@ export function startFikeyaAgentRun(
 		agentTimeoutMilliseconds,
 		maximumAgentOutputBytes,
 		invocation,
-		environment
+		buildFikeyaBrowserEnvironment(browser, environment)
 	);
 	return operation;
 }
@@ -500,7 +556,8 @@ export function startFikeyaProject(
 	completionCriteria: readonly string[] = [],
 	allowPrivateBrowser = false,
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment(),
+	browser: FikeyaBrowserLaunchOptions = { engine: 'playwright' }
 ): FikeyaProjectRunHandle {
 	if (!identifierPattern.test(providerName)
 		|| !goal.trim()
@@ -508,6 +565,7 @@ export function startFikeyaProject(
 		|| (action === 'resume' && (!runId || !identifierPattern.test(runId)))
 		|| (action === 'start' && runId !== undefined)
 		|| completionCriteria.length > 64
+		|| !isBrowserLaunchOptions(browser)
 		|| completionCriteria.some(criterion => !criterion.trim() || Buffer.byteLength(criterion.trim(), 'utf8') > 4_096)) {
 		return { result: Promise.resolve(invalidLocalRequest()), onStarted: () => () => undefined, cancel: () => undefined };
 	}
@@ -515,14 +573,14 @@ export function startFikeyaProject(
 		? { type: 'start' as const, goal: goal.trim(), ...(completionCriteria.length ? { completionCriteria: completionCriteria.map(value => value.trim()) } : {}) }
 		: { type: 'resume' as const, runId: runId!, goal: goal.trim() };
 	return startProjectProtocolCli(
-		buildProjectRunArguments(action, providerName, runId, allowPrivateBrowser),
+		buildProjectRunArguments(action, providerName, runId, allowPrivateBrowser, browser.engine),
 		workspacePath,
 		initialMessage,
 		approvalHandler,
 		agentTimeoutMilliseconds,
 		maximumProjectOutputBytes,
 		invocation,
-		environment
+		buildFikeyaBrowserEnvironment(browser, environment)
 	);
 }
 
@@ -658,18 +716,19 @@ export function startFikeyaPlan(
 	workspacePath: string,
 	allowPrivateBrowser = false,
 	invocation = resolveFikeyaCli(),
-	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment()
+	environment: NodeJS.ProcessEnv = buildFikeyaRuntimeEnvironment(),
+	browser: FikeyaBrowserLaunchOptions = { engine: 'playwright' }
 ): FikeyaPlanRunHandle {
-	if (!identifierPattern.test(planId)) {
+	if (!identifierPattern.test(planId) || !isBrowserLaunchOptions(browser)) {
 		return { result: Promise.resolve(invalidLocalRequest()), onProgress: () => () => undefined, cancel: () => undefined };
 	}
 	return startPlanProtocolCli(
-		buildPlanActionArguments(action, planId, allowPrivateBrowser),
+		buildPlanActionArguments(action, planId, allowPrivateBrowser, browser.engine),
 		workspacePath,
 		agentTimeoutMilliseconds,
 		maximumPlanOutputBytes,
 		invocation,
-		environment,
+		buildFikeyaBrowserEnvironment(browser, environment),
 		[0, 2]
 	);
 }
@@ -706,11 +765,15 @@ export function buildPlanProposalArguments(
 export function buildPlanActionArguments(
 	action: 'show' | 'review' | 'run' | 'resume' | 'cancel',
 	planId: string,
-	allowPrivateBrowser = false
+	allowPrivateBrowser = false,
+	browserEngine: FikeyaBrowserEngine = 'playwright'
 ): readonly string[] {
 	const args = ['plan', action, planId, '--workspace', '.'];
 	if (allowPrivateBrowser && (action === 'run' || action === 'resume')) {
 		args.push('--allow-private-browser');
+	}
+	if (action === 'run' || action === 'resume') {
+		args.push('--browser-engine', browserEngine);
 	}
 	args.push('--json');
 	return args;
@@ -797,7 +860,8 @@ export function buildAgentRunArguments(
 	maxOutputTokens: number,
 	contextMaxCharacters: number,
 	memoryMode: FikeyaMemoryMode,
-	mode: FikeyaExecutionMode = 'build'
+	mode: FikeyaExecutionMode = 'build',
+	browserEngine: FikeyaBrowserEngine = 'playwright'
 ): readonly string[] {
 	return [
 		'agent',
@@ -815,6 +879,8 @@ export function buildAgentRunArguments(
 		memoryMode,
 		'--mode',
 		mode,
+		'--browser-engine',
+		browserEngine,
 		'--json-lines'
 	];
 }
@@ -824,7 +890,8 @@ export function buildProjectRunArguments(
 	action: 'start' | 'resume',
 	providerName: string,
 	runId?: string,
-	allowPrivateBrowser = false
+	allowPrivateBrowser = false,
+	browserEngine: FikeyaBrowserEngine = 'playwright'
 ): readonly string[] {
 	const args = action === 'start'
 		? ['project', 'start', '.', '--provider', providerName]
@@ -833,6 +900,7 @@ export function buildProjectRunArguments(
 	if (allowPrivateBrowser) {
 		args.push('--allow-private-browser');
 	}
+	args.push('--browser-engine', browserEngine);
 	args.push('--json-lines');
 	return args;
 }
@@ -906,25 +974,62 @@ export function parseAgentTurn(value: unknown): FikeyaAgentTurn | undefined {
 	const memory = asRecord(record?.memory);
 	const outcomeRecord = asRecord(record?.outcome);
 	const sessionId = strictBoundedString(record?.sessionId, 128);
-	const callId = strictBoundedString(record?.callId, 128);
+	const callId = record?.callId === null ? null : strictBoundedString(record?.callId, 128);
 	const output = strictBoundedString(record?.output, 4_194_304);
 	const measurement = usage?.measurement;
 	const memoryStatus = memory?.status;
 	const status = record?.status;
+	const hasProviderAttemptId = !!record && Object.hasOwn(record, 'providerAttemptId');
+	const hasProviderAttemptIds = !!record && Object.hasOwn(record, 'providerAttemptIds');
+	const hasExactProviderAttempts = hasProviderAttemptId && hasProviderAttemptIds;
+	const hasTerminalFailure = !!record && Object.hasOwn(record, 'failure');
 	if (!record || record.type !== 'result'
 		|| (status !== 'completed' && status !== 'cancelled' && status !== 'failed')
 		|| record.ok !== (status === 'completed')
 		|| !sessionId || !identifierPattern.test(sessionId)
-		|| !callId || !identifierPattern.test(callId) || output === undefined
+		|| (callId !== null && (!callId || !identifierPattern.test(callId))) || output === undefined
 		|| (measurement !== 'provider-reported' && measurement !== 'unavailable')
 		|| (memoryStatus !== 'off' && memoryStatus !== 'unavailable' && memoryStatus !== 'used')
-		|| !Array.isArray(record.providerCallIds) || record.providerCallIds.length < 1 || record.providerCallIds.length > 128
+		|| hasProviderAttemptId !== hasProviderAttemptIds
+		|| (hasExactProviderAttempts && !hasTerminalFailure)
+		|| (hasExactProviderAttempts && (!Array.isArray(record.providerAttemptIds) || record.providerAttemptIds.length > 128))
+		|| !Array.isArray(record.providerCallIds) || record.providerCallIds.length > 128
 		|| !outcomeRecord) {
 		return undefined;
 	}
 	const providerCallIds = record.providerCallIds.map(candidate => strictBoundedString(candidate, 128));
-	if (providerCallIds.some(candidate => !candidate || !identifierPattern.test(candidate))
-		|| providerCallIds.at(-1) !== callId) {
+	const exactProviderAttemptId = hasExactProviderAttempts
+		? (record.providerAttemptId === null ? null : strictBoundedString(record.providerAttemptId, 128))
+		: undefined;
+	const exactProviderAttemptIds = hasExactProviderAttempts
+		? (record.providerAttemptIds as unknown[]).map(candidate => strictBoundedString(candidate, 128))
+		: undefined;
+	const providerAttemptIds = exactProviderAttemptIds ?? providerCallIds.slice();
+	const providerAttemptId = hasExactProviderAttempts ? exactProviderAttemptId : callId;
+	const providerAttemptMeasurement: FikeyaAgentTurn['providerAttemptMeasurement'] = hasExactProviderAttempts
+		? 'exact'
+		: providerCallIds.length > 0 ? 'legacy-minimum' : 'unavailable';
+	const noProviderAttempt = hasExactProviderAttempts && providerAttemptId === null && providerAttemptIds.length === 0;
+	const preProviderCancellation = status === 'cancelled' && noProviderAttempt
+		&& callId === null && providerCallIds.length === 0;
+	if ((providerAttemptId !== null && (!providerAttemptId || !identifierPattern.test(providerAttemptId)))
+		|| providerAttemptIds.some(candidate => !candidate || !identifierPattern.test(candidate))
+		|| providerCallIds.some(candidate => !candidate || !identifierPattern.test(candidate))
+		|| new Set(providerAttemptIds).size !== providerAttemptIds.length
+		|| new Set(providerCallIds).size !== providerCallIds.length
+		|| (providerAttemptIds.length === 0) !== (providerAttemptId === null)
+		|| (providerAttemptIds.length > 0 && providerAttemptIds.at(-1) !== providerAttemptId)
+		|| (providerCallIds.length === 0) !== (callId === null)
+		|| (providerCallIds.length > 0 && providerCallIds.at(-1) !== callId)
+		|| providerCallIds.length > providerAttemptIds.length
+		|| (noProviderAttempt && !preProviderCancellation)
+		|| (status === 'completed' && providerCallIds.length === 0)) {
+		return undefined;
+	}
+	const failure = hasTerminalFailure ? parseAgentTerminalFailure(record.failure) : null;
+	if (failure === undefined
+		|| (status === 'failed' && hasExactProviderAttempts && failure === null)
+		|| (status !== 'failed' && failure !== null)) {
 		return undefined;
 	}
 	const inputTokens = nullableBoundedInteger(usage?.inputTokens);
@@ -958,16 +1063,84 @@ export function parseAgentTurn(value: unknown): FikeyaAgentTurn | undefined {
 	if (!outcome || outcome.summary !== output) {
 		return undefined;
 	}
+	if (preProviderCancellation && (outcome.steps !== 0 || outcome.toolCalls.length !== 0 || outcome.changedFiles.length !== 0
+		|| measurement !== 'unavailable')) {
+		return undefined;
+	}
 	return {
 		sessionId,
+		providerAttemptId,
+		providerAttemptIds: providerAttemptIds as string[],
+		providerAttemptMeasurement,
 		callId,
 		providerCallIds: providerCallIds as string[],
 		status,
 		output,
 		usage: { measurement, inputTokens, outputTokens, cachedInputTokens },
 		memory: { status: memoryStatus, coverage, evidenceCount, receiptId, responseSha256 },
-		outcome
+		outcome,
+		failure
 	};
+}
+
+function parseAgentTerminalFailure(value: unknown): FikeyaAgentTerminalFailure | null | undefined {
+	if (value === null) {
+		return null;
+	}
+	const record = asRecord(value);
+	if (!record || !hasExactRecordKeys(record, ['kind', 'retryable', 'statusCode'])
+		|| typeof record.retryable !== 'boolean') {
+		return undefined;
+	}
+	const statusCode = record.statusCode === null
+		? null
+		: isBoundedInteger(record.statusCode, 100, 599) ? record.statusCode : undefined;
+	if (statusCode === undefined) {
+		return undefined;
+	}
+	switch (record.kind) {
+		case 'connectivity':
+			return statusCode === null && record.retryable
+				? { kind: record.kind, retryable: record.retryable, statusCode }
+				: undefined;
+		case 'quota':
+			return statusCode === 429 && record.retryable
+				? { kind: record.kind, retryable: record.retryable, statusCode }
+				: undefined;
+		case 'authentication':
+			return (statusCode === 401 || statusCode === 403) && !record.retryable
+				? { kind: record.kind, retryable: record.retryable, statusCode }
+				: undefined;
+		case 'provider': {
+			const expectedRetryable = statusCode === null
+				? false
+				: statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode >= 500;
+			return statusCode !== 401 && statusCode !== 403 && statusCode !== 429
+				&& record.retryable === expectedRetryable
+				? { kind: record.kind, retryable: record.retryable, statusCode }
+				: undefined;
+		}
+		case 'agent_no_progress':
+		case 'runtime':
+			return statusCode === null && !record.retryable
+				? { kind: record.kind, retryable: record.retryable, statusCode }
+				: undefined;
+		default:
+			return undefined;
+	}
+}
+
+export function agentTerminalFailureToRuntimeFailure(
+	failure: FikeyaAgentTerminalFailure
+): FikeyaRuntimeFailure {
+	switch (failure.kind) {
+		case 'connectivity': return 'provider-unreachable';
+		case 'quota': return 'quota';
+		case 'authentication': return 'authentication';
+		case 'provider': return 'provider-error';
+		case 'agent_no_progress': return 'agent-no-progress';
+		case 'runtime': return 'runtime-error';
+	}
 }
 
 export function parseAgentApproval(value: unknown): FikeyaAgentApproval | undefined {
@@ -1005,10 +1178,16 @@ export function parseAgentApproval(value: unknown): FikeyaAgentApproval | undefi
 function parseCodingOutcome(value: Record<string, unknown>): FikeyaCodingOutcome | undefined {
 	const plan = strictBoundedString(value.plan, 4_194_304);
 	const summary = strictBoundedString(value.summary, 4_194_304);
+	const changedFilesTruncated = value.changedFilesTruncated === undefined ? false : value.changedFilesTruncated;
+	const changedFilesScope = value.changedFilesScope === undefined
+		? 'legacy-unspecified'
+		: value.changedFilesScope;
 	if (plan === undefined || summary === undefined || !isBoundedInteger(value.steps, 0, 1_000)
 		|| !Array.isArray(value.toolCalls) || value.toolCalls.length > 1_000
 		|| !Array.isArray(value.tests) || value.tests.length > 1_000
-		|| !Array.isArray(value.changedFiles) || value.changedFiles.length > 1_000) {
+		|| !Array.isArray(value.changedFiles) || value.changedFiles.length > 1_000
+		|| typeof changedFilesTruncated !== 'boolean'
+		|| (changedFilesScope !== 'regular-project-files-v1' && changedFilesScope !== 'legacy-unspecified')) {
 		return undefined;
 	}
 	const toolCalls = value.toolCalls.map(parseToolOutcome);
@@ -1019,13 +1198,25 @@ function parseCodingOutcome(value: Record<string, unknown>): FikeyaCodingOutcome
 		|| changedFiles.some(candidate => candidate === undefined)) {
 		return undefined;
 	}
+	const parsedToolCalls = toolCalls as FikeyaToolOutcome[];
+	const parsedTests = tests as FikeyaToolOutcome[];
+	const parsedChangedFiles = changedFiles as FikeyaChangedFileOutcome[];
+	const expectedTests = parsedToolCalls.filter(candidate => candidate.test);
+	if (new Set(parsedToolCalls.map(candidate => candidate.callId)).size !== parsedToolCalls.length
+		|| new Set(parsedChangedFiles.map(candidate => candidate.path)).size !== parsedChangedFiles.length
+		|| expectedTests.length !== parsedTests.length
+		|| expectedTests.some((candidate, index) => !sameToolOutcome(candidate, parsedTests[index]))) {
+		return undefined;
+	}
 	return {
 		plan,
 		summary,
 		steps: value.steps,
-		toolCalls: toolCalls as FikeyaToolOutcome[],
-		tests: tests as FikeyaToolOutcome[],
-		changedFiles: changedFiles as FikeyaChangedFileOutcome[]
+		toolCalls: parsedToolCalls,
+		tests: parsedTests,
+		changedFiles: parsedChangedFiles,
+		changedFilesTruncated,
+		changedFilesScope
 	};
 }
 
@@ -1052,16 +1243,71 @@ function parseChangedFileOutcome(value: unknown): FikeyaChangedFileOutcome | und
 	const filePath = strictBoundedString(record?.path, 4_096);
 	const beforeSha256 = nullableBoundedString(record?.beforeSha256, 71);
 	const afterSha256 = nullableBoundedString(record?.afterSha256, 71);
+	const beforeBytes = record?.beforeBytes === undefined ? null : nullableSafeByteCount(record.beforeBytes);
+	const afterBytes = record?.afterBytes === undefined ? null : nullableSafeByteCount(record.afterBytes);
+	const linesAdded = record?.linesAdded === undefined ? null : nullableBoundedInteger(record.linesAdded);
+	const linesDeleted = record?.linesDeleted === undefined ? null : nullableBoundedInteger(record.linesDeleted);
+	const lineDeltaStatus = record?.lineDeltaStatus === undefined ? 'unavailable' : record.lineDeltaStatus;
+	const beforeIdentityPresent = (beforeSha256 !== null && beforeSha256 !== undefined) || (beforeBytes !== null && beforeBytes !== undefined);
+	const afterIdentityPresent = (afterSha256 !== null && afterSha256 !== undefined) || (afterBytes !== null && afterBytes !== undefined);
+	const beforeExists = record?.beforeExists === undefined ? beforeIdentityPresent : record.beforeExists;
+	const afterExists = record?.afterExists === undefined ? afterIdentityPresent : record.afterExists;
+	const inferredOperation: FikeyaChangedFileOutcome['operation'] | undefined = !beforeExists && afterExists
+		? 'add'
+		: beforeExists && !afterExists
+			? 'delete'
+			: beforeExists && afterExists
+				? 'edit'
+				: undefined;
+	const suppliedOperation = record?.operation;
+	const operation: FikeyaChangedFileOutcome['operation'] | undefined = suppliedOperation === undefined
+		? inferredOperation
+		: suppliedOperation === 'add' || suppliedOperation === 'edit' || suppliedOperation === 'delete'
+			? suppliedOperation
+			: undefined;
 	if (!record || !filePath || filePath.includes('\\') || filePath.startsWith('/')
 		|| filePath.split('/').includes('..')
 		|| beforeSha256 === undefined
 		|| (beforeSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(beforeSha256))
 		|| afterSha256 === undefined
 		|| (afterSha256 !== null && !/^sha256:[0-9a-f]{64}$/.test(afterSha256))
-		|| (beforeSha256 === null && afterSha256 === null)) {
+		|| typeof beforeExists !== 'boolean' || typeof afterExists !== 'boolean'
+		|| (!beforeExists && beforeIdentityPresent) || (!afterExists && afterIdentityPresent)
+		|| (inferredOperation === 'edit' && !beforeIdentityPresent && !afterIdentityPresent)
+		|| operation === undefined || operation !== inferredOperation
+		|| beforeBytes === undefined || afterBytes === undefined
+		|| linesAdded === undefined || linesDeleted === undefined
+		|| (lineDeltaStatus !== 'exact' && lineDeltaStatus !== 'binary' && lineDeltaStatus !== 'too-large' && lineDeltaStatus !== 'unavailable')
+		|| (lineDeltaStatus === 'exact' && (linesAdded === null || linesDeleted === null))
+		|| (lineDeltaStatus !== 'exact' && (linesAdded !== null || linesDeleted !== null))
+		|| (operation === 'add' && linesDeleted !== null && linesDeleted !== 0)
+		|| (operation === 'delete' && linesAdded !== null && linesAdded !== 0)
+		|| (operation === 'edit' && beforeSha256 !== null && beforeSha256 === afterSha256)) {
 		return undefined;
 	}
-	return { path: filePath, beforeSha256, afterSha256 };
+	return {
+		path: filePath,
+		operation,
+		beforeExists,
+		afterExists,
+		beforeSha256,
+		afterSha256,
+		beforeBytes,
+		afterBytes,
+		linesAdded,
+		linesDeleted,
+		lineDeltaStatus
+	};
+}
+
+function sameToolOutcome(left: FikeyaToolOutcome, right: FikeyaToolOutcome): boolean {
+	return left.callId === right.callId
+		&& left.name === right.name
+		&& left.status === right.status
+		&& left.outputSha256 === right.outputSha256
+		&& left.durationMs === right.durationMs
+		&& left.exitCode === right.exitCode
+		&& left.test === right.test;
 }
 
 export function parseAgentReceipts(value: unknown): readonly FikeyaProviderReceipt[] | undefined {
@@ -2480,7 +2726,7 @@ function startAgentProtocolCli(
 					finish({ ok: false, exitCode, failure: 'invalid-json' });
 					return;
 				}
-				if (exitCode !== 0) {
+				if (protocolFailure || (exitCode !== 0 && !(exitCode === 2 && finalValue?.status === 'failed'))) {
 					finish({ ok: false, exitCode, failure: protocolFailure ?? 'runtime-error' });
 					return;
 				}
@@ -2834,6 +3080,13 @@ function nullableBoundedInteger(value: unknown): number | null | undefined {
 		return null;
 	}
 	return isBoundedInteger(value, 0, 1_000_000_000) ? value : undefined;
+}
+
+function nullableSafeByteCount(value: unknown): number | null | undefined {
+	if (value === null) {
+		return null;
+	}
+	return isBoundedInteger(value, 0, Number.MAX_SAFE_INTEGER) ? value : undefined;
 }
 
 function nullableSignedInteger(value: unknown, minimum: number, maximum: number): number | null | undefined {

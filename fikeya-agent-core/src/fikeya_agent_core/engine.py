@@ -46,7 +46,7 @@ from .models import (
     sha256_value,
 )
 from .protocols import ExecutionBroker, Provider
-from .provider import render_system_instructions
+from .provider import compact_provider_request, render_system_instructions
 
 T = TypeVar("T")
 
@@ -653,26 +653,7 @@ class AgentOrchestrator:
         tools: tuple[ToolDefinition, ...],
     ) -> ProviderRequest:
         system = render_system_instructions(state.evidence)
-        context_value = {
-            "candidateAnswer": state.candidate_answer,
-            "observations": [
-                {
-                    "callId": item.call_id,
-                    "contentType": item.content_type,
-                    "output": item.output,
-                    "status": item.status,
-                }
-                for item in state.observations
-            ],
-            "plan": state.plan,
-            "prompt": state.prompt,
-            "reviewNotes": state.review_notes,
-            "system": system,
-            "tools": [_tool_value(item) for item in tools],
-        }
-        if len(canonical_json(context_value)) > self.limits.max_context_bytes:
-            raise LimitExceededError("assembled provider context exceeds the configured byte limit")
-        return ProviderRequest(
+        request = ProviderRequest(
             session_id=state.session_id,
             stage=state.stage,
             prompt=state.prompt,
@@ -684,6 +665,7 @@ class AgentOrchestrator:
             tools=tools,
             max_output_bytes=self.limits.max_output_bytes,
         )
+        return compact_provider_request(request, self.limits.max_context_bytes)
 
     def _require_decision(self, result: ProviderResult, stage: Stage) -> None:
         allowed = {

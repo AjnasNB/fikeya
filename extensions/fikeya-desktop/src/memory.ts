@@ -8,8 +8,12 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const maximumSidecarOutputBytes = 512 * 1024;
+const maximumSidecarInputBytes = 1024 * 1024;
+const maximumSidecarBatchInputBytes = 16 * maximumSidecarInputBytes;
 const sidecarTimeoutMilliseconds = 30_000;
+const captureBatchTimeoutMilliseconds = 120_000;
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
+const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const nodeTypes = new Set(['worktree', 'memory', 'file', 'concept', 'directory', 'reference']);
 
 export interface FikeyaMemoryNode {
@@ -80,8 +84,13 @@ export interface FikeyaMemoryRecordResult {
 
 export interface FikeyaMemoryRunCaptureRequest {
 	readonly sessionId: string;
-	readonly callId: string;
+	readonly providerAttemptId: string | null;
+	readonly providerAttemptMeasurement: 'exact' | 'legacy-minimum' | 'unavailable';
+	readonly callId: string | null;
 	readonly prompt: string;
+	readonly promptSha256: string;
+	readonly promptBytes: number;
+	readonly promptTruncated: boolean;
 	readonly provider: {
 		readonly name: string;
 		readonly kind: string;
@@ -111,8 +120,17 @@ export interface FikeyaMemoryRunCaptureRequest {
 		readonly responseSha256: string;
 		readonly statusCode: number;
 	}[];
+	readonly providerCallCount: number;
+	readonly providerReceiptCount: number;
+	readonly providerReceiptsTruncated: boolean;
 	readonly outcome: {
-		readonly status: 'completed';
+		readonly status: 'completed' | 'cancelled' | 'failed';
+		readonly terminalFailure: {
+			readonly kind: 'connectivity' | 'quota' | 'authentication' | 'provider' | 'agent_no_progress' | 'runtime';
+			readonly retryable: boolean;
+			readonly statusCode: number | null;
+		} | null;
+		readonly changedFilesScope: 'regular-project-files-v1' | 'legacy-unspecified';
 		readonly steps: number;
 		readonly planSha256: string;
 		readonly summarySha256: string;
@@ -131,14 +149,30 @@ export interface FikeyaMemoryRunCaptureRequest {
 		readonly changedFilesTruncated: boolean;
 		readonly changedFiles: readonly {
 			readonly path: string;
+			readonly operation: 'add' | 'edit' | 'delete';
+			readonly beforeExists: boolean;
+			readonly afterExists: boolean;
 			readonly beforeSha256: string | null;
 			readonly afterSha256: string | null;
+			readonly beforeBytes: number | null;
+			readonly afterBytes: number | null;
+			readonly linesAdded: number | null;
+			readonly linesDeleted: number | null;
+			readonly lineDeltaStatus: 'exact' | 'binary' | 'too-large' | 'unavailable';
 		}[];
 	};
 }
 
 export interface FikeyaMemoryRunCaptureReceipt {
 	readonly capture: 'metadata' | 'content';
+	readonly sessionId: string;
+	readonly outcomeStatus: 'completed' | 'cancelled' | 'failed';
+	readonly providerAttemptId: string | null;
+	readonly providerAttemptMeasurement: 'exact' | 'legacy-minimum' | 'unavailable';
+	readonly providerCallCount: number;
+	readonly providerReceiptCount: number;
+	readonly providerReceiptsCaptured: number;
+	readonly providerReceiptsTruncated: boolean;
 	readonly eventCount: number;
 	readonly capturedTurnHash: string;
 	readonly ledgerHeadHash: string;
@@ -150,6 +184,10 @@ export interface FikeyaMemoryRunCaptureResult {
 	readonly ok: boolean;
 	readonly receipt?: FikeyaMemoryRunCaptureReceipt;
 	readonly failure: FikeyaMemoryFailure;
+}
+
+interface FikeyaMemoryRunCaptureBatchReceipt {
+	readonly results: readonly FikeyaMemoryRunCaptureResult[];
 }
 
 /** Initializes the pinned local Qarinah workspace without widening its capture policy. */
@@ -210,9 +248,41 @@ export function captureQarinahRun(
 			method: 'memory.captureRun',
 			params: request
 		},
-		parseMemoryRunCaptureSidecarResponse,
+		line => parseMemoryRunCaptureSidecarResponse(line, request),
 		receipt => ({ ok: true, receipt, failure: 'none' }),
 		failure => ({ ok: false, failure })
+	);
+}
+
+/**
+ * Records up to sixteen terminal turns in one bounded sidecar process. Qarinah appends every
+ * turn serially and derives the shared graph projection once after the final append.
+ */
+export function captureQarinahRuns(
+	extensionPath: string,
+	workspacePath: string,
+	requests: readonly FikeyaMemoryRunCaptureRequest[]
+): Promise<readonly FikeyaMemoryRunCaptureResult[]> {
+	if (requests.length === 0) {
+		return Promise.resolve([]);
+	}
+	if (requests.length > 16) {
+		return Promise.resolve(requests.map(() => ({ ok: false, failure: 'output-limit' })));
+	}
+	return invokeQarinahSidecar<FikeyaMemoryRunCaptureBatchReceipt, readonly FikeyaMemoryRunCaptureResult[]>(
+		extensionPath,
+		workspacePath,
+		{
+			jsonrpc: '2.0',
+			id: 'fikeya-memory-capture-runs',
+			method: 'memory.captureRuns',
+			params: { runs: requests }
+		},
+		line => parseMemoryRunCaptureBatchSidecarResponse(line, requests),
+		batch => batch.results,
+		failure => requests.map(() => ({ ok: false, failure })),
+		captureBatchTimeoutMilliseconds,
+		maximumSidecarBatchInputBytes
 	);
 }
 
@@ -239,7 +309,9 @@ function invokeQarinahSidecar<T, TResult>(
 	request: Readonly<Record<string, unknown>>,
 	parseLine: (line: string) => T | undefined,
 	success: (value: T) => TResult,
-	failure: (failure: Exclude<FikeyaMemoryFailure, 'none'>) => TResult
+	failure: (failure: Exclude<FikeyaMemoryFailure, 'none'>) => TResult,
+	timeoutMilliseconds = sidecarTimeoutMilliseconds,
+	maximumInputBytes = maximumSidecarInputBytes
 ): Promise<TResult> {
 	const sidecarPath = resolveQarinahSidecarPath(extensionPath);
 	if (!sidecarPath) {
@@ -247,6 +319,11 @@ function invokeQarinahSidecar<T, TResult>(
 	}
 
 	return new Promise(resolve => {
+		const serializedRequest = JSON.stringify(request);
+		if (Buffer.byteLength(serializedRequest, 'utf8') > maximumInputBytes) {
+			resolve(failure('output-limit'));
+			return;
+		}
 		const executableName = path.basename(process.execPath).toLowerCase();
 		const env = executableName.startsWith('node') ? process.env : { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
 		const child = spawn(process.execPath, [sidecarPath, '--root', workspacePath], {
@@ -258,25 +335,51 @@ function invokeQarinahSidecar<T, TResult>(
 		});
 		let output = '';
 		let outputBytes = 0;
-		let settled = false;
+		let selected = false;
+		let selectedResult: TResult | undefined;
+		let closed = false;
 		let timeout: NodeJS.Timeout | undefined;
+		let forceKillTimeout: NodeJS.Timeout | undefined;
 
-		const finish = (result: TResult): void => {
-			if (settled) {
+		const select = (result: TResult, terminate: boolean): void => {
+			if (selected) {
 				return;
 			}
-			settled = true;
+			selected = true;
+			selectedResult = result;
 			if (timeout) {
 				clearTimeout(timeout);
 			}
-			child.kill();
-			resolve(result);
+			if (terminate && !closed) {
+				child.kill();
+				forceKillTimeout = setTimeout(() => {
+					if (!closed) {
+						child.kill('SIGKILL');
+					}
+				}, 2_000);
+			} else if (!closed) {
+				// A complete one-shot response should be followed by natural process exit. Bound that
+				// grace period so a malformed or compromised sidecar cannot hold the workspace queue.
+				forceKillTimeout = setTimeout(() => {
+					if (!closed) {
+						child.kill();
+						forceKillTimeout = setTimeout(() => {
+							if (!closed) {
+								child.kill('SIGKILL');
+							}
+						}, 2_000);
+					}
+				}, 2_000);
+			}
 		};
 
 		const capture = (chunk: Buffer, retain: boolean): void => {
+			if (selected) {
+				return;
+			}
 			outputBytes += chunk.byteLength;
 			if (outputBytes > maximumSidecarOutputBytes) {
-				finish(failure('output-limit'));
+				select(failure('output-limit'), true);
 				return;
 			}
 			if (!retain) {
@@ -288,24 +391,33 @@ function invokeQarinahSidecar<T, TResult>(
 				return;
 			}
 			const value = parseLine(output.slice(0, lineEnd));
-			finish(value ? success(value) : failure('invalid-response'));
+			select(value ? success(value) : failure('invalid-response'), false);
 		};
+		child.on('error', () => select(failure('process-error'), true));
+		child.on('close', () => {
+			closed = true;
+			if (forceKillTimeout) {
+				clearTimeout(forceKillTimeout);
+			}
+			if (!selected) {
+				selected = true;
+				selectedResult = failure('process-error');
+			}
+			resolve(selectedResult as TResult);
+		});
 
 		if (!child.stdin || !child.stdout || !child.stderr) {
-			finish(failure('process-error'));
+			select(failure('process-error'), true);
 			return;
 		}
 		child.stdout.on('data', chunk => capture(chunk as Buffer, true));
 		child.stderr.on('data', chunk => capture(chunk as Buffer, false));
-		child.on('error', () => finish(failure('process-error')));
-		child.on('close', () => {
-			if (!settled) {
-				finish(failure('process-error'));
-			}
-		});
+		// This listener must remain installed after settlement because an early child exit can emit
+		// EOF/EPIPE asynchronously while a bounded request is still being flushed.
+		child.stdin.on('error', () => select(failure('process-error'), true));
 
-		child.stdin.write(`${JSON.stringify(request)}\n`, 'utf8');
-		timeout = setTimeout(() => finish(failure('timeout')), sidecarTimeoutMilliseconds);
+		timeout = setTimeout(() => select(failure('timeout'), true), timeoutMilliseconds);
+		child.stdin.end(`${serializedRequest}\n`, 'utf8');
 	});
 }
 
@@ -377,49 +489,159 @@ export function parseMemoryRecordSidecarResponse(line: string): FikeyaMemoryReco
 	}
 }
 
-export function parseMemoryRunCaptureSidecarResponse(line: string): FikeyaMemoryRunCaptureReceipt | undefined {
+export function parseMemoryRunCaptureSidecarResponse(
+	line: string,
+	expectedRequest?: FikeyaMemoryRunCaptureRequest
+): FikeyaMemoryRunCaptureReceipt | undefined {
+	if (Buffer.byteLength(line, 'utf8') > maximumSidecarOutputBytes) {
+		return undefined;
+	}
+	try {
+		const message = asRecord(JSON.parse(line));
+		if (!message || message.jsonrpc !== '2.0' || message.id !== 'fikeya-memory-capture-run' || message.error !== undefined) {
+			return undefined;
+		}
+		const receipt = parseMemoryRunCaptureReceipt(message.result);
+		return receipt && (!expectedRequest || captureReceiptMatchesRequest(receipt, expectedRequest))
+			? receipt
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function parseMemoryRunCaptureBatchSidecarResponse(
+	line: string,
+	expectedRequests?: readonly FikeyaMemoryRunCaptureRequest[]
+): FikeyaMemoryRunCaptureBatchReceipt | undefined {
 	if (Buffer.byteLength(line, 'utf8') > maximumSidecarOutputBytes) {
 		return undefined;
 	}
 	try {
 		const message = asRecord(JSON.parse(line));
 		const result = asRecord(message?.result);
-		const capture = result?.capture;
-		const capturedTurnHash = strictString(result?.capturedTurnHash, 71);
-		const ledgerHeadHash = strictString(result?.ledgerHeadHash, 71);
-		const graphManifestHash = strictString(result?.graphManifestHash, 71);
-		if (!message || message.jsonrpc !== '2.0' || message.id !== 'fikeya-memory-capture-run' || message.error !== undefined
-			|| !result || result.schemaVersion !== 'qarinah.fikeya-run-capture.v1'
-			|| (capture !== 'metadata' && capture !== 'content')
-			|| !isInteger(result.eventCount, 1, 100_000_000)
-			|| !capturedTurnHash || !sha256Pattern.test(capturedTurnHash)
-			|| !ledgerHeadHash || !sha256Pattern.test(ledgerHeadHash)
-			|| !graphManifestHash || !sha256Pattern.test(graphManifestHash)
-			|| !Array.isArray(result.events) || result.events.length < 3 || result.events.length > 16) {
+		if (!message || message.jsonrpc !== '2.0' || message.id !== 'fikeya-memory-capture-runs'
+			|| message.error !== undefined || !result
+			|| result.schemaVersion !== 'qarinah.fikeya-run-capture-batch.v1'
+			|| !Array.isArray(result.results) || result.results.length < 1 || result.results.length > 16
+			|| (expectedRequests !== undefined && result.results.length !== expectedRequests.length)) {
 			return undefined;
 		}
-		const events: FikeyaMemoryRecord[] = [];
-		for (const candidate of result.events) {
-			const event = parseMemoryRecord(candidate);
-			if (!event) {
+		const results: FikeyaMemoryRunCaptureResult[] = [];
+		let sharedProjection: string | undefined;
+		for (const [index, candidate] of result.results.entries()) {
+			const item = asRecord(candidate);
+			if (!item || typeof item.ok !== 'boolean') {
 				return undefined;
 			}
-			events.push(event);
+			if (!item.ok) {
+				if (Object.keys(item).length !== 1) {
+					return undefined;
+				}
+				results.push({ ok: false, failure: 'invalid-response' });
+				continue;
+			}
+			if (Object.keys(item).sort().join(',') !== 'ok,receipt') {
+				return undefined;
+			}
+			const receipt = parseMemoryRunCaptureReceipt(item.receipt);
+			const expected = expectedRequests?.[index];
+			if (!receipt || (expected && !captureReceiptMatchesRequest(receipt, expected))) {
+				return undefined;
+			}
+			const projection = `${receipt.eventCount}:${receipt.ledgerHeadHash}:${receipt.graphManifestHash}`;
+			if (sharedProjection !== undefined && sharedProjection !== projection) {
+				return undefined;
+			}
+			sharedProjection = projection;
+			results.push({ ok: true, receipt, failure: 'none' });
 		}
-		if (events.at(-1)?.eventHash !== capturedTurnHash || events.at(-1)?.kind !== 'turn.completed') {
-			return undefined;
-		}
-		return {
-			capture,
-			eventCount: result.eventCount,
-			capturedTurnHash,
-			ledgerHeadHash,
-			graphManifestHash,
-			events
-		};
+		return { results };
 	} catch {
 		return undefined;
 	}
+}
+
+function captureReceiptMatchesRequest(
+	receipt: FikeyaMemoryRunCaptureReceipt,
+	request: FikeyaMemoryRunCaptureRequest
+): boolean {
+	return receipt.sessionId === request.sessionId
+		&& receipt.outcomeStatus === request.outcome.status
+		&& receipt.providerAttemptId === request.providerAttemptId
+		&& receipt.providerAttemptMeasurement === request.providerAttemptMeasurement
+		&& receipt.providerCallCount === request.providerCallCount
+		&& receipt.providerReceiptCount === request.providerReceiptCount
+		&& receipt.providerReceiptsCaptured === request.providerReceipts.length
+		&& receipt.providerReceiptsTruncated === request.providerReceiptsTruncated;
+}
+
+function parseMemoryRunCaptureReceipt(value: unknown): FikeyaMemoryRunCaptureReceipt | undefined {
+	const result = asRecord(value);
+	const capture = result?.capture;
+	const sessionId = strictString(result?.sessionId, 128);
+	const outcomeStatus = result?.outcomeStatus;
+	const capturedTurnHash = strictString(result?.capturedTurnHash, 71);
+	const ledgerHeadHash = strictString(result?.ledgerHeadHash, 71);
+	const graphManifestHash = strictString(result?.graphManifestHash, 71);
+	const providerAttemptId = result?.providerAttemptId === null
+		? null
+		: strictString(result?.providerAttemptId, 128);
+	const providerAttemptMeasurement = result?.providerAttemptMeasurement;
+	if (!result || result.schemaVersion !== 'qarinah.fikeya-run-capture.v1'
+		|| (capture !== 'metadata' && capture !== 'content')
+		|| !sessionId || !identifierPattern.test(sessionId)
+		|| (outcomeStatus !== 'completed' && outcomeStatus !== 'cancelled' && outcomeStatus !== 'failed')
+		|| (providerAttemptId !== null && (!providerAttemptId || !identifierPattern.test(providerAttemptId)))
+		|| (providerAttemptMeasurement !== 'exact' && providerAttemptMeasurement !== 'legacy-minimum'
+			&& providerAttemptMeasurement !== 'unavailable')
+		|| !isInteger(result.providerCallCount, 0, 128)
+		|| !isInteger(result.providerReceiptCount, 0, 128)
+		|| !isInteger(result.providerReceiptsCaptured, 0, 16)
+		|| result.providerReceiptCount > result.providerCallCount
+		|| result.providerReceiptsCaptured > result.providerReceiptCount
+		|| typeof result.providerReceiptsTruncated !== 'boolean'
+		|| result.providerReceiptsTruncated !== (result.providerReceiptsCaptured !== result.providerReceiptCount)
+		|| (providerAttemptId === null) !== (result.providerCallCount === 0)
+		|| (providerAttemptMeasurement === 'unavailable' && providerAttemptId !== null)
+		|| (providerAttemptMeasurement === 'legacy-minimum'
+			&& (providerAttemptId === null || result.providerCallCount !== result.providerReceiptCount))
+		|| (outcomeStatus === 'completed' && result.providerReceiptCount === 0)
+		|| !isInteger(result.eventCount, 1, 100_000_000)
+		|| !capturedTurnHash || !sha256Pattern.test(capturedTurnHash)
+		|| !ledgerHeadHash || !sha256Pattern.test(ledgerHeadHash)
+		|| !graphManifestHash || !sha256Pattern.test(graphManifestHash)
+		|| !Array.isArray(result.events) || result.events.length < 3 || result.events.length > 16) {
+		return undefined;
+	}
+	const events: FikeyaMemoryRecord[] = [];
+	for (const candidate of result.events) {
+		const event = parseMemoryRecord(candidate);
+		if (!event) {
+			return undefined;
+		}
+		events.push(event);
+	}
+	const expectedKind = outcomeStatus === 'completed' ? 'turn.completed' : 'summary';
+	if (events.at(-1)?.eventHash !== capturedTurnHash || events.at(-1)?.kind !== expectedKind) {
+		return undefined;
+	}
+	return {
+		capture,
+		sessionId,
+		outcomeStatus,
+		providerAttemptId,
+		providerAttemptMeasurement,
+		providerCallCount: result.providerCallCount,
+		providerReceiptCount: result.providerReceiptCount,
+		providerReceiptsCaptured: result.providerReceiptsCaptured,
+		providerReceiptsTruncated: result.providerReceiptsTruncated,
+		eventCount: result.eventCount,
+		capturedTurnHash,
+		ledgerHeadHash,
+		graphManifestHash,
+		events
+	};
 }
 
 function parseMemoryRecord(value: unknown): FikeyaMemoryRecord | undefined {

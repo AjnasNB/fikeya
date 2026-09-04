@@ -22,6 +22,30 @@ python -m venv .venv
 On macOS or Linux, activate the environment with
 `source .venv/bin/activate` and use `python` directly.
 
+## Optional Deep Agents decision host
+
+`fikeya_runtime.deep_agents_host` binds a host-supplied async Deep Agents/LangGraph decision graph to Fikeya's real
+workspace broker. Fikeya passes strict JSON messages and tool schemas into the graph; it never gives the graph callable tools,
+the broker, a shell, or filesystem objects. Proposed tool calls still stop at the native durable one-use approval before the
+workspace broker may execute them.
+
+The runtime bridge is complete for checkpoint translation, SQLite persistence, tool validation, approval, broker execution,
+denial, review, cancellation, and content-free diagnostics. It does not construct or fabricate a graph, model, provider client,
+or credentials. Those remain host-supplied. Install the optional dependencies on Python 3.11 or newer with
+`pip install "fikeya-agent-core[deep-agents]"`.
+
+```python
+from fikeya_runtime.deep_agents_host import create_deep_agents_workspace_host
+from fikeya_runtime.workspace import Workspace
+
+workspace = Workspace.load(".")
+with create_deep_agents_workspace_host(graph, workspace, mode="build") as host:
+    print(host.diagnostic.as_json())
+```
+
+`deterministic_read_sample_graph()` is a dependency-free, no-model sample used to verify this integration path. It replays a
+fixed plan/read/review sequence and must not be presented as an AI model or production planner.
+
 ## Initialize a workspace
 
 ```console
@@ -212,6 +236,27 @@ UTF-8 edits; invoke an allowlisted process without a shell; run tests; and
 return a structured plan, changed-file hashes, tool receipts, test receipts,
 usage, and Qarinah evidence.
 
+Existing-file writes require the SHA-256 identity that the agent read, and a
+new-file request with a null identity uses an exclusive atomic publish. The
+runtime rechecks the precondition immediately before publication. This is
+optimistic concurrency protection, not a transaction with uncooperative
+external editors: a writer can still change an existing target in the final
+check-to-replace interval. Save editor changes before approval and do not run a
+parallel writer against the same approved path.
+
+Changed-file accounting measures regular-file additions, deletions, and content
+changes; it does not report permission, timestamp, ownership, or other
+metadata-only changes. Its `regular-project-files-v1` scope excludes Fikeya and
+VCS state, installed dependencies, Python virtual environments, and conventional
+build, distribution, coverage, and framework/tool cache trees. In a Git
+workspace, dirty and untracked source paths are prioritized by a read-only Git
+query using the same trusted executable resolution and minimal environment as
+approved tools; that optional query has a one-second bound on each pre/post
+snapshot. Source-shaped directories are then scanned first within the
+5,000-entry and 256 MiB bounds. If the remaining in-scope tree exceeds a bound,
+the receipt marks accounting incomplete instead of claiming a complete project
+diff.
+
 This command is a bidirectional integration protocol for Fikeya Desktop and
 other trusted local clients. Start it with:
 
@@ -295,29 +340,61 @@ Build and Project runs can use typed `browser.navigate`, `browser.snapshot`,
 `browser.click`, `browser.type`, `browser.scroll`, `browser.wait`,
 `browser.assert_text`, `browser.screenshot`, and `browser.close` calls. Each
 side-effecting or workspace-writing action remains bound to the reviewed plan and
-its exact approval. The browser runs in a dedicated Playwright session with
-bounded navigation, selectors, typed input, page text, screenshots, time, and
-action count. URL credentials and unsafe schemes are rejected, web content stays
-untrusted, and private or loopback navigation requires the explicit
-`--allow-private-browser` opt-in.
+its exact approval. Playwright is the default transport. An explicitly selected
+Puppeteer or Puppeteer Core installation implements the same typed operations
+behind the same broker and receipt contract. Both transports bound navigation,
+selectors, typed input, page text, screenshots, time, and action count. URL
+credentials and unsafe schemes are rejected, every Puppeteer page request is
+returned to the Python network guard, web content stays untrusted, and private
+or loopback navigation requires the separate `--allow-private-browser` opt-in.
+
+Puppeteer never loads implicitly and never falls back from a failed Playwright
+run. Set `FIKEYA_PUPPETEER_ROOT` to a dedicated, reviewed npm installation that
+declares exactly one of `puppeteer` or `puppeteer-core` and retains its
+`package-lock.json`. The runtime requires an exact package version and npm
+integrity entry, verifies installed package identity against the lock, and
+binds the lock-file SHA-256 into the Node startup handshake. Optionally set
+`FIKEYA_CHROME_EXECUTABLE` for Puppeteer Core, and select it for one CLI path:
+
+```console
+fikeya agent execute . --provider work --protocol-stdin --allow-network \
+  --browser-engine puppeteer --json-lines
+```
+
+Fikeya Desktop exposes the same choice through `fikeya.browser.engine`, with
+`fikeya.browser.puppeteerRoot` and `fikeya.browser.chromeExecutable` for the two
+reviewed local paths. The release test exercises `puppeteer-core@25.9.0` against
+the pinned Chromium Headless Shell; Puppeteer is not bundled into the ordinary
+CLI wheel.
+
+The reviewed Puppeteer installation and its transitive dependencies are trusted
+local executable code, not a sandbox. Page and subresource requests are guarded,
+but package initialization itself runs before page interception and may use the
+machine or network within OS permissions. Provision the dedicated root with a
+reviewed lock and `npm ci --ignore-scripts`, do not point it at an active project,
+and apply OS isolation when stronger containment is required. Fikeya starts the
+bridge with a minimal environment that excludes provider/API credentials, bounds
+its message and request queues, and owns the Node/Chromium process tree.
 
 The beta.8 Windows x64 Desktop and Windows x64 VSIX embed the reviewed Chromium
 Headless Shell payload. The standalone CLI wheel does not contain a browser
 binary. Source and CLI users install the `browser` extra and provision the pinned
-Playwright browser as shown in the development setup. Fikeya does not currently
+Playwright browser as shown in the development setup. The optional Puppeteer
+path uses an operator-provisioned package and browser executable. Fikeya does not currently
 ship macOS, Linux, Windows ARM64, or macOS ARM64 installers.
 
 ### Reviewed external tool presets
 
-Fikeya Runtime ships configuration-only presets for separately installed
-Cockroach Browser and Cockroach Crawler CLIs. Both start disabled. Listing a
-preset only checks whether its executable name is discoverable; it does not
-run the executable, contact a network service, or claim that the installed
-package or version is authentic.
+Fikeya Runtime ships reviewed presets and a bounded local MCP-over-stdio host
+for separately installed Cockroach Browser and Cockroach Crawler CLIs. Both
+start disabled. Listing a preset only checks whether its executable name is
+discoverable; it does not run the executable, contact a network service, or
+claim that the installed package or version is authentic.
 
 ```console
 fikeya tool list --json
 fikeya tool enable cockroach-browser --workspace . --confirm-workspace
+fikeya tool credential-set cockroach-browser COCKROACH_BROWSER_TOKEN --workspace . --secret-stdin
 fikeya tool status --workspace . --json
 fikeya tool disable cockroach-browser --workspace .
 ```
@@ -328,17 +405,35 @@ until it is confirmed again. SQLite stores only the preset identifier, digest,
 and enablement timestamp. Configuration values and credentials are never
 stored in the enablement record, and enabling a preset does not start it.
 
-The runtime loader resolves a fixed executable without a shell, constructs a
-minimal child environment, and rejects filesystem-root workspaces, escaped
-metadata paths, shell-script shims, unknown configuration fields, URL
-credentials, private literal crawler IPs, and non-finite or widened limits.
-Request bytes, response bytes, request count, concurrency, request timeout,
-and total session duration are guarded by the loader. The caller remains
-responsible for MCP message framing, cancellation, and terminating the child
-on a protocol failure.
+In Build and Research modes, enabled presets expose only their reviewed MCP
+tools under the `mcp.<preset>.<tool>` namespace. Each call still crosses the
+normal exact, single-use Agent Core approval before the execution broker can
+invoke it. The host validates MCP initialization, package name, version against
+the reviewed SemVer range, complete tool allowlist, JSON-RPC identifiers, tool schemas,
+typed results, sizes, counts, timeouts, and session duration. It captures only
+a bounded redacted stderr tail and owns the whole child process tree so
+cancellation or a protocol failure also terminates descendants.
 
-External executable provenance and version verification is intentionally an
-explicit diagnostic warning in this beta. On Windows, `.cmd`, `.bat`, and
+The loader resolves a fixed executable without a shell, constructs a minimal
+child environment that does not inherit home/profile directories or provider
+credentials, and rejects filesystem-root workspaces, escaped metadata paths,
+unreviewed shell-script shims, unknown configuration fields, URL credentials,
+private literal crawler IPs, and non-finite or widened limits. On Windows, an
+exact npm-generated `.cmd` shim is accepted only when its canonical target,
+package name, compatible version, and bin mapping match the reviewed preset;
+Fikeya then invokes that JavaScript entry point through the absolute native
+`node.exe` path instead of executing the shim. Credentials are resolved from
+the OS keyring at launch and redacted from schemas, results, remote errors, and
+diagnostics.
+
+An enabled preset is trusted local executable code, not an OS sandbox. Exact
+approval controls when Fikeya calls it; it does not remove the executable's
+desktop-user filesystem or network permissions. Install only reviewed binaries
+or add an external OS sandbox for stronger isolation.
+
+External executable provenance remains an explicit diagnostic warning in this
+beta. The MCP peer's reported package name and version are checked, but that is
+not cryptographic artifact verification. On Windows, `.cmd`, `.bat`, and
 PowerShell shims are rejected because the no-shell boundary requires a native
 executable entry point.
 

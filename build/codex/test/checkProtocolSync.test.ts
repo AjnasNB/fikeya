@@ -93,4 +93,10 @@ suite('codex protocol freshness check helpers', () => {
 		const tree = { 'index.ts': 'x', 'nested/Thing.ts': 'y', 'README.md': 'whatever' };
 		assert.deepStrictEqual(diffGeneratedTrees(makeDir(tree), makeDir(tree)), []);
 	});
+
+	test('diffGeneratedTrees treats Git CRLF and generated LF as the same text', () => {
+		const committed = makeDir({ 'index.ts': 'export const value = 1;\r\n' });
+		const fresh = makeDir({ 'index.ts': 'export const value = 1;\n' });
+		assert.deepStrictEqual(diffGeneratedTrees(committed, fresh), []);
+	});
 });

@@ -30,6 +30,10 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+deep-agents = [
+  "deepagents>=0.7,<0.8; python_version >= '3.11'",
+  "langgraph>=1.2,<2; python_version >= '3.11'",
+]
 test = [
   "pytest>=8.3,<10",
   "pytest-asyncio>=0.25,<2",

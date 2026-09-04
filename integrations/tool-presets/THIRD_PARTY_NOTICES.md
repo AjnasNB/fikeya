@@ -5,7 +5,7 @@ The Fikeya preset files identify, but do not bundle, the following external pack
 ## Cockroach Browser
 
 - Package: `cockroach-browser`
-- Reviewed preset range: `>=0.2.1 <0.3.0`
+- Reviewed preset range: `>=0.5.0-rc.1 <0.6.0`
 - Source: <https://github.com/AjnasNB/cockroach-browser>
 - Homepage: <https://cockroachbrowser.com>
 - License: GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`)

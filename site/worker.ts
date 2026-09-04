@@ -1,6 +1,7 @@
 const CANONICAL_HOST = 'fikeya.com';
 const UPDATE_PATH = /^\/api\/update\/([^/]+)\/([^/]+)\/([0-9a-f]{40})$/i;
 const RELEASE_DOWNLOAD_PREFIX = 'https://github.com/AjnasNB/fikeya/releases/download/';
+const BROWSER_PAPER_PATH = '/papers/fikeya-cockroach-browser.md';
 
 interface UpdateAsset {
 	url: string;
@@ -40,7 +41,20 @@ export default {
 			return serveUpdate(env, updateMatch[1], updateMatch[2], updateMatch[3]);
 		}
 
-		return env.ASSETS.fetch(request);
+		const assetResponse = await env.ASSETS.fetch(request);
+		if (url.pathname === BROWSER_PAPER_PATH && assetResponse.ok) {
+			const headers = new Headers(assetResponse.headers);
+			headers.set('Content-Disposition', 'inline');
+			headers.set('Content-Type', 'text/plain; charset=utf-8');
+			headers.set('Link', '<https://fikeya.com/papers/fikeya-cockroach-browser/>; rel="canonical"');
+			headers.set('X-Robots-Tag', 'noindex, follow');
+			return new Response(request.method === 'HEAD' ? null : assetResponse.body, {
+				headers,
+				status: assetResponse.status,
+				statusText: assetResponse.statusText
+			});
+		}
+		return assetResponse;
 	}
 };
 

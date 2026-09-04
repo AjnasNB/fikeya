@@ -53,7 +53,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-fikeya_runtime = ["py.typed", "presets/*.preset.json"]
+fikeya_runtime = ["py.typed", "presets/*.preset.json", "puppeteer_bridge.mjs"]
 
 [tool.uv.sources]
 fikeya-agent-core = { path = "../fikeya-agent-core" }

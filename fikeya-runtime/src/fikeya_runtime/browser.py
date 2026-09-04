@@ -30,6 +30,8 @@ BrowserAction = Literal[
     "navigate", "inspect", "click", "type", "scroll", "screenshot", "wait", "close"
 ]
 BrowserSnapshotKind = Literal["accessible", "text"]
+BrowserEngine = Literal["playwright", "puppeteer"]
+SUPPORTED_BROWSER_ENGINES: tuple[BrowserEngine, ...] = ("playwright", "puppeteer")
 
 MAX_URL_LENGTH = 2_048
 MAX_SELECTOR_LENGTH = 1_024
@@ -333,6 +335,7 @@ class BrowserSession:
         allow_private: bool = False,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
         driver: BrowserDriver | None = None,
+        engine: BrowserEngine | str | None = None,
         resolver: AddressResolver = _resolve_addresses,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -346,7 +349,23 @@ class BrowserSession:
         self._resolver = resolver
         self._clock = clock
         self._started_at = clock()
-        self._driver: BrowserDriver = driver or PlaywrightBrowserDriver()
+        selected_engine = engine or os.environ.get(
+            "FIKEYA_BROWSER_ENGINE", "playwright"
+        )
+        if selected_engine not in SUPPORTED_BROWSER_ENGINES:
+            raise BrowserLimitError(
+                "Browser engine must be 'playwright' or 'puppeteer'."
+            )
+        if driver is not None:
+            self._driver = driver
+        elif selected_engine == "playwright":
+            self._driver = PlaywrightBrowserDriver()
+        else:
+            # Import only after explicit selection so the default runtime never
+            # imports or probes the optional Node transport.
+            from .puppeteer import PuppeteerBrowserDriver
+
+            self._driver = PuppeteerBrowserDriver()
         self._driver.set_request_guard(self._validate_url)
         self._navigated = False
         self._closed = False

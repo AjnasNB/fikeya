@@ -109,6 +109,15 @@ def main() -> int:
         workspace.mkdir()
         source = workspace / "answer.py"
         source.write_text("VALUE = 1\n", encoding="utf-8")
+        verification = workspace / "test_answer.py"
+        verification.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n\n"
+            "class AnswerTests(unittest.TestCase):\n"
+            "    def test_updated_value(self) -> None:\n"
+            "        self.assertEqual(Path('answer.py').read_text(encoding='utf-8'), 'VALUE = 2\\n')\n",
+            encoding="utf-8",
+        )
         expected = hashlib.sha256(source.read_bytes()).hexdigest()
         environment = {**os.environ, "FIKEYA_HOME": str(runtime_home)}
 
@@ -150,8 +159,9 @@ def main() -> int:
                 "toolCall": {
                     "arguments": {
                         "arguments": [
-                            "-c",
-                            "from pathlib import Path; assert Path('answer.py').read_text() == 'VALUE = 2\\n'",
+                            "-m",
+                            "unittest",
+                            "test_answer.py",
                         ],
                         "cwd": ".",
                         "executable": "python",
@@ -277,6 +287,10 @@ def main() -> int:
                 not isinstance(tests, list)
                 or len(tests) != 1
                 or not isinstance(tests[0], dict)
+                or tests[0].get("callId") != "test:answer"
+                or tests[0].get("name") != "process.run"
+                or tests[0].get("status") != "ok"
+                or tests[0].get("test") is not True
                 or not _canonical_sha256(tests[0].get("outputSha256"))
             ):
                 raise RuntimeError(f"Invalid test evidence receipt: {tests!r}")

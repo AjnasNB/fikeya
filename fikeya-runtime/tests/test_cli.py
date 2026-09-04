@@ -51,13 +51,17 @@ def test_agent_execute_mode_defaults_to_build_and_private_browser_is_opt_in() ->
             "--mode",
             "review",
             "--allow-private-browser",
+            "--browser-engine",
+            "puppeteer",
             "--json-lines",
         ]
     )
     assert default.mode == "build"
     assert default.allow_private_browser is False
+    assert default.browser_engine == "playwright"
     assert review.mode == "review"
     assert review.allow_private_browser is True
+    assert review.browser_engine == "puppeteer"
 
 
 class _ProtocolInput:
@@ -418,6 +422,25 @@ def test_cli_init_and_provider_listing_make_no_network_calls(
     listed = json.loads(capsys.readouterr().out)
     assert listed["providers"][0]["name"] == "local"
 
+    assert (
+        main(
+            [
+                "--home",
+                str(home),
+                "provider",
+                "list",
+                "--available",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    available = json.loads(capsys.readouterr().out)["providers"]
+    by_kind = {entry["kind"]: entry for entry in available}
+    assert by_kind["openai"]["credentialRequired"] is True
+    assert by_kind["ollama"]["credentialRequired"] is False
+    assert all("secretRequired" not in entry for entry in available)
+
     assert main(["--home", str(home), "provider", "test", "local", "--json"]) == 2
     denied = json.loads(capsys.readouterr().out)
     assert "Network probe denied" in denied["error"]
@@ -674,6 +697,7 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
             return {
                 "callId": "call_final",
                 "changedFiles": [],
+                "failure": None,
                 "memory": {
                     "coverage": None,
                     "evidenceCount": None,
@@ -691,6 +715,8 @@ def test_cli_coding_protocol_streams_progress_approval_and_structured_result(
                     "toolCalls": [],
                 },
                 "output": "The reviewed result.",
+                "providerAttemptId": "evt_attempt_final",
+                "providerAttemptIds": ["evt_attempt_final"],
                 "providerCallIds": ["call_final"],
                 "sessionId": "ses_protocol",
                 "status": "completed",
@@ -889,7 +915,9 @@ def test_cli_coding_protocol_emits_typed_pre_provider_failure(
         )
         == 2
     )
-    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [expected]
+    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [
+        expected
+    ]
 
 
 def test_cli_doctor_reports_headless_keyring_without_blocking_runtime(

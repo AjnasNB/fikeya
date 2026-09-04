@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, Protocol
 
 from .cancellation import CancellationToken
@@ -21,13 +23,18 @@ from .models import (
     ReviewAction,
     Stage,
     ToolCall,
+    ToolDefinition,
     canonical_json,
     strict_json_loads,
 )
 
 RuntimeRequestFactory = Callable[[str, str | None, int], object]
+RuntimeRequestSizer = Callable[[object], int]
 CredentialSupplier = Callable[[], str | None]
 ProviderErrorClassifier = Callable[[Exception], bool]
+
+_MAX_LOGICAL_RUNTIME_CONTEXT_BYTES = 4 * 1024 * 1024
+_CONTEXT_TRUNCATION_VERSION = "fikeya-context-truncated-v1"
 
 
 class RuntimeProviderExecutor(Protocol):
@@ -57,25 +64,71 @@ class RuntimeProviderAdapter:
         allow_network: bool,
         timeout_seconds: float = 120.0,
         request_factory: RuntimeRequestFactory | None = None,
+        request_sizer: RuntimeRequestSizer | None = None,
+        request_size_limit_bytes: int = 1_048_576,
         is_retryable_error: ProviderErrorClassifier | None = None,
     ) -> None:
         if isinstance(timeout_seconds, bool) or not 0.1 <= timeout_seconds <= 300.0:
             raise ConfigurationError("runtime timeout_seconds must be between 0.1 and 300")
+        if isinstance(request_size_limit_bytes, bool) or not 1_024 <= request_size_limit_bytes <= 1_048_576:
+            raise ConfigurationError("runtime request_size_limit_bytes must be between 1024 and 1048576")
+        if request_factory is not None and request_sizer is None:
+            raise ConfigurationError(
+                "custom runtime request_factory requires request_sizer so the wire byte limit can be enforced"
+            )
         self._executor = executor
         self._profile = profile
         self._credential_supplier = credential_supplier
         self._allow_network = allow_network
         self._timeout_seconds = timeout_seconds
         self._request_factory = request_factory or _default_runtime_request
+        self._request_sizer = (
+            request_sizer
+            if request_sizer is not None
+            else lambda runtime_request: _default_runtime_request_size(self._profile, runtime_request)
+        )
+        self._request_size_limit_bytes = request_size_limit_bytes
         self._is_retryable_error = is_retryable_error
 
     async def complete(self, request: ProviderRequest, cancellation: CancellationToken) -> ProviderResult:
         """Execute one runtime call and require a stage-valid JSON decision."""
 
         cancellation.raise_if_cancelled()
-        prompt = render_provider_prompt(request)
         maximum_tokens = max(1, min(32_768, request.max_output_bytes // 4))
-        runtime_request = self._request_factory(prompt, request.system or None, maximum_tokens)
+        # Keep one absolute in-memory ceiling, but do not use a smaller logical
+        # estimate as a proxy for the provider wire body. Escaping and provider
+        # envelopes are accounted for by the exact sizer below.
+        bounded_request = compact_provider_request(
+            request,
+            _MAX_LOGICAL_RUNTIME_CONTEXT_BYTES,
+        )
+
+        def exact_size(candidate: ProviderRequest) -> int:
+            provider_prompt = render_provider_prompt(candidate)
+            provider_system = candidate.system or None
+            prompt_bytes = len(provider_prompt.encode("utf-8"))
+            system_bytes = len(provider_system.encode("utf-8")) if provider_system is not None else 0
+            if prompt_bytes > self._request_size_limit_bytes or system_bytes > self._request_size_limit_bytes:
+                return max(prompt_bytes, system_bytes)
+            runtime_candidate = self._request_factory(
+                provider_prompt,
+                provider_system,
+                maximum_tokens,
+            )
+            return self._runtime_request_size(runtime_candidate)
+
+        bounded_request = compact_provider_request(
+            bounded_request,
+            self._request_size_limit_bytes,
+            size=exact_size,
+        )
+        runtime_request = self._request_factory(
+            render_provider_prompt(bounded_request),
+            bounded_request.system or None,
+            maximum_tokens,
+        )
+        if self._runtime_request_size(runtime_request) > self._request_size_limit_bytes:
+            raise LimitExceededError("serialized runtime provider request exceeds its byte limit")
         credential = self._credential_supplier()
         if credential is not None and (not isinstance(credential, str) or not credential):
             raise ConfigurationError("credential supplier must return a non-empty string or None")
@@ -114,6 +167,14 @@ class RuntimeProviderAdapter:
             model_name=str(getattr(self._profile, "model", "unknown")),
             usage=usage,
         )
+
+    def _runtime_request_size(self, runtime_request: object) -> int:
+        if self._request_sizer is None:
+            raise AssertionError("runtime request sizing is unavailable")
+        measured = self._request_sizer(runtime_request)
+        if isinstance(measured, bool) or not isinstance(measured, int) or measured < 0:
+            raise ConfigurationError("runtime request_sizer must return a non-negative integer")
+        return measured
 
 
 def render_system_instructions(evidence: EvidenceContext | None) -> str:
@@ -173,8 +234,7 @@ def render_provider_prompt(request: ProviderRequest) -> str:
             'or {"kind":"answer","content":"candidate answer"}'
         ),
         Stage.REVIEW: (
-            '{"kind":"review","reviewAction":"complete|continue",'
-            '"content":"final answer or bounded revision guidance"}'
+            '{"kind":"review","reviewAction":"complete|continue","content":"final answer or bounded revision guidance"}'
         ),
     }
     shape = shapes.get(request.stage)
@@ -182,6 +242,245 @@ def render_provider_prompt(request: ProviderRequest) -> str:
         raise ProtocolError(f"provider cannot be called during stage: {request.stage.value}")
     serialized = canonical_json(common).decode("utf-8")
     return f"Return exactly one JSON object with this shape: {shape}\n\nInput:\n{serialized}"
+
+
+def provider_context_bytes(request: ProviderRequest) -> int:
+    """Measure the deterministic logical context before provider-envelope encoding."""
+
+    return len(canonical_json(_provider_context_value(request)))
+
+
+def compact_provider_request(
+    request: ProviderRequest,
+    maximum_bytes: int,
+    *,
+    size: Callable[[ProviderRequest], int] | None = None,
+) -> ProviderRequest:
+    """Fit cumulative context while retaining recent data and content-addressed omissions."""
+
+    if isinstance(maximum_bytes, bool) or maximum_bytes < 1_024:
+        raise ConfigurationError("provider context maximum_bytes must be at least 1024")
+    measure = size or provider_context_bytes
+
+    def measured(candidate: ProviderRequest) -> int:
+        value = measure(candidate)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ConfigurationError("provider context size function returned an invalid byte count")
+        return value
+
+    candidate = request
+    if measured(candidate) <= maximum_bytes:
+        return candidate
+
+    # Old results are the first material to collapse. Keep their identities and exact
+    # UTF-8 hashes, and retain the newest observation for as long as possible.
+    observations = list(candidate.observations)
+    for index in range(max(0, len(observations) - 1)):
+        original = observations[index]
+        summarized = _truncate_text(original.output, 0, f"observation:{original.call_id}")
+        if len(summarized.encode("utf-8")) >= len(original.output.encode("utf-8")):
+            continue
+        observations[index] = replace(original, output=summarized)
+        candidate = replace(candidate, observations=tuple(observations))
+        if measured(candidate) <= maximum_bytes:
+            return candidate
+
+    # The current task and the complete safety system are authoritative and never
+    # truncated. Compact reloadable planning/tool metadata and review artifacts
+    # before touching the newest observation or candidate answer.
+    candidate, fitted = _fit_tool_metadata(candidate, maximum_bytes, measured)
+    if fitted:
+        return candidate
+
+    for field_name, label in (
+        ("plan", "plan"),
+        ("review_notes", "review-notes"),
+    ):
+        candidate, fitted = _fit_text_field(
+            candidate,
+            field_name,
+            label,
+            maximum_bytes,
+            measured,
+        )
+        if fitted:
+            return candidate
+
+    if candidate.observations:
+        candidate, fitted = _fit_observation(
+            candidate,
+            len(candidate.observations) - 1,
+            maximum_bytes,
+            measured,
+        )
+        if fitted:
+            return candidate
+
+    candidate, fitted = _fit_text_field(
+        candidate,
+        "candidate_answer",
+        "candidate-answer",
+        maximum_bytes,
+        measured,
+    )
+    if fitted:
+        return candidate
+
+    raise LimitExceededError("provider request cannot fit without truncating the authoritative task or safety system")
+
+
+def _provider_context_value(request: ProviderRequest) -> dict[str, Any]:
+    return {
+        "candidateAnswer": request.candidate_answer,
+        "observations": [
+            {
+                "callId": item.call_id,
+                "contentType": item.content_type,
+                "output": item.output,
+                "status": item.status,
+            }
+            for item in request.observations
+        ],
+        "plan": request.plan,
+        "prompt": request.prompt,
+        "reviewNotes": request.review_notes,
+        "system": request.system,
+        "tools": [
+            {"description": tool.description, "inputSchema": tool.input_schema, "name": tool.name}
+            for tool in request.tools
+        ],
+    }
+
+
+def _fit_text_field(
+    request: ProviderRequest,
+    field_name: str,
+    label: str,
+    maximum_bytes: int,
+    measure: Callable[[ProviderRequest], int],
+) -> tuple[ProviderRequest, bool]:
+    original = getattr(request, field_name)
+    if not isinstance(original, str) or not original:
+        return request, False
+
+    fully_summarized = _truncate_text(original, 0, label)
+    if len(fully_summarized.encode("utf-8")) >= len(original.encode("utf-8")):
+        return request, False
+    smallest = replace(request, **{field_name: fully_summarized})
+    if measure(smallest) > maximum_bytes:
+        return smallest, False
+
+    best = smallest
+    low = 1
+    high = len(original.encode("utf-8")) - 1
+    while low <= high:
+        retained = (low + high) // 2
+        trial = replace(request, **{field_name: _truncate_text(original, retained, label)})
+        if measure(trial) <= maximum_bytes:
+            best = trial
+            low = retained + 1
+        else:
+            high = retained - 1
+    return best, True
+
+
+def _fit_observation(
+    request: ProviderRequest,
+    index: int,
+    maximum_bytes: int,
+    measure: Callable[[ProviderRequest], int],
+) -> tuple[ProviderRequest, bool]:
+    original = request.observations[index]
+    summarized = _truncate_text(original.output, 0, f"observation:{original.call_id}")
+    if len(summarized.encode("utf-8")) >= len(original.output.encode("utf-8")):
+        return request, False
+
+    def with_output(output: str) -> ProviderRequest:
+        observations = list(request.observations)
+        observations[index] = replace(original, output=output)
+        return replace(request, observations=tuple(observations))
+
+    smallest = with_output(summarized)
+    if measure(smallest) > maximum_bytes:
+        return smallest, False
+
+    best = smallest
+    low = 1
+    high = len(original.output.encode("utf-8")) - 1
+    while low <= high:
+        retained = (low + high) // 2
+        trial = with_output(_truncate_text(original.output, retained, f"observation:{original.call_id}"))
+        if measure(trial) <= maximum_bytes:
+            best = trial
+            low = retained + 1
+        else:
+            high = retained - 1
+    return best, True
+
+
+def _fit_tool_metadata(
+    request: ProviderRequest,
+    maximum_bytes: int,
+    measure: Callable[[ProviderRequest], int],
+) -> tuple[ProviderRequest, bool]:
+    tools = list(request.tools)
+    ordered = sorted(
+        range(len(tools)),
+        key=lambda index: (
+            -len(
+                canonical_json(
+                    {
+                        "description": tools[index].description,
+                        "inputSchema": tools[index].input_schema,
+                    }
+                )
+            ),
+            tools[index].name,
+        ),
+    )
+    candidate = request
+    for index in ordered:
+        original = tools[index]
+        description = _truncate_text(original.description, 0, f"tool-description:{original.name}")
+        if len(description.encode("utf-8")) >= len(original.description.encode("utf-8")):
+            description = original.description
+        schema_bytes = canonical_json(original.input_schema)
+        schema_marker: dict[str, Any] = {
+            "$fikeyaContextTruncated": {
+                "originalUtf8Bytes": len(schema_bytes),
+                "sha256": f"sha256:{hashlib.sha256(schema_bytes).hexdigest()}",
+                "version": _CONTEXT_TRUNCATION_VERSION,
+            }
+        }
+        schema = schema_marker if len(canonical_json(schema_marker)) < len(schema_bytes) else original.input_schema
+        if description == original.description and schema == original.input_schema:
+            continue
+        tools[index] = ToolDefinition(original.name, description, schema)
+        candidate = replace(request, tools=tuple(tools))
+        if measure(candidate) <= maximum_bytes:
+            return candidate, True
+    return candidate, False
+
+
+def _truncate_text(value: str, retained_bytes: int, label: str) -> str:
+    raw = value.encode("utf-8")
+    if retained_bytes >= len(raw):
+        return value
+    retained_bytes = max(0, retained_bytes)
+    prefix_budget = (retained_bytes + 1) // 2
+    suffix_budget = retained_bytes // 2
+    prefix = raw[:prefix_budget].decode("utf-8", errors="ignore")
+    suffix = raw[len(raw) - suffix_budget :].decode("utf-8", errors="ignore") if suffix_budget else ""
+    retained = len(prefix.encode("utf-8")) + len(suffix.encode("utf-8"))
+    current_sha256 = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    marker = (
+        f"[{_CONTEXT_TRUNCATION_VERSION} field={label} "
+        f"originalUtf8Bytes={len(raw)} retainedUtf8Bytes={retained} "
+        f"omittedUtf8Bytes={len(raw) - retained} sha256={current_sha256}]"
+    )
+    if not prefix and not suffix:
+        return marker
+    return f"{prefix}\n{marker}\n{suffix}"
 
 
 def decode_provider_decision(text: str, stage: Stage) -> ProviderDecision:
@@ -252,6 +551,14 @@ def _default_runtime_request(prompt: str, system: str | None, max_output_tokens:
     return InferenceRequest(prompt=prompt, system=system, max_output_tokens=max_output_tokens)
 
 
+def _default_runtime_request_size(profile: object, request: object) -> int:
+    try:
+        from fikeya_runtime.inference import serialized_provider_request_bytes
+    except ImportError as error:
+        raise RuntimeError("fikeya-runtime is required for exact RuntimeProviderAdapter request sizing") from error
+    return serialized_provider_request_bytes(profile, request)
+
+
 def _required_string(value: dict[str, object], name: str) -> str:
     item = value.get(name)
     if not isinstance(item, str) or not item:
@@ -264,9 +571,7 @@ def _require_exact_keys(value: dict[str, object], expected: set[str], label: str
     if actual != expected:
         missing = sorted(expected - actual)
         unexpected = sorted(actual - expected)
-        raise ProtocolError(
-            f"{label} decision keys are not exact; missing={missing!r}, unexpected={unexpected!r}"
-        )
+        raise ProtocolError(f"{label} decision keys are not exact; missing={missing!r}, unexpected={unexpected!r}")
 
 
 def _optional_non_negative_int(value: object) -> int | None:

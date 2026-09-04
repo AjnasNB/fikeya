@@ -9,7 +9,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 import {
+	agentTerminalFailureToRuntimeFailure,
 	buildAgentRunArguments,
+	buildFikeyaBrowserEnvironment,
 	buildFikeyaRuntimeEnvironment,
 	buildPlanActionArguments,
 	buildPlanApproveArguments,
@@ -40,7 +42,10 @@ const protocolInvocation = { executable: process.execPath, source: 'path' } as c
 
 function agentResultRecord(): Readonly<Record<string, unknown>> {
 	return {
+		providerAttemptId: 'evt_attempt_fixture',
+		providerAttemptIds: ['evt_attempt_fixture'],
 		callId: 'call_fixture',
+		failure: null,
 		memory: { coverage: null, evidenceCount: null, receiptId: null, responseSha256: null, status: 'off' },
 		ok: true,
 		outcome: { changedFiles: [], plan: 'Complete the fixture.', steps: 1, summary: 'Fixture complete.', tests: [], toolCalls: [] },
@@ -380,7 +385,7 @@ describe('Fikeya runtime protocol', () => {
 		const args = buildAgentRunArguments('openrouter-primary', 2048, 12_000, 'auto', 'review');
 		assert.deepStrictEqual(args.slice(0, 7), ['agent', 'execute', '.', '--provider', 'openrouter-primary', '--protocol-stdin', '--allow-network']);
 		assert.ok(!args.includes(prompt));
-		assert.deepStrictEqual(args.slice(-7), ['--context-max-characters', '12000', '--memory', 'auto', '--mode', 'review', '--json-lines']);
+		assert.deepStrictEqual(args.slice(-9), ['--context-max-characters', '12000', '--memory', 'auto', '--mode', 'review', '--browser-engine', 'playwright', '--json-lines']);
 		assert.ok(args.includes('--context-max-characters'));
 		assert.ok(args.includes('--json-lines'));
 	});
@@ -390,9 +395,10 @@ describe('Fikeya runtime protocol', () => {
 		const start = buildProjectRunArguments('start', 'azure-primary');
 		const resume = buildProjectRunArguments('resume', 'azure-primary', 'aut_fixture');
 		const localBrowserResume = buildProjectRunArguments('resume', 'azure-primary', 'aut_fixture', true);
-		assert.deepStrictEqual(start, ['project', 'start', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--json-lines']);
-		assert.deepStrictEqual(resume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--json-lines']);
-		assert.deepStrictEqual(localBrowserResume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--allow-private-browser', '--json-lines']);
+		assert.deepStrictEqual(start, ['project', 'start', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--browser-engine', 'playwright', '--json-lines']);
+		assert.deepStrictEqual(resume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--browser-engine', 'playwright', '--json-lines']);
+		assert.deepStrictEqual(localBrowserResume, ['project', 'resume', 'aut_fixture', '--workspace', '.', '--provider', 'azure-primary', '--protocol-stdin', '--allow-network', '--allow-private-browser', '--browser-engine', 'playwright', '--json-lines']);
+		assert.deepStrictEqual(buildProjectRunArguments('start', 'azure-primary', undefined, false, 'puppeteer').slice(-3), ['--browser-engine', 'puppeteer', '--json-lines']);
 		assert.ok(!start.includes(goal));
 		assert.ok(!resume.includes(goal));
 	});
@@ -745,12 +751,108 @@ describe('Fikeya runtime protocol', () => {
 		assert.deepStrictEqual(parentEnvironment, { PATH: 'fixed-path' });
 	});
 
+	test('accepts an initial-provider-failure result with an attempt but no receipt on exit code 2', async () => {
+		const workspacePath = await mkdtemp(path.join(tmpdir(), 'fikeya-runtime-failed-result-'));
+		try {
+			const base = agentResultRecord();
+			const output = 'The run failed; measured file evidence remains available.';
+			const failed = {
+				...base,
+				callId: null,
+				failure: { kind: 'quota', retryable: true, statusCode: 429 },
+				ok: false,
+				providerCallIds: [],
+				status: 'failed',
+				output,
+				outcome: { ...(base.outcome as Record<string, unknown>), summary: output }
+			};
+			await writeProtocolFixture(workspacePath, 'agent', [failed], 2);
+			const operation = startFikeyaAgentRun(
+				'fixture-provider', 'Complete the fixture.', 256, 512, 'off', workspacePath,
+				async () => 'deny_once', [], [], 'build', protocolInvocation, process.env
+			);
+			const result = await operation.result;
+			assert.strictEqual(result.ok, true);
+			assert.strictEqual(result.failure, 'none');
+			assert.strictEqual(result.exitCode, 2);
+			assert.strictEqual(result.value?.status, 'failed');
+			assert.deepStrictEqual(result.value?.failure, { kind: 'quota', retryable: true, statusCode: 429 });
+			assert.strictEqual(agentTerminalFailureToRuntimeFailure(result.value!.failure!), 'quota');
+			assert.strictEqual(result.value?.providerAttemptId, 'evt_attempt_fixture');
+			assert.strictEqual(result.value?.callId, null);
+			assert.deepStrictEqual(result.value?.providerCallIds, []);
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
+	test('maps structured connectivity and authentication failures without collapsing their semantics', () => {
+		assert.strictEqual(agentTerminalFailureToRuntimeFailure({
+			kind: 'connectivity', retryable: true, statusCode: null
+		}), 'provider-unreachable');
+		assert.strictEqual(agentTerminalFailureToRuntimeFailure({
+			kind: 'authentication', retryable: false, statusCode: 401
+		}), 'authentication');
+	});
+
+	test('rejects contradictory structured terminal failure classifications', () => {
+		const base = agentResultRecord();
+		const failed = (failure: unknown) => {
+			const output = 'The provider request failed.';
+			return parseAgentTurn({
+				...base,
+				callId: null,
+				failure,
+				ok: false,
+				providerCallIds: [],
+				status: 'failed',
+				output,
+				outcome: { ...(base.outcome as Record<string, unknown>), summary: output }
+			});
+		};
+
+		assert.ok(failed({ kind: 'provider', retryable: true, statusCode: 503 }));
+		assert.ok(failed({ kind: 'provider', retryable: false, statusCode: null }));
+		assert.strictEqual(failed({ kind: 'quota', retryable: false, statusCode: 429 }), undefined);
+		assert.strictEqual(failed({ kind: 'provider', retryable: false, statusCode: 503 }), undefined);
+		assert.strictEqual(failed({ kind: 'provider', retryable: true, statusCode: null }), undefined);
+		assert.strictEqual(failed({ kind: 'provider', retryable: true, statusCode: 429 }), undefined);
+		assert.strictEqual(failed({ kind: 'connectivity', retryable: true, statusCode: null, detail: 'extra' }), undefined);
+	});
+
+	test('keeps Puppeteer selection explicit and removes stale transport paths', () => {
+		const parentEnvironment: NodeJS.ProcessEnv = {
+			FIKEYA_PUPPETEER_ROOT: 'stale-root',
+			FIKEYA_CHROME_EXECUTABLE: 'stale-chrome',
+			PATH: 'fixed-path'
+		};
+		assert.deepStrictEqual(buildFikeyaBrowserEnvironment({ engine: 'playwright' }, parentEnvironment), {
+			FIKEYA_BROWSER_ENGINE: 'playwright',
+			PATH: 'fixed-path'
+		});
+		assert.deepStrictEqual(buildFikeyaBrowserEnvironment({
+			engine: 'puppeteer',
+			puppeteerRoot: 'D:\\reviewed\\puppeteer',
+			chromeExecutable: 'D:\\reviewed\\chrome.exe'
+		}, parentEnvironment), {
+			FIKEYA_BROWSER_ENGINE: 'puppeteer',
+			FIKEYA_PUPPETEER_ROOT: 'D:\\reviewed\\puppeteer',
+			FIKEYA_CHROME_EXECUTABLE: 'D:\\reviewed\\chrome.exe',
+			PATH: 'fixed-path'
+		});
+		assert.deepStrictEqual(parentEnvironment, {
+			FIKEYA_PUPPETEER_ROOT: 'stale-root',
+			FIKEYA_CHROME_EXECUTABLE: 'stale-chrome',
+			PATH: 'fixed-path'
+		});
+	});
+
 	test('keeps exact plan specifications out of process arguments', () => {
 		const privateContent = 'private file content';
 		assert.deepStrictEqual(buildPlanCreateArguments(), ['plan', 'create', '.', '--spec-stdin', '--json']);
 		assert.ok(!buildPlanCreateArguments().includes(privateContent));
-		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--json']);
-		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example', true), ['plan', 'resume', 'pln_example', '--workspace', '.', '--allow-private-browser', '--json']);
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example'), ['plan', 'resume', 'pln_example', '--workspace', '.', '--browser-engine', 'playwright', '--json']);
+		assert.deepStrictEqual(buildPlanActionArguments('resume', 'pln_example', true), ['plan', 'resume', 'pln_example', '--workspace', '.', '--allow-private-browser', '--browser-engine', 'playwright', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', ['inspect', 'verify']), ['plan', 'approve', 'pln_example', '--workspace', '.', '--step', 'inspect', '--step', 'verify', '--json']);
 		assert.deepStrictEqual(buildPlanApproveArguments('pln_example', 'all'), ['plan', 'approve', 'pln_example', '--workspace', '.', '--all', '--json']);
 		const proposalArgs = buildPlanProposalArguments('azure-primary', 2048, 12_000, 'required');
@@ -903,15 +1005,33 @@ describe('Fikeya runtime protocol', () => {
 		assert.notStrictEqual(result, parentEnvironment);
 	});
 
-	test('parses completed turns and exact provider-reported usage', () => {
+		test('parses completed turns and exact provider-reported usage', () => {
 		const outcome = {
+			changedFilesScope: 'regular-project-files-v1',
+			changedFilesTruncated: false,
 			changedFiles: [{
 				afterSha256: `sha256:${'d'.repeat(64)}`,
+				afterBytes: 640,
+				afterExists: true,
 				beforeSha256: `sha256:${'b'.repeat(64)}`,
+				beforeBytes: 580,
+				beforeExists: true,
+				lineDeltaStatus: 'exact',
+				linesAdded: 8,
+				linesDeleted: 3,
+				operation: 'edit',
 				path: 'src/payment.ts'
 			}, {
 				afterSha256: null,
+				afterBytes: null,
+				afterExists: false,
 				beforeSha256: `sha256:${'a'.repeat(64)}`,
+				beforeBytes: 120,
+				beforeExists: true,
+				lineDeltaStatus: 'exact',
+				linesAdded: 0,
+				linesDeleted: 7,
+				operation: 'delete',
 				path: 'src/removed.ts'
 			}],
 			plan: 'Inspect, edit, and verify the focused behavior.',
@@ -937,7 +1057,10 @@ describe('Fikeya runtime protocol', () => {
 			}]
 		};
 		assert.deepStrictEqual(parseAgentTurn({
+			providerAttemptId: 'evt_attempt_0123456789abcdef',
+			providerAttemptIds: ['evt_attempt_aaaaaaaaaaaaaaaa', 'evt_attempt_0123456789abcdef'],
 			callId: 'call_0123456789abcdef',
+			failure: null,
 			ok: true,
 			outcome,
 			output: outcome.summary,
@@ -959,7 +1082,11 @@ describe('Fikeya runtime protocol', () => {
 				status: 'used'
 			}
 		}), {
+			providerAttemptId: 'evt_attempt_0123456789abcdef',
+			providerAttemptIds: ['evt_attempt_aaaaaaaaaaaaaaaa', 'evt_attempt_0123456789abcdef'],
+			providerAttemptMeasurement: 'exact',
 			callId: 'call_0123456789abcdef',
+			failure: null,
 			outcome,
 			output: outcome.summary,
 			providerCallIds: ['call_aaaaaaaaaaaaaaaa', 'call_0123456789abcdef'],
@@ -984,7 +1111,10 @@ describe('Fikeya runtime protocol', () => {
 	test('parses deliberate memory-free turns without inventing context evidence', () => {
 		const output = 'No project context was attached.';
 		assert.deepStrictEqual(parseAgentTurn({
+			providerAttemptId: 'evt_attempt_0123456789abcdef',
+			providerAttemptIds: ['evt_attempt_0123456789abcdef'],
 			callId: 'call_0123456789abcdef',
+			failure: null,
 			memory: {
 				coverage: null,
 				evidenceCount: null,
@@ -1019,6 +1149,243 @@ describe('Fikeya runtime protocol', () => {
 			responseSha256: null,
 			status: 'off'
 		});
+	});
+
+	test('normalizes legacy runtime results without inventing failed provider attempts', () => {
+		const current = agentResultRecord();
+		const {
+			providerAttemptId: _providerAttemptId,
+			providerAttemptIds: _providerAttemptIds,
+			...legacyCompleted
+		} = current;
+		const completed = parseAgentTurn(legacyCompleted);
+		assert.strictEqual(completed?.providerAttemptMeasurement, 'legacy-minimum');
+		assert.strictEqual(completed?.providerAttemptId, 'call_fixture');
+		assert.deepStrictEqual(completed?.providerAttemptIds, ['call_fixture']);
+
+		const output = 'Legacy runtime cancelled with unknown provider-attempt accounting.';
+		const cancelled = parseAgentTurn({
+			...legacyCompleted,
+			callId: null,
+			providerCallIds: [],
+			ok: false,
+			status: 'cancelled',
+			output,
+			outcome: {
+				changedFiles: [], changedFilesTruncated: false, changedFilesScope: 'regular-project-files-v1',
+				plan: '', steps: 1, summary: output, tests: [], toolCalls: []
+			}
+		});
+		assert.strictEqual(cancelled?.providerAttemptMeasurement, 'unavailable');
+		assert.strictEqual(cancelled?.providerAttemptId, null);
+		assert.deepStrictEqual(cancelled?.providerAttemptIds, []);
+	});
+
+	test('parses only the explicit pre-provider cancellation shape without a call id', () => {
+		const output = 'The run was cancelled before a reviewed answer was produced. Completed tool and changed-file evidence is retained below.';
+		const cancelled = parseAgentTurn({
+			...agentResultRecord(),
+			providerAttemptId: null,
+			providerAttemptIds: [],
+			callId: null,
+			ok: false,
+			providerCallIds: [],
+			status: 'cancelled',
+			output,
+			outcome: {
+				changedFiles: [], changedFilesTruncated: false, changedFilesScope: 'regular-project-files-v1',
+				plan: '', steps: 0, summary: output, tests: [], toolCalls: []
+			}
+		});
+		assert.strictEqual(cancelled?.callId, null);
+		assert.strictEqual(cancelled?.providerAttemptId, null);
+		assert.deepStrictEqual(cancelled?.providerAttemptIds, []);
+		assert.deepStrictEqual(cancelled?.providerCallIds, []);
+		assert.strictEqual(parseAgentTurn({ ...cancelled, status: 'failed' }), undefined);
+	});
+
+	test('distinguishes a pending provider cancellation and initial failure from pre-provider cancellation', () => {
+		const terminal = (status: 'cancelled' | 'failed') => {
+			const output = status === 'cancelled'
+				? 'The pending provider request was cancelled.'
+				: 'The initial provider request failed.';
+			return parseAgentTurn({
+				...agentResultRecord(),
+				providerAttemptId: 'evt_pending_provider_request',
+				providerAttemptIds: ['evt_pending_provider_request'],
+				callId: null,
+				providerCallIds: [],
+				ok: false,
+				failure: status === 'failed'
+					? { kind: 'connectivity', retryable: true, statusCode: null }
+					: null,
+				status,
+				output,
+				outcome: {
+					changedFiles: [], changedFilesTruncated: false, changedFilesScope: 'regular-project-files-v1',
+					plan: '', steps: 1, summary: output, tests: [], toolCalls: []
+				}
+			});
+		};
+
+		for (const status of ['cancelled', 'failed'] as const) {
+			const turn = terminal(status);
+			assert.strictEqual(turn?.status, status);
+			assert.strictEqual(turn?.providerAttemptId, 'evt_pending_provider_request');
+			assert.deepStrictEqual(turn?.providerAttemptIds, ['evt_pending_provider_request']);
+			assert.strictEqual(turn?.callId, null);
+			assert.deepStrictEqual(turn?.providerCallIds, []);
+		}
+		assert.strictEqual(parseAgentTurn({
+			...agentResultRecord(),
+			providerAttemptId: 'evt_unlisted',
+			providerAttemptIds: [],
+			callId: null,
+			providerCallIds: [],
+			ok: false,
+			status: 'failed'
+		}), undefined);
+	});
+
+	test('rejects duplicate and contradictory outcome aggregates', () => {
+		const base = agentResultRecord();
+		const tool = {
+			callId: 'tool_test', durationMs: 12, exitCode: 0, name: 'process.run',
+			outputSha256: `sha256:${'e'.repeat(64)}`, status: 'ok', test: true
+		};
+		const changedFile = {
+			path: 'src/result.ts', operation: 'add', beforeSha256: null, afterSha256: `sha256:${'a'.repeat(64)}`,
+			beforeBytes: null, afterBytes: 12, linesAdded: 1, linesDeleted: 0, lineDeltaStatus: 'exact'
+		};
+		const result = (outcome: Record<string, unknown>) => parseAgentTurn({ ...base, outcome });
+		const common = {
+			changedFiles: [changedFile], plan: 'Verify the result.', steps: 1,
+			summary: 'Fixture complete.', tests: [tool], toolCalls: [tool]
+		};
+		assert.ok(result(common));
+		assert.strictEqual(result({ ...common, toolCalls: [tool, tool] }), undefined);
+		assert.strictEqual(result({ ...common, changedFiles: [changedFile, changedFile] }), undefined);
+		assert.strictEqual(result({ ...common, tests: [] }), undefined);
+		assert.strictEqual(result({ ...common, tests: [{ ...tool, status: 'error' }] }), undefined);
+	});
+
+	test('normalizes legacy changed-file receipts and rejects inconsistent line evidence', () => {
+		const hash = `sha256:${'a'.repeat(64)}`;
+		const legacy = parseAgentTurn({
+			...agentResultRecord(),
+			output: 'Created the file.',
+			outcome: {
+				changedFiles: [{ path: 'src/legacy.ts', beforeSha256: null, afterSha256: hash }],
+				plan: 'Create the file.',
+				steps: 1,
+				summary: 'Created the file.',
+				tests: [],
+				toolCalls: []
+			}
+		});
+		assert.deepStrictEqual(legacy?.outcome.changedFiles[0], {
+			path: 'src/legacy.ts',
+			operation: 'add',
+			beforeExists: false,
+			afterExists: true,
+			beforeSha256: null,
+			afterSha256: hash,
+			beforeBytes: null,
+			afterBytes: null,
+			linesAdded: null,
+			linesDeleted: null,
+			lineDeltaStatus: 'unavailable'
+		});
+		const thresholdEdit = parseAgentTurn({
+			...agentResultRecord(),
+			output: 'Edited the file.',
+			outcome: {
+				changedFilesTruncated: true,
+				changedFiles: [{
+					path: 'src/threshold.bin', operation: 'edit', beforeSha256: null, afterSha256: hash,
+					beforeBytes: 16_777_217, afterBytes: 1, linesAdded: null, linesDeleted: null, lineDeltaStatus: 'too-large'
+				}],
+				plan: 'Edit the file.',
+				steps: 1,
+				summary: 'Edited the file.',
+				tests: [],
+				toolCalls: []
+			}
+		});
+		assert.strictEqual(thresholdEdit?.outcome.changedFiles[0]?.operation, 'edit');
+		assert.strictEqual(thresholdEdit?.outcome.changedFiles[0]?.beforeBytes, 16_777_217);
+		assert.strictEqual(thresholdEdit?.outcome.changedFilesTruncated, true);
+
+		const sparseAdd = parseAgentTurn({
+			...agentResultRecord(),
+			output: 'Created an oversized sparse file.',
+			outcome: {
+				changedFilesTruncated: true,
+				changedFiles: [{
+					path: 'huge.bin', operation: 'add', beforeExists: false, afterExists: true,
+					beforeSha256: null, afterSha256: null, beforeBytes: null, afterBytes: 1_000_000_001,
+					linesAdded: null, linesDeleted: null, lineDeltaStatus: 'too-large'
+				}],
+				plan: 'Create the sparse file.',
+				steps: 1,
+				summary: 'Created an oversized sparse file.',
+				tests: [],
+				toolCalls: []
+			}
+		});
+		assert.strictEqual(sparseAdd?.outcome.changedFiles[0]?.operation, 'add');
+		assert.strictEqual(sparseAdd?.outcome.changedFiles[0]?.afterExists, true);
+		const sparseEdit = parseAgentTurn({
+			...agentResultRecord(),
+			outcome: {
+				changedFiles: [{
+					path: 'huge.bin', operation: 'edit', beforeExists: true, afterExists: true,
+					beforeSha256: null, afterSha256: null,
+					beforeBytes: 1_000_000_001, afterBytes: 1_000_000_002,
+					linesAdded: null, linesDeleted: null, lineDeltaStatus: 'too-large'
+				}],
+				plan: 'Resize the sparse file.', steps: 1, summary: 'Fixture complete.', tests: [], toolCalls: []
+			}
+		});
+		assert.strictEqual(sparseEdit?.outcome.changedFiles[0]?.afterBytes, 1_000_000_002);
+
+		assert.strictEqual(parseAgentTurn({
+			...agentResultRecord(),
+			output: 'Edited the file.',
+			outcome: {
+				changedFiles: [{
+					path: 'src/invalid.ts', operation: 'edit', beforeSha256: hash, afterSha256: `sha256:${'b'.repeat(64)}`,
+					beforeBytes: 10, afterBytes: 12, linesAdded: null, linesDeleted: null, lineDeltaStatus: 'exact'
+				}],
+				plan: 'Edit the file.',
+				steps: 1,
+				summary: 'Edited the file.',
+				tests: [],
+				toolCalls: []
+			}
+		}), undefined);
+
+		const contradictoryFiles = [
+			{ path: 'src/add-bytes.ts', operation: 'add', beforeSha256: null, afterSha256: hash, beforeBytes: 1, afterBytes: 2, linesAdded: 1, linesDeleted: 0, lineDeltaStatus: 'exact' },
+			{ path: 'src/delete-bytes.ts', operation: 'delete', beforeSha256: hash, afterSha256: null, beforeBytes: 2, afterBytes: 1, linesAdded: 0, linesDeleted: 1, lineDeltaStatus: 'exact' },
+			{ path: 'src/add-lines.ts', operation: 'add', beforeSha256: null, afterSha256: hash, beforeBytes: null, afterBytes: 2, linesAdded: 1, linesDeleted: 1, lineDeltaStatus: 'exact' },
+			{ path: 'src/delete-lines.ts', operation: 'delete', beforeSha256: hash, afterSha256: null, beforeBytes: 2, afterBytes: null, linesAdded: 1, linesDeleted: 1, lineDeltaStatus: 'exact' },
+			{ path: 'src/no-change.ts', operation: 'edit', beforeSha256: hash, afterSha256: hash, beforeBytes: 2, afterBytes: 2, linesAdded: 1, linesDeleted: 1, lineDeltaStatus: 'exact' }
+		];
+		for (const changedFile of contradictoryFiles) {
+			assert.strictEqual(parseAgentTurn({
+				...agentResultRecord(),
+				output: 'Edited the file.',
+				outcome: {
+					changedFiles: [changedFile],
+					plan: 'Edit the file.',
+					steps: 1,
+					summary: 'Edited the file.',
+					tests: [],
+					toolCalls: []
+				}
+			}), undefined);
+		}
 	});
 
 	test('parses an exact one-use approval request and rejects malformed hashes', () => {

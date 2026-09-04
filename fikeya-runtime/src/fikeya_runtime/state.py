@@ -19,7 +19,7 @@ from .util import utc_now, validate_identifier
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
-    status TEXT NOT NULL CHECK (status IN ('active', 'cancelled', 'completed')),
+    status TEXT NOT NULL CHECK (status IN ('active', 'cancelled', 'completed', 'failed')),
     parent_session_id TEXT REFERENCES sessions(session_id),
     fork_sequence INTEGER,
     metadata_json TEXT NOT NULL,
@@ -125,7 +125,7 @@ CREATE INDEX IF NOT EXISTS provider_calls_by_session
     ON provider_call_receipts(session_id, created_at);
 CREATE INDEX IF NOT EXISTS execution_plans_by_updated_at
     ON execution_plans(updated_at);
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 """
 
 _PROVIDER_RECEIPT_V4 = """
@@ -148,6 +148,20 @@ CREATE TABLE provider_call_receipts (
     cached_input_tokens INTEGER
         CHECK (cached_input_tokens IS NULL OR cached_input_tokens >= 0),
     created_at TEXT NOT NULL
+);
+"""
+
+_SESSIONS_V6 = """
+CREATE TABLE sessions_v6 (
+    session_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('active', 'cancelled', 'completed', 'failed')),
+    parent_session_id TEXT REFERENCES sessions_v6(session_id),
+    fork_sequence INTEGER,
+    metadata_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK ((parent_session_id IS NULL AND fork_sequence IS NULL)
+        OR (parent_session_id IS NOT NULL AND fork_sequence IS NOT NULL))
 );
 """
 
@@ -177,13 +191,16 @@ class StateStore:
 
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6):
                 raise StateError(f"Unsupported state schema version: {version}")
             # Schema v2 introduced provider_call_receipts with the original two-mode
             # CHECK constraint. Schema v3 added tool enablements but retained that table.
             # Both versions therefore require the same lossless table rebuild.
             if version in (2, 3):
                 self._migrate_provider_receipts_v4(connection)
+                version = 4
+            if version in (1, 2, 3, 4, 5):
+                self._migrate_sessions_v6(connection)
             connection.executescript(_SCHEMA)
         try:
             self.path.chmod(0o600)
@@ -214,6 +231,32 @@ class StateStore:
             raise StateError(
                 "Could not migrate provider receipts to schema version 4."
             ) from error
+
+    @staticmethod
+    def _migrate_sessions_v6(connection: sqlite3.Connection) -> None:
+        """Add an explicit failed terminal state without losing event relationships."""
+
+        try:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(_SESSIONS_V6)
+            connection.execute(
+                """
+                INSERT INTO sessions_v6
+                SELECT session_id, status, parent_session_id, fork_sequence,
+                       metadata_json, created_at, updated_at
+                FROM sessions
+                """
+            )
+            connection.execute("DROP TABLE sessions")
+            connection.execute("ALTER TABLE sessions_v6 RENAME TO sessions")
+            connection.execute("PRAGMA user_version = 6")
+            connection.commit()
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise StateError("Could not migrate session statuses to schema version 6.") from error
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
     def create_session(
         self,
@@ -427,6 +470,16 @@ class StateStore:
             "completed",
             EventType.SESSION_COMPLETED,
             {"outcome": outcome[:512]},
+        )
+
+    def fail_session(self, session_id: str, reason: str) -> EventEnvelope:
+        """Fail a session and emit the terminal event atomically."""
+
+        return self._finish_session(
+            session_id,
+            "failed",
+            EventType.SESSION_FAILED,
+            {"reason": reason[:512]},
         )
 
     def record_usage(

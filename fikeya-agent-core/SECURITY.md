@@ -10,6 +10,10 @@ The broker remains responsible for workspace boundaries, command allowlists, san
 and result provenance. An implementation that invokes a shell directly without those controls is outside this package's trust
 model.
 
+Provider adapters and optional Deep Agents/LangGraph graphs run as trusted code inside the host Python process. The decision
+adapter withholds broker objects and callable tools, but it cannot sandbox arbitrary imported Python. Unreviewed provider or
+graph code must run behind a separately isolated transport rather than being loaded in process.
+
 ## Enforced here
 
 - Stage-specific provider decisions are typed and fail closed.

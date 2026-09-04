@@ -16,6 +16,8 @@
 	"command.chat.deleteSavedHistory.title": "Delete Saved Chat History",
 	"command.initializeWorkspace.title": "Initialize Workspace",
 	"command.runDoctor.title": "Run Doctor",
+	"command.dangerousLocalMode.enable.title": "Enable Temporary Full Access",
+	"command.dangerousLocalMode.disable.title": "Disable Temporary Full Access",
 	"command.mode.editor.title": "Open Editor Mode",
 	"command.mode.agent.title": "Open Chat",
 	"command.mode.terminal.title": "Open Terminal Mode",
@@ -26,6 +28,9 @@
 	"command.view.setup.title": "Open Setup",
 	"configuration.startupMode.description": "Choose the first surface shown by Fikeya Desktop. Project UI is the default Codex-style coding-agent workspace.",
 	"configuration.chat.openAtStartup.description": "Open Fikeya Chat once when this extension is first activated in VS Code or another compatible editor.",
-	"configuration.chat.persistWorkspaceHistory.description": "Persist a bounded, credential-redacted copy of Fikeya Chat messages in this workspace. Disabled by default; when disabled, Chat remains process-local.",
-	"configuration.agent.autoSaveWorkspaceEdits.description": "Save dirty file-backed documents inside the current Fikeya workspace before an agent run so tools operate on the latest editor contents. Files outside the workspace and untitled documents are never saved by this setting."
+	"configuration.chat.persistWorkspaceHistory.description": "Persist a bounded copy of Fikeya Chat messages and changed-file metadata in this workspace. Chat text and changed-file paths pass through a best-effort known-pattern sanitizer; attachment metadata is not secret-scanned and unknown formats may remain. Do not store secrets in Chat, attachment names, or file paths. File contents and provider receipts are not included. Disabled by default; when disabled, Chat remains process-local.",
+	"configuration.agent.autoSaveWorkspaceEdits.description": "Save dirty file-backed documents inside the current Fikeya workspace before an agent run so tools operate on the latest editor contents. Files outside the workspace and untitled documents are never saved by this setting.",
+	"configuration.browser.engine.description": "Choose the browser transport used only after an approved browser tool call. Playwright remains the default; Puppeteer is explicit and never a silent fallback.",
+	"configuration.browser.puppeteerRoot.description": "Absolute path to a reviewed directory whose package.json resolves puppeteer or puppeteer-core. Used only when the Puppeteer engine is selected.",
+	"configuration.browser.chromeExecutable.description": "Optional absolute path to a reviewed Chrome or Chromium executable. Required for Puppeteer Core unless that package is configured with its own executable."
 }

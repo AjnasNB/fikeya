@@ -33,6 +33,8 @@
 		"onCommand:fikeya.configureAgents",
 		"onCommand:fikeya.initializeWorkspace",
 		"onCommand:fikeya.runDoctor",
+		"onCommand:fikeya.dangerousLocalMode.enable",
+		"onCommand:fikeya.dangerousLocalMode.disable",
 		"onCommand:fikeya.mode.research",
 		"onCommand:fikeya.view.usage",
 		"onCommand:fikeya.view.setup"
@@ -120,6 +122,18 @@
 				"icon": "$(pulse)"
 			},
 			{
+				"command": "fikeya.dangerousLocalMode.enable",
+				"title": "%command.dangerousLocalMode.enable.title%",
+				"category": "%command.category%",
+				"enablement": "isWorkspaceTrusted && fikeya.supportsDesktopWorkbench && !fikeya.dangerousLocalModeActive"
+			},
+			{
+				"command": "fikeya.dangerousLocalMode.disable",
+				"title": "%command.dangerousLocalMode.disable.title%",
+				"category": "%command.category%",
+				"enablement": "fikeya.dangerousLocalModeActive"
+			},
+			{
 				"command": "fikeya.mode.editor",
 				"title": "%command.mode.editor.title%",
 				"category": "%command.category%",
@@ -202,6 +216,32 @@
 					"default": true,
 					"scope": "resource",
 					"description": "%configuration.agent.autoSaveWorkspaceEdits.description%"
+				},
+				"fikeya.browser.engine": {
+					"type": "string",
+					"enum": [
+						"playwright",
+						"puppeteer"
+					],
+					"enumDescriptions": [
+						"Use the bundled or separately provisioned Playwright Chromium transport.",
+						"Use an explicitly configured local Puppeteer or Puppeteer Core installation."
+					],
+					"default": "playwright",
+					"scope": "resource",
+					"description": "%configuration.browser.engine.description%"
+				},
+				"fikeya.browser.puppeteerRoot": {
+					"type": "string",
+					"default": "",
+					"scope": "resource",
+					"description": "%configuration.browser.puppeteerRoot.description%"
+				},
+				"fikeya.browser.chromeExecutable": {
+					"type": "string",
+					"default": "",
+					"scope": "resource",
+					"description": "%configuration.browser.chromeExecutable.description%"
 				}
 			}
 		},
@@ -276,7 +316,7 @@
 		"watch": "tsc --project ./tsconfig.json --watch",
 		"pretypecheck": "npm run build:protocol",
 		"typecheck": "tsc --project ./tsconfig.json --noEmit",
-		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/fileInputs.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js ./out/test/surface.test.js ./out/test/teamLead.test.js",
+		"test": "npm run typecheck && tsc --project ./tsconfig.json && node --test ./out/test/agentProfiles.test.js ./out/test/azureDiscovery.test.js ./out/test/conversation.test.js ./out/test/dangerousLocalMode.test.js ./out/test/fileInputs.test.js ./out/test/hostCapabilities.test.js ./out/test/markdown.test.js ./out/test/messageValidation.test.js ./out/test/multiAgent.test.js ./out/test/runtime.test.js ./out/test/memory.test.js ./out/test/sessionCapture.test.js ./out/test/surface.test.js ./out/test/teamLead.test.js",
 		"build:vsix": "npm test && node ./scripts/package-extension.mjs",
 		"check:vsix": "node ./scripts/inspect-vsix.mjs",
 		"test:isolated-vsix": "node ./scripts/test-isolated-vsix.mjs",

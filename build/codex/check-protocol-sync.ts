@@ -103,7 +103,9 @@ export function listFiles(dir: string): string[] {
 
 /**
  * Compares two generated trees. Returns a sorted list of relative paths that differ
- * (content mismatch, or present in only one tree). README.md is ignored.
+ * (content mismatch, or present in only one tree). README.md is ignored. Generated
+ * protocol files are UTF-8 text, so CRLF and LF checkouts compare equivalently; this
+ * keeps the check reproducible when Git's core.autocrlf is enabled on Windows.
  */
 export function diffGeneratedTrees(committedDir: string, freshDir: string): string[] {
 	const committed = new Set(listFiles(committedDir));
@@ -116,7 +118,7 @@ export function diffGeneratedTrees(committedDir: string, freshDir: string): stri
 		}
 		const a = readFileSync(path.join(committedDir, rel));
 		const b = readFileSync(path.join(freshDir, rel));
-		if (!a.equals(b)) {
+		if (normalizeGeneratedText(a) !== normalizeGeneratedText(b)) {
 			diffs.push(`${rel} (content differs from regeneration)`);
 		}
 	}
@@ -126,6 +128,10 @@ export function diffGeneratedTrees(committedDir: string, freshDir: string): stri
 		}
 	}
 	return diffs.sort();
+}
+
+function normalizeGeneratedText(value: Buffer): string {
+	return value.toString('utf8').replace(/\r\n/g, '\n');
 }
 
 function fail(message: string): void {
