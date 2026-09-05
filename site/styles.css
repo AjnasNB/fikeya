@@ -40,6 +40,15 @@
 	--mono: "IBM Plex Mono", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 }
 
+.control-diagram.workflow-diagram {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.workflow-diagram > div {
+	min-height: auto;
+	padding: 24px;
+}
+
 * {
 	box-sizing: border-box;
 }

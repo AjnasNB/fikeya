@@ -5,9 +5,9 @@
 	"version": "0.0.0",
 	"scripts": {
 		"build": "node build.mjs",
-		"test": "node validate.mjs",
+		"test": "node validate.mjs && node --test release-site.test.ts",
 		"deploy": "npm run build && wrangler pages deploy dist --project-name fikeya-site",
-		"deploy:worker": "npm run build && wrangler deploy --config wrangler.worker.jsonc"
+		"deploy:worker": "npm run build && node deployment-check.ts && wrangler deploy --config wrangler.worker.jsonc"
 	},
 	"devDependencies": {
 		"@fontsource/ibm-plex-mono": "^5.3.0",
