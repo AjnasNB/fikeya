@@ -241,7 +241,17 @@ def render_provider_prompt(request: ProviderRequest) -> str:
     if shape is None:
         raise ProtocolError(f"provider cannot be called during stage: {request.stage.value}")
     serialized = canonical_json(common).decode("utf-8")
-    return f"Return exactly one JSON object with this shape: {shape}\n\nInput:\n{serialized}"
+    guidance = ""
+    if request.stage == Stage.REVIEW:
+        guidance = (
+            "\nReview task completion, not merely whether the latest tool succeeded. "
+            "Choose continue when authorized tools can still obtain facts needed to answer the task. "
+            "A file that points to another source is not that source's contents. "
+            "Do not complete with a missing or null answer while the required source can still be read. "
+            "Choose complete only for a supported final answer or an explicit unresolved access limitation; "
+            "never invent the missing facts. Put the final answer in content, preserving the user's requested format."
+        )
+    return f"Return exactly one JSON object with this shape: {shape}{guidance}\n\nInput:\n{serialized}"
 
 
 def provider_context_bytes(request: ProviderRequest) -> int:

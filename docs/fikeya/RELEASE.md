@@ -50,6 +50,25 @@ The signing certificate must belong to the actual publishing person or legal ent
 
 ## Release gate
 
+### Keep downloads and updates on the same release
+
+After signed-artifact verification, install smoke, attestation, and GitHub
+publication, the release job builds the website and runs
+`node site/release-site.ts release-artifacts`. This independently checks the
+expected commit, versions, signer, timestamp presence, artifact sizes, and SHA-256
+before promoting download links and the update feed together. Unsigned local
+candidates cannot produce an enabled feed through this path.
+
+The job retains a `fikeya-<version>-website` artifact. Set the protected
+`FIKEYA_SITE_AUTO_DEPLOY=true` variable, `FIKEYA_CLOUDFLARE_ACCOUNT_ID` variable,
+and a least-privilege `FIKEYA_CLOUDFLARE_API_TOKEN` secret to deploy it automatically.
+Without these, deploy that prepared artifact manually; do not rebuild its static
+files after preparation. Signing and website credentials are separate.
+
+When making later website-only changes, retain the current signed release metadata
+and regenerate its links/feed using the same verified artifact set. A disabled
+source-candidate feed must never replace an enabled production feed.
+
 Before promoting a beta to stable:
 
 1. all Fikeya component checks pass on Windows, macOS, and Linux;

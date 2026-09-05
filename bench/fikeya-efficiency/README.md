@@ -64,7 +64,7 @@ npm run compare:fixtures
 Or invoke the comparator directly:
 
 ```powershell
-node compare.mjs --baseline path\to\baseline.jsonl --fikeya path\to\fikeya.jsonl
+node compare.ts --baseline path\to\baseline.jsonl --fikeya path\to\fikeya.jsonl
 ```
 
 A valid comparison prints a JSON report to standard output. Any incomplete or unmatched comparison exits non-zero and prints a rejection reason to standard error.
@@ -72,7 +72,7 @@ A valid comparison prints a JSON report to standard output. Any incomplete or un
 To display a valid aggregate in Fikeya's local Usage view, write the comparator output to the initialized workspace without committing it:
 
 ```powershell
-node compare.mjs --baseline path\to\baseline.jsonl --fikeya path\to\fikeya.jsonl > path\to\workspace\.fikeya\matched-efficiency.json
+node compare.ts --baseline path\to\baseline.jsonl --fikeya path\to\fikeya.jsonl > path\to\workspace\.fikeya\matched-efficiency.json
 fikeya stats --workspace path\to\workspace --json
 ```
 
@@ -81,3 +81,36 @@ The runtime revalidates the bounded aggregate, computes its SHA-256 receipt, and
 ## Before a real benchmark
 
 Pre-register the task list, trial count, model/version, prices, limits, tool contract, network policy, grader, and primary metric. Preserve the raw receipts and grader outputs. Do not replace these synthetic fixtures with real results; store real runs outside the source tree or in a separately reviewed evidence package.
+
+## Run a live installed-CLI evaluation
+
+`live-run.ts` exercises the installed beta.8 CLI research loop against a configured
+provider. It compares full-context input with on-demand file reads, using the same
+authored repository, tasks, model profile, tool permissions, and exact JSON grader.
+Arm order alternates. Each trial has six attempts; only listing the fixture root
+and reading its four files can receive one-use approvals. Process execution,
+writes, and browser actions are never approved by this harness. Each attempt has
+a two-minute wall-clock limit. Attempts are paced 60 seconds apart by default
+(`--pause-ms` overrides this); pacing is excluded from task latency.
+
+```powershell
+$env:FIKEYA_BENCH_PYTHON = "C:\path\to\clean-environment\Scripts\python.exe"
+node live-run.ts --provider your-existing-profile --trials 1 --allow-network
+```
+
+This makes real model requests and may incur provider charges. A unique temporary
+directory retains the pre-registered protocol, isolated workspaces, every attempt,
+and the final report. Missing usage remains null; failed attempts remain in totals.
+Provider-reported usage is not an independently reconciled invoice. Cost stays null
+without a price snapshot.
+
+The protocol pins the installed core, runtime, and interop source hashes, Python,
+and operating system. Python runs in isolated mode to exclude source-tree and
+`PYTHONPATH` overrides. Installation hashes are checked before and after each
+attempt; a changed installation stops the run, retaining previous attempts and
+rejecting any affected attempt. Do not install or edit packages during a run.
+
+The live report is deliberately a different schema from the priced comparator.
+This small repository-question evaluation is not a Qarinah comparison, coding-write
+benchmark, independent-agent comparison, or enterprise workload benchmark. It
+establishes an executable measurement path, not general product superiority.

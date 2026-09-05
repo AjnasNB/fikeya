@@ -1,6 +1,8 @@
 # Fikeya
 
-Fikeya is an open, provider-neutral AI code editor and coding-agent runtime with two interfaces: a desktop editor for visual work and a CLI for headless automation. Bring your model and spend fewer tokens while Fikeya plans, edits, runs, and reviews software work using only the bounded project context a turn needs.
+Fikeya is a platform for governed AI-agent work: choose a model, scope its tools, approve consequential actions, and inspect the result. The public beta provides a provider-neutral desktop editor and CLI. The enterprise control plane is available through design-partner evaluation, not as a generally available production service.
+
+Fikeya is the customer-facing product. **Maqam** supplies registered-tool governance, **Qarinah** supplies bounded cited project context, and **Cockroach Browser** and **Cockroach Crawler** supply browser control and web discovery. These components remain independently installable, versioned, and licensed; inclusion in the platform does not imply every cross-component workflow is released. See the [platform and availability map](https://fikeya.com/platform/).
 
 Its optimization goal is **verified work per dollar**: preserve task quality and external verification while reducing unnecessary context, recording exact provider usage when available, and avoiding lock-in to one model or agent. That is a product target measured by matched evaluations, not a claim that every Fikeya run is already cheaper than another system.
 

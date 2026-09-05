@@ -70,6 +70,15 @@ def request(stage: Stage) -> ProviderRequest:
     )
 
 
+def test_review_distinguishes_tool_success_from_task_completion() -> None:
+    prompt = render_provider_prompt(request(Stage.REVIEW))
+    assert "not merely whether the latest tool succeeded" in prompt
+    assert "Choose continue when authorized tools can still obtain facts" in prompt
+    assert "preserving the user's requested format" in prompt
+    assert "never invent the missing facts" in prompt
+    assert "not merely whether the latest tool succeeded" not in render_provider_prompt(request(Stage.ACT))
+
+
 @pytest.mark.asyncio
 async def test_runtime_adapter_matches_current_executor_shape_without_eager_import() -> None:
     executor = FakeRuntimeExecutor(json.dumps({"kind": "plan", "content": "inspect then test"}))

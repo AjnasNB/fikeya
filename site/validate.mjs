@@ -51,12 +51,15 @@ for (const file of requiredFiles) {
 	assert(files.includes(file), `Missing required file: ${file}`);
 }
 
-const html = await readFile(new URL('index.html', root), 'utf8');
+const homeHtml = await readFile(new URL('index.html', root), 'utf8');
+// Preserve detailed developer claims on /opensource/, not the product homepage.
+const html = await readFile(new URL('opensource/index.html', root), 'utf8');
 const pagePaths = [
 	'docs/index.html',
 	'download/index.html',
 	'enterprise/index.html',
 	'opensource/index.html',
+	'platform/index.html',
 	'product/index.html',
 	'proof/index.html',
 	'privacy/index.html',
@@ -167,9 +170,9 @@ for (const stage of ['01</span><strong>Draft', '02</span><strong>Review', '03</s
 }
 assert(productPage.includes('three read-only workspace tools reached Succeeded'), 'Product page is missing the verified safe-capture boundary');
 const openSourcePage = pageDocuments.get('opensource/index.html') ?? '';
-assert(openSourcePage.includes('<meta name="robots" content="noindex, follow">'), 'Open Source homepage alias must not compete in search indexes');
-assert(openSourcePage.includes('<meta property="og:url" content="https://fikeya.com/">'), 'Open Source social URL must identify the canonical homepage');
-assert(openSourcePage.includes('<link rel="canonical" href="https://fikeya.com/">'), 'Open Source alias must canonicalize to the homepage');
+assert(openSourcePage.includes('<meta name="robots" content="index, follow, max-image-preview:large">'), 'Open Source developer page must be indexable');
+assert(openSourcePage.includes('<meta property="og:url" content="https://fikeya.com/opensource/">'), 'Open Source social URL must identify the canonical homepage');
+assert(openSourcePage.includes('<link rel="canonical" href="https://fikeya.com/opensource/">'), 'Open Source must have its own canonical URL');
 assert(openSourcePage.includes('href="/favicon.svg?v=20260825h"'), 'Open Source favicon must use a root-absolute URL');
 assert(openSourcePage.includes('href="/site.webmanifest"'), 'Open Source manifest must use a root-absolute URL');
 assert(openSourcePage.includes('href="/styles.css?v=20260903c"'), 'Open Source stylesheet must use a root-absolute URL');
@@ -235,7 +238,7 @@ assert(!html.includes('fikeya receipt '), 'Unsupported receipt command found');
 assert(!html.includes('fikeya memory doctor'), 'Unsupported memory command found');
 assert(!html.match(/tabindex=["'][1-9]/i), 'Positive tabindex found');
 assert(!html.match(/<img\b(?![^>]*\balt=)/i), 'Image without alt text found');
-assert(html.includes('rel="manifest" href="site.webmanifest"'), 'Web manifest link is missing');
+assert(html.includes('rel="manifest" href="/site.webmanifest"'), 'Web manifest link is missing');
 assert(html.includes('name="robots" content="index, follow, max-image-preview:large"'), 'Robots metadata is missing');
 assert(css.includes('@media (prefers-reduced-motion: reduce)'), 'Reduced motion fallback is missing');
 assert(css.includes('@media (max-width: 600px)'), 'Small-screen layout is missing');
@@ -249,11 +252,11 @@ assert(headers.includes('Permissions-Policy:'), 'Permissions Policy header is mi
 assert(manifest.name === 'Fikeya', 'Web manifest name is incorrect');
 assert(robots.includes('Sitemap: https://fikeya.com/sitemap.xml'), 'Robots sitemap declaration is missing');
 assert(sitemap.includes('<loc>https://fikeya.com/</loc>'), 'Canonical sitemap location is missing');
-assert(/<loc>https:\/\/fikeya\.com\/<\/loc>\s*<lastmod>2026-09-03<\/lastmod>/u.test(sitemap), 'Homepage sitemap freshness must match the published proof content');
+assert(/<loc>https:\/\/fikeya\.com\/<\/loc>\s*<lastmod>2026-09-05<\/lastmod>/u.test(sitemap), 'Homepage sitemap freshness must match the product update');
 for (const route of ['product', 'proof', 'docs', 'enterprise', 'download', 'privacy', 'signing']) {
 	assert(sitemap.includes(`<loc>https://fikeya.com/${route}/</loc>`), `Sitemap is missing /${route}/`);
 }
-assert(!sitemap.includes('<loc>https://fikeya.com/opensource/</loc>'), 'Homepage alias must not duplicate the canonical URL in the sitemap');
+assert(sitemap.includes('<loc>https://fikeya.com/opensource/</loc>'), 'Open Source route must be in the sitemap');
 assert(sitemap.includes('<loc>https://fikeya.com/papers/fikeya-cockroach-browser/</loc>'), 'Sitemap is missing the readable browser paper');
 assert(sitemap.includes('<loc>https://fikeya.com/docs/cockroach-browser/</loc>'), 'Sitemap is missing the Cockroach Browser integration guide');
 assert(browserPaperHtml.includes('<link rel="canonical" href="https://fikeya.com/papers/fikeya-cockroach-browser/">'), 'Browser paper canonical URL is missing');
@@ -347,7 +350,24 @@ const updatePostResponse = await worker.fetch(new Request('https://fikeya.com/ap
 });
 assert(updatePostResponse.status === 405, 'The update endpoint must reject non-GET requests');
 
+assert(homeHtml.includes('<h1>Control AI agents.<br>Verify their work.</h1>'), 'Homepage must lead with Fikeya agent governance');
+assert(!homeHtml.includes('Spend fewer tokens.'), 'Homepage must not lead with an unmeasured savings promise');
+assert(homeHtml.includes('Public tools: beta. Enterprise: design-partner evaluation.'), 'Homepage must distinguish public beta from enterprise readiness');
+assert(homeHtml.includes('mailto:ajnas@cognifyr.co?subject=Fikeya%20design-partner%20pilot'), 'Homepage pilot contact is missing');
+const platformPage = pageDocuments.get('platform/index.html') ?? '';
+for (const component of ['maqam', 'qarinah', 'browser', 'crawler']) {
+	assert(homeHtml.includes(`href="/platform/#${component}"`), `Homepage is missing the ${component} component`);
+	assert(platformPage.includes(`id="${component}"`), `Platform is missing the ${component} target`);
+}
+assert(platformPage.includes('separately versioned components'), 'Platform must explain component availability');
 const allowedExternalLinks = new Set([
+	'https://fikeya.com/platform/',
+	'https://maqamagent.com/docs/',
+	'https://github.com/AjnasNB/maqam',
+	'https://qarinah.io/docs/',
+	'https://github.com/AjnasNB/qarinah',
+	'https://github.com/AjnasNB/cockroach-browser',
+	'https://github.com/AjnasNB/cockroach-crawler',
 	'https://fikeya.com/',
 	'https://fikeya.com/opensource/',
 	'https://fikeya.com/product/',
@@ -376,7 +396,7 @@ const allowedExternalLinks = new Set([
 	'https://qarinah.io/docs/benchmarks/'
 ]);
 
-for (const [pagePath, page] of new Map([['index.html', html], ...pageDocuments])) {
+for (const [pagePath, page] of new Map([['index.html', homeHtml], ...pageDocuments])) {
 	const hrefs = Array.from(page.matchAll(/href=["']([^"']+)["']/g), match => match[1]);
 	const ids = new Set(Array.from(page.matchAll(/\bid=["']([^"']+)["']/g), match => match[1]));
 	for (const href of hrefs) {

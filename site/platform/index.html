@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="description" content="Fikeya helps teams control AI-agent tool use, review consequential actions, and inspect execution results. Open-source tools and an enterprise design-partner program.">
+	<meta name="robots" content="index, follow, max-image-preview:large">
+	<meta name="theme-color" content="#0b0f0e">
+	<meta name="color-scheme" content="dark">
+	<meta property="og:type" content="website">
+	<meta property="og:site_name" content="Fikeya">
+	<meta property="og:title" content="Fikeya | Platform and components">
+	<meta property="og:description" content="Fikeya helps teams control AI-agent tool use, review consequential actions, and inspect execution results. Open-source tools and an enterprise design-partner program.">
+	<meta property="og:url" content="https://fikeya.com/platform/">
+	<meta property="og:image" content="https://fikeya.com/fikeya-plan-executed-verified-real.png">
+	<meta property="og:image:alt" content="Fikeya Desktop showing an executed and verified local plan.">
+	<meta name="twitter:card" content="summary_large_image">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests">
+	<title>Fikeya | Platform and components</title>
+	<link rel="canonical" href="https://fikeya.com/platform/">
+	<link rel="icon" href="/favicon.svg?v=20260825h" type="image/svg+xml">
+	<link rel="manifest" href="/site.webmanifest">
+	<link rel="stylesheet" href="/styles.css?v=20260905b">
+</head>
+<body>
+	<a class="skip-link" href="#main">Skip to content</a>
+	<header class="site-header"><div class="shell nav-shell"><a class="brand" href="/" aria-label="Fikeya home"><img src="/favicon.svg?v=20260825h" width="30" height="30" alt=""><span>Fikeya</span></a><nav aria-label="Primary navigation"><ul class="nav-links"><li><a href="/">Home</a></li><li><a href="/platform/" aria-current="page">Platform</a></li><li><a href="/opensource/">Open Source</a></li><li><a href="/proof/">Proof</a></li><li><a href="/docs/">Docs</a></li><li><a href="/enterprise/">Enterprise</a></li><li><a href="/download/">Download</a></li></ul></nav><div class="nav-actions"><a class="nav-source" href="https://github.com/AjnasNB/fikeya" rel="noopener noreferrer">GitHub</a></div></div></header>
+	<main id="main">
+		<section class="page-hero"><div class="shell"><p class="eyebrow">The Fikeya platform</p><h1>One product.<br>Composable foundations.</h1><p class="page-summary">Fikeya is the customer-facing product for governed AI-agent work. Maqam, Qarinah, Cockroach Browser, and Cockroach Crawler are its separately versioned components. Their open-source packages, licenses, and technical documentation remain available.</p><div class="hero-actions"><a class="button button-primary" href="/enterprise/">Discuss a team pilot</a><a class="button button-text" href="/download/">Evaluate locally</a></div></div></section>
+		<section class="section" id="maqam"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Governance component</p><h2>Maqam</h2><p>Policy before dispatch, exact one-use approvals, and execution receipts for registered tool calls. Fikeya's enterprise control-plane work builds on these governance concepts. The public TypeScript package and private enterprise service have different deployment boundaries.</p></div><div class="capability-list"><div><span>Use it for</span><strong>Registering agent tools, evaluating policy, and binding approval to exact input</strong></div><div><span>Integration boundary</span><strong>Only actions routed through the registered boundary are governed</strong></div><div><span>Documentation</span><strong><a href="https://maqamagent.com/docs/" rel="noopener noreferrer">Maqam technical docs</a> · <a href="https://github.com/AjnasNB/maqam" rel="noopener noreferrer">Source and license</a></strong></div></div></div></section>
+		<section class="section" id="qarinah"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Project-context component</p><h2>Qarinah</h2><p>Select bounded, cited project evidence instead of replaying a complete history. Fikeya exposes context availability and source references so that missing context remains visible.</p></div><div class="capability-list"><div><span>Use it for</span><strong>Project memory, evidence-linked retrieval, and bounded context packs</strong></div><div><span>Measurement boundary</span><strong>Context-size reductions do not establish model quality or whole-task savings</strong></div><div><span>Documentation</span><strong><a href="https://qarinah.io/docs/" rel="noopener noreferrer">Qarinah technical docs</a> · <a href="https://github.com/AjnasNB/qarinah" rel="noopener noreferrer">Source and license</a></strong></div></div></div></section>
+		<section class="section" id="browser"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Browser component</p><h2>Cockroach Browser</h2><p>A control point for multiple browser-engine lanes. Select an engine, inspect its installed capabilities, and scope browser work to allowed origins. Engine capabilities differ; an unsupported capability is reported explicitly.</p></div><div class="capability-list"><div><span>Fikeya connection</span><strong>The reviewed MCP preset observes sessions and proposes actions; direct execution requires a separate governed dispatch connection</strong></div><div><span>Memory boundary</span><strong>The published 28.25 MiB result is an Obscura non-visual fixture, not Desktop or all browser engines</strong></div><div><span>Documentation</span><strong><a href="/docs/cockroach-browser/">Fikeya integration guide</a> · <a href="https://github.com/AjnasNB/cockroach-browser" rel="noopener noreferrer">Source and license</a></strong></div></div></div></section>
+		<section class="section" id="crawler"><div class="shell capability-layout"><div class="section-intro compact"><p class="eyebrow">Web-discovery component</p><h2>Cockroach Crawler</h2><p>Scoped web discovery and source collection for agent workflows. Keep crawl permissions, budgets, and retrieved content separate from the authority to act.</p></div><div class="capability-list"><div><span>Use it for</span><strong>Collecting sources within an explicitly configured crawl scope</strong></div><div><span>Installation boundary</span><strong>External tool executables are installed separately and explicitly enabled in Fikeya</strong></div><div><span>Documentation</span><strong><a href="https://github.com/AjnasNB/cockroach-crawler" rel="noopener noreferrer">Crawler documentation, source, and license</a></strong></div></div></div></section>
+		<section class="page-cta"><div class="shell"><p class="eyebrow">Start with your workflow</p><h2>Evaluate Fikeya.<br>Go deeper when you need to.</h2><a class="button button-primary" href="/enterprise/">Explore a design-partner pilot</a><a class="button button-text" href="/opensource/">Open-source tools</a></div></section>
+	</main>
+	<footer class="site-footer"><div class="shell footer-layout"><div class="brand footer-brand"><img src="/favicon.svg?v=20260825h" width="28" height="28" alt=""><span>Fikeya</span></div><p>Control AI agents. Verify their work.</p><div><a href="/platform/">Platform</a><a href="/opensource/">Open Source</a><a href="/docs/">Docs</a><a href="/download/">Download</a><a href="/privacy/">Privacy</a></div></div></footer>
+</body>
+</html>

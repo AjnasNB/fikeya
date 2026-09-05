@@ -47,6 +47,7 @@ const pageDirectories = [
 	'download',
 	'enterprise',
 	'opensource',
+	'platform',
 	'privacy',
 	'product',
 	'proof',
