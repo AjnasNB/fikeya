@@ -1,14 +1,32 @@
 // Fikeya product delivery and measurement tooling.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
+export function environmentMatches(expected, actual) {
+	return JSON.stringify(expected) === JSON.stringify(actual);
+}
+async function installedEnvironment() {
+	const script = `import hashlib, importlib, importlib.metadata, json, platform, pathlib, sys
+packages = {}
+for name in ('fikeya_agent_core', 'fikeya_runtime', 'fikeya_interop'):
+    module = importlib.import_module(name)
+    root = pathlib.Path(module.__file__).parent
+    sources = [(p.relative_to(root).as_posix(), hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(root.rglob('*.py'))]
+    packages[name] = {'version': importlib.metadata.version(name.replace('_', '-')), 'sourceSha256': hashlib.sha256(json.dumps(sources).encode()).hexdigest()}
+print(json.dumps({'python': sys.version, 'platform': platform.platform(), 'packages': packages}, sort_keys=True))`;
+	const { stdout } = await promisify(execFile)(process.env.FIKEYA_BENCH_PYTHON || 'python', ['-I', '-c', script], {
+		windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024
+	});
+	return JSON.parse(stdout);
+}
 const fixture = {
 	'config.json': JSON.stringify({ port: 4317, retries: 3, tracing: false }),
 	'routes.json': JSON.stringify({ health: '/healthz', ready: '/readyz' }),
@@ -56,7 +74,7 @@ export function summarize(attempts) {
 
 function runCli(args, input, { coding = false, timeoutMs = 120_000 } = {}) {
 	return new Promise((resolve, reject) => {
-		const child = spawn(process.env.FIKEYA_BENCH_PYTHON || 'python', ['-m', 'fikeya_runtime', ...args], {
+		const child = spawn(process.env.FIKEYA_BENCH_PYTHON || 'python', ['-I', '-m', 'fikeya_runtime', ...args], {
 			shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
 		});
 		let buffer = '', stdout = '', stderr = '', bytes = 0, timedOut = false;
@@ -104,6 +122,7 @@ export async function main(argv) {
 	assert(argv.includes('--allow-network'), 'Live model calls require --allow-network.');
 	assert(Number.isInteger(trials) && trials >= 1 && trials <= 5, 'Trials must be 1-5.');
 	assert(Number.isInteger(pauseMs) && pauseMs >= 0 && pauseMs <= 120000, 'Pause must be 0-120000ms.');
+	const environment = await installedEnvironment();
 	const version = await runCli(['--version']);
 	assert.equal(version.code, 0, 'The installed CLI is unavailable.');
 	assert(version.stdout.includes('0.1.0b8'), 'Install the current beta.8 runtime before benchmarking; an older installed CLI is not the source candidate.');
@@ -113,7 +132,7 @@ export async function main(argv) {
 	assert(profile, 'The selected provider profile does not exist.');
 	const output = await mkdtemp(path.join(tmpdir(), 'fikeya-live-efficiency-'));
 	const attempts = [];
-	const config = { schemaVersion: 'fikeya.live-task-evaluation.v1', protocolRevision: 2, provider, trials,
+	const config = { schemaVersion: 'fikeya.live-task-evaluation.v1', protocolRevision: 3, provider, trials, environment,
 		runtimeVersion: version.stdout.trim(), model: profile.model, providerKind: profile.kind,
 		pauseBetweenAttemptsMs: pauseMs,
 		providerEndpointSha256: digest(profile.baseUrl),
@@ -131,6 +150,7 @@ export async function main(argv) {
 				// Pacing is outside task latency and is identical for both arms.
 				// Never silently rerun, drop, or switch the model after a 429.
 				if (attempts.length) await delay(pauseMs);
+				assert(environmentMatches(environment, await installedEnvironment()), 'Installed code changed during evaluation; start a new run. Earlier attempts remain retained.');
 				const runId = `${task.id}-${trial}-${arm}`;
 				const workspace = path.join(output, runId);
 				await mkdir(workspace);
@@ -143,17 +163,19 @@ export async function main(argv) {
 				const result = await runCli(['agent', 'execute', workspace, '--provider', provider,
 					'--protocol-stdin', '--json-lines', '--allow-network', '--mode', 'research',
 					'--memory', 'off', '--timeout', '30', '--max-output-tokens', '1024'], { type: 'start', prompt }, { coding: true });
+				const durationMs = Math.round(performance.now() - started);
+				const environmentStable = environmentMatches(environment, await installedEnvironment());
 				const final = result.messages.findLast(message => message.type === 'result');
 				const answer = final?.output ?? final?.outcome?.summary ?? '';
 				const record = {
 					runId, taskId: task.id, trial, arm, taskPromptSha256: digest(task.prompt),
 					requestPromptSha256: digest(prompt), startingStateSha256: config.fixtureSha256,
-					durationMs: Math.round(performance.now() - started), exitCode: result.code,
+					durationMs, exitCode: result.code, environmentStable,
 					timedOut: result.timedOut, status: final?.status ?? 'incomplete',
 					errorKind: result.messages.findLast(message => message.type === 'error')?.kind ?? null,
 					failure: final?.failure ?? null,
 					stderrSha256: digest(result.stderr),
-					verified: result.code === 0 && final?.status === 'completed' && grade(answer, task.expected),
+					verified: environmentStable && result.code === 0 && final?.status === 'completed' && grade(answer, task.expected),
 					usage: final?.usage ?? null, providerCallIds: final?.providerCallIds ?? [],
 					approvals: result.messages.filter(m => m.type === 'approval').map(m => ({
 						toolName: m.toolName, argumentsSha256: m.argumentsSha256, decision: approvalDecision(m)
@@ -167,6 +189,7 @@ export async function main(argv) {
 				await writeFile(path.join(output, runId + '.json'), JSON.stringify(record, null, 2), { flag: 'wx' });
 				await writeFile(path.join(output, 'report.json'), JSON.stringify({ ...config, attempts, summary: summarize(attempts) }, null, 2));
 				console.log(JSON.stringify({ runId, verified: record.verified, durationMs: record.durationMs, usage: record.usage }));
+				assert(environmentStable, 'Installed code changed during an attempt; the attempt is retained but not verified.');
 			}
 		}
 	}

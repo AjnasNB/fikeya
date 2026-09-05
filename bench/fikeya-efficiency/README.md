@@ -87,9 +87,11 @@ Pre-register the task list, trial count, model/version, prices, limits, tool con
 `live-run.ts` exercises the installed beta.8 CLI research loop against a configured
 provider. It compares full-context input with on-demand file reads, using the same
 authored repository, tasks, model profile, tool permissions, and exact JSON grader.
-Arm order alternates. Each trial has six attempts; only reads of four fixture files
-can receive one-use approvals. Process execution, writes, and browser actions are
-never approved by this harness. Each attempt has a two-minute wall-clock limit.
+Arm order alternates. Each trial has six attempts; only listing the fixture root
+and reading its four files can receive one-use approvals. Process execution,
+writes, and browser actions are never approved by this harness. Each attempt has
+a two-minute wall-clock limit. Attempts are paced 60 seconds apart by default
+(`--pause-ms` overrides this); pacing is excluded from task latency.
 
 ```powershell
 $env:FIKEYA_BENCH_PYTHON = "C:\path\to\clean-environment\Scripts\python.exe"
@@ -101,6 +103,12 @@ directory retains the pre-registered protocol, isolated workspaces, every attemp
 and the final report. Missing usage remains null; failed attempts remain in totals.
 Provider-reported usage is not an independently reconciled invoice. Cost stays null
 without a price snapshot.
+
+The protocol pins the installed core, runtime, and interop source hashes, Python,
+and operating system. Python runs in isolated mode to exclude source-tree and
+`PYTHONPATH` overrides. Installation hashes are checked before and after each
+attempt; a changed installation stops the run, retaining previous attempts and
+rejecting any affected attempt. Do not install or edit packages during a run.
 
 The live report is deliberately a different schema from the priced comparator.
 This small repository-question evaluation is not a Qarinah comparison, coding-write

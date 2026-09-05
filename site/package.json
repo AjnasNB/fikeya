@@ -6,7 +6,7 @@
 	"scripts": {
 		"build": "node build.mjs",
 		"test": "node validate.mjs && node --test release-site.test.ts",
-		"deploy": "npm run build && wrangler pages deploy dist --project-name fikeya-site",
+		"deploy": "npm run build && node deployment-check.ts && wrangler pages deploy dist --project-name fikeya-site",
 		"deploy:worker": "npm run build && node deployment-check.ts && wrangler deploy --config wrangler.worker.jsonc"
 	},
 	"devDependencies": {

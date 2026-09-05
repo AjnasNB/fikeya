@@ -55,9 +55,9 @@ async function hashFile(file) {
 	return hash.digest('hex');
 }
 
-export async function prepareReleaseSite(artifactDirectory, expected) {
+export async function prepareReleaseSite(artifactDirectory, expected, destination) {
 	const site = path.dirname(fileURLToPath(import.meta.url));
-	const dist = path.join(site, 'dist');
+	const dist = destination ?? path.join(site, 'dist');
 	const manifest = JSON.parse((await readFile(path.join(artifactDirectory, 'release-verification.json'), 'utf8')).replace(/^\uFEFF/u, ''));
 	const release = releaseSiteMetadata(manifest, expected);
 	// Hash the actual artifacts, not merely manifest claims. The protected release

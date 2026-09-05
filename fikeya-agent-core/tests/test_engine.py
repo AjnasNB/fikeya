@@ -154,6 +154,55 @@ async def test_state_machine_pauses_for_approval_then_resumes_to_completion() ->
 
 
 @pytest.mark.asyncio
+async def test_review_can_follow_a_reference_only_after_a_fresh_approval() -> None:
+    provider = FakeProvider(
+        result(ProviderDecision(DecisionKind.PLAN, content="Read the repository configuration.")),
+        result(ProviderDecision(
+            DecisionKind.TOOL_CALL,
+            tool_call=ToolCall("call:readme", "repo:read", {"path": "README.md"}),
+        )),
+        result(ProviderDecision(
+            DecisionKind.REVIEW,
+            content="The README points to config.json; read it before answering.",
+            review_action=ReviewAction.CONTINUE,
+        )),
+        result(ProviderDecision(
+            DecisionKind.TOOL_CALL,
+            tool_call=ToolCall("call:config", "repo:read", {"path": "config.json"}),
+        )),
+        result(ProviderDecision(
+            DecisionKind.REVIEW,
+            content='{"answer":4317}',
+            review_action=ReviewAction.COMPLETE,
+        )),
+    )
+
+    class FixtureBroker(FakeBroker):
+        async def execute(
+            self, call: ToolCall, cancellation: CancellationToken, *, idempotency_key: str,
+        ) -> ToolResult:
+            await super().execute(call, cancellation, idempotency_key=idempotency_key)
+            contents = {"README.md": "Read config.json for active settings.", "config.json": '{"port":4317}'}
+            return ToolResult(call.call_id, "ok", contents[call.arguments["path"]])
+
+    broker = FixtureBroker()
+    orchestrator = AgentOrchestrator(provider, broker, InMemoryCheckpointStore())
+    session = orchestrator.start("Return the configured port as JSON.", session_id="session:reference")
+    await collect(orchestrator.stream(session.session_id))
+    first_approval = approval_response(orchestrator, session.session_id, ApprovalDecision.ALLOW_ONCE)
+    continued = await collect(orchestrator.stream(session.session_id, approval=first_approval))
+
+    assert orchestrator.state(session.session_id).stage == Stage.AWAITING_APPROVAL
+    assert [call.arguments["path"] for call in broker.calls] == ["README.md"]
+    assert EventKind.SESSION_COMPLETED not in [event.kind for event in continued]
+    second_approval = approval_response(orchestrator, session.session_id, ApprovalDecision.ALLOW_ONCE)
+    assert second_approval.arguments_sha256 != first_approval.arguments_sha256
+    await collect(orchestrator.stream(session.session_id, approval=second_approval))
+    assert [call.arguments["path"] for call in broker.calls] == ["README.md", "config.json"]
+    assert orchestrator.state(session.session_id).final_output == '{"answer":4317}'
+
+
+@pytest.mark.asyncio
 async def test_denial_never_calls_broker_and_is_observed_by_review() -> None:
     provider = FakeProvider(
         result(ProviderDecision(DecisionKind.PLAN, content="inspect")),

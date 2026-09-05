@@ -315,12 +315,6 @@ jobs:
           name: fikeya-${{ needs.build-windows.outputs.public_version }}-release
           path: release-artifacts/*
           if-no-files-found: error
-      - name: Publish GitHub prerelease
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          prerelease: true
-          generate_release_notes: true
-          files: release-artifacts/*
       - name: Prepare website downloads and update feed from the verified release
         shell: pwsh
         env:
@@ -337,6 +331,12 @@ jobs:
           name: fikeya-${{ needs.build-windows.outputs.public_version }}-website
           path: site/dist/
           if-no-files-found: error
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          prerelease: true
+          generate_release_notes: true
+          files: release-artifacts/*
       - name: Deploy the release-matched website
         if: vars.FIKEYA_SITE_AUTO_DEPLOY == 'true'
         shell: pwsh

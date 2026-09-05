@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { approvalDecision, grade, summarize } from '../live-run.ts';
+import { approvalDecision, environmentMatches, grade, summarize } from '../live-run.ts';
+
+test('evaluation rejects a changed installation even at the same package version', () => {
+	const expected = { packages: { core: { version: '0.1.0b8', sourceSha256: 'before' } } };
+	assert(environmentMatches(expected, structuredClone(expected)));
+	assert(!environmentMatches(expected, { packages: { core: { version: '0.1.0b8', sourceSha256: 'after' } } }));
+});
 
 test('grader requires the exact independent answer', () => {
 	assert(grade('{"answer":4317}', 4317));
