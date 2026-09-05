@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Verify product identity, license boundaries, and package inputs
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - name: Verify bootstrap parsing and path safety
@@ -140,7 +140,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: integrations/qarinah-sidecar/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install the pinned Qarinah sidecar dependency
@@ -176,7 +176,7 @@ jobs:
         working-directory: integrations/fikeya-interop
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install the lockfile-compatible uv client
@@ -218,7 +218,7 @@ jobs:
         working-directory: fikeya-runtime
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -247,7 +247,7 @@ jobs:
         working-directory: fikeya-agent-core
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -273,7 +273,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: extensions/fikeya-desktop/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: npm ci --ignore-scripts
